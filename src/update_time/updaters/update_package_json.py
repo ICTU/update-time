@@ -51,8 +51,8 @@ def update_package_jsons() -> None:
 def _warn_about_dependencies(files: list[PackageJson]) -> None:
     """Report the marker of each dependency, and check the dependencies of each package.json."""
     declarations = [list(file.declarations()) for file in files]
-    check_targets = [report_markers(file_declarations, _LOG, node.POLICY) for file_declarations in declarations]
-    warn_about_redundant_directives(declarations, _LOG, node.POLICY)
+    check_targets = [report_markers(file_declarations, _LOG, node.MARKER_POLICY) for file_declarations in declarations]
+    warn_about_redundant_directives(declarations, _LOG, node.MARKER_POLICY)
     _report_undeclared_references(files)
     registry_declarations = [[target for target in targets if target.names_a_release] for targets in check_targets]
     warn_about_delegated_checks(

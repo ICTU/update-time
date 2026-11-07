@@ -9,10 +9,12 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import SpecifierSet
 
 from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.domain.line import Line, located_lines
 from update_time.formats import toml
+from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, parse_marker
 from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
@@ -114,12 +116,16 @@ class Declaration(SteeredReference):
 
     `uv_sourced` says the file names this dependency in its `[tool.uv] sources` table, so uv resolves it from a
     path, a workspace member, a git repository, or an index of its own. `direct_url` says the declaration points
-    at a URL or a git repository rather than at a release.
+    at a URL or a git repository rather than at a release. `build_requirement` says the declaration sits in the
+    `[build-system] requires` array, which uv does not lock. `environment_marker` is the condition after the `;`,
+    such as `python_version < "3.13"`, or the empty string where the declaration has none.
     `position` says which spec of the file this declaration is, counting from one.
     """
 
     uv_sourced: bool
     direct_url: bool
+    build_requirement: bool
+    environment_marker: str
     position: _DeclarationPosition
 
     @property
@@ -133,13 +139,27 @@ class Declaration(SteeredReference):
         return not (self.direct_url or self.uv_sourced)
 
     @property
-    def updatable(self) -> bool:
-        """Return whether the declaration's own marker leaves its version to be updated.
+    def narrowable(self) -> bool:
+        """Return whether Update-time narrows the requirement uv locks for the declaration by its marker's bound."""
+        return self.unnarrowable_reason is None
 
-        On a declaration that does not pin an exact version, an `ignore[update]` does not keep a pin, so it does not
-        hold anything back.
-        """
-        return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))
+    @property
+    def unnarrowable_reason(self) -> Reason | None:
+        """Return why Update-time does not narrow the requirement uv locks for the declaration, if it does not."""
+        if self.build_requirement:
+            return Reason.BUILD_REQUIREMENT_NOT_LOCKED
+        if self.direct_url:
+            return Reason.URL_RATHER_THAN_VERSION
+        if not self.pins_a_version:
+            return None
+        if self.environment_marker:
+            return Reason.ENVIRONMENT_MARKER_PIN_KEPT
+        return None if self.updatable else Reason.BOUND_ON_A_HELD_BACK_UPDATE
+
+    @property
+    def updatable(self) -> bool:
+        """Return whether the declaration's own marker leaves the version it pins to be updated."""
+        return not self.marker.ignores(Scope.UPDATE)
 
 
 @dataclass(frozen=True)
@@ -159,6 +179,11 @@ class PythonDependencyToml:
         """Write the contents to the file."""
         self.path.write_text(contents)
 
+    def write_if_changed(self, contents: str) -> None:
+        """Write the contents to the file, where it holds other contents."""
+        if self.read() != contents:
+            self.write(contents)
+
     def toml(self, contents: str) -> str:
         """Return the TOML the contents declare the dependencies in."""
         raise NotImplementedError
@@ -175,7 +200,10 @@ class PythonDependencyToml:
         too. A spec that does not parse is left out, without shifting the positions of the declarations after it.
         """
         contents = self.read()
-        sourced = _uv_source_names(parsed_config(self.toml(contents)) or {})
+        config = parsed_config(self.toml(contents)) or {}
+        sourced = _uv_source_names(config)
+        # The arrays uv resolves come before the build requirements, so the specs in them take the first positions.
+        uv_resolved = sum(isinstance(spec, str) for array in uv_dependency_arrays(config) for spec in array)
         specs: dict[_DeclarationPosition, str] = {}
 
         def place(position: _DeclarationPosition, spec: str) -> str:
@@ -200,17 +228,19 @@ class PythonDependencyToml:
                 locations[position],
                 uv_sourced=normalized_python_name(requirement.name) in sourced,
                 direct_url=bool(requirement.url),
+                build_requirement=position > uv_resolved,
+                environment_marker=str(requirement.marker or ""),
                 position=position,
                 marker=_marker(lines, position, locations[position]),
             )
             for position, requirement in requirements.items()
         ]
 
-    def rewrite_pinned_versions(self, versions: dict[Declaration, VersionString]) -> None:
-        """Rewrite each declaration to the version `versions` holds for it; write the file if changed.
+    def with_pinned_versions(self, contents: str, versions: Mapping[Declaration, VersionString]) -> str:
+        """Return the contents with the exact pin of each declaration rewritten to the version `versions` holds for it.
 
         One declaration of a name is rewritten while another declaration of that name keeps its pinned version. Each
-        declaration is one that `declarations` read from this file.
+        declaration is one that `declarations` read from the contents.
         """
         by_position = {declaration.position: declaration for declaration in versions}
 
@@ -220,8 +250,26 @@ class PythonDependencyToml:
             rewritten = _rewritten_spec(spec, declaration, versions[declaration])
             return rewritten if rewritten != spec else None
 
-        if (rewritten_contents := self._replaced_specs(self.read(), new_spec)) is not None:
-            self.write(rewritten_contents)
+        return self._replaced_specs(contents, new_spec) or contents
+
+    def with_locked_requirements(self, contents: str, bounds: Mapping[Declaration, str]) -> str:
+        """Return the contents with the requirement of each declaration narrowed by the specifier `bounds` holds for it.
+
+        An exact pin is relaxed from `==version` to `>=version` first. The name, the extras, and the environment marker
+        stay, spelled the way `packaging` spells a requirement.
+        """
+        by_position = {declaration.position: declaration for declaration in bounds}
+
+        def new_spec(position: _DeclarationPosition, spec: str) -> str | None:
+            if (declaration := by_position.get(position)) is None:
+                return None
+            requirement = Requirement(spec)
+            if current_version := declaration.current_version:
+                requirement.specifier = SpecifierSet(f">={current_version}")
+            requirement.specifier &= SpecifierSet(bounds[declaration])
+            return str(requirement)
+
+        return self._replaced_specs(contents, new_spec) or contents
 
     def _replaced_specs(self, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]) -> str | None:
         """Return the file's text with each declared spec `replace` gives a replacement for, or None when it gives none.
@@ -285,10 +333,10 @@ def _pinned_version(requirement: Requirement) -> VersionString:
 
 
 def _rewritten_spec(spec: str, declaration: Declaration, new_version: VersionString) -> str:
-    """Return the spec with the version the declaration pins replaced by the new one.
+    """Return the spec with the version the declaration pins exactly replaced by the new version.
 
-    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the version
-    is replaced, so whatever the declaration spells around it stays as it is.
+    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the version is
+    replaced, so whatever the declaration spells around it stays as it is.
     """
     if not (current := declaration.current_version):
         return spec

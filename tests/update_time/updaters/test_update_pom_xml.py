@@ -14,8 +14,9 @@ from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
-from update_time.package_managers import maven as maven_module
-from update_time.package_managers import maven_range as maven_range_module
+from update_time.package_managers.maven import marker_policy as maven_marker_policy
+from update_time.package_managers.maven import reactor as reactor_module
+from update_time.package_managers.maven import version_range, versions_plugin
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.sources import maven_central as maven_central_module
@@ -31,6 +32,7 @@ from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     GUAVA,
+    SCAN_ROOT,
     LoggingTestCase,
     bound,
     days_ago,
@@ -75,9 +77,9 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 
-# The tests discover each pom in this directory or in one below it. The scan runs in `/`, so a Maven run in the wrong
-# directory shows.
-_PROJECT = Path("/project")
+# The tests discover each pom in this directory or in one below it. The scan runs in `SCAN_ROOT`, so a Maven run in
+# the wrong directory shows.
+_PROJECT = SCAN_ROOT / "project"
 
 # The rule set file these tests hand Update-time, standing in for the temporary file a real run writes.
 _RULES = Path("/rules.xml")
@@ -104,7 +106,7 @@ def _stale_release(version: str = "33.0.0-jre") -> Generator[None]:
 
 def _plugin_version(plugin: str) -> str:
     """Return the release of the plugin that the pom Update-time ships declares, read off that pom's own text."""
-    pom = (Path(maven_module.__file__).parent / "pom.xml").read_text()
+    pom = (Path(versions_plugin.__file__).parent / "pom.xml").read_text()
     declared = re.search(rf"<{plugin}\.plugin\.version>(?P<version>[^<]+)</{plugin}\.plugin\.version>", pom)
     return declared["version"] if declared else ""
 
@@ -121,7 +123,7 @@ def _exact_version_element(version: str) -> str:
 
 def _variant_element(*currents: str) -> str:
     """Return the `<ignoreVersion>` element matching every version on another variant than the current versions."""
-    return f'<ignoreVersion type="regex">{maven_module._other_variants(*currents)}</ignoreVersion>'
+    return f'<ignoreVersion type="regex">{versions_plugin._other_variants(*currents)}</ignoreVersion>'
 
 
 def _rule_ignoring(group: str, artifact: str, *ignore_versions: str) -> str:
@@ -183,7 +185,7 @@ _VERSIONS_GOALS = (
 def _versions_options(rules: Path | None, properties: str = "") -> tuple[str, ...]:
     """Return the options the versions plugin's goals take, naming the rule set file where a run holds versions back."""
     rule_set = (f"-Dmaven.version.rules={rules.as_uri()}",) if rules else ()
-    pre_releases = f"-Dmaven.version.ignore={maven_module._PRE_RELEASES}"
+    pre_releases = f"-Dmaven.version.ignore={versions_plugin._PRE_RELEASES}"
     return ("-DgenerateBackupPoms=false", pre_releases, f"-DincludeProperties={properties}", *rule_set)
 
 
@@ -369,7 +371,7 @@ _CHILDS_EFFECTIVE_POM_LISTING_A_PROFILE = effective_pom_declaring(
 @patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES))
 @patch.object(maven_central_module, "publication", Mock(return_value=UNDATED))
 @patch.object(maven_central_module, "versions_held_back", Mock(return_value=()))
-@patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT, exists=False)
 @patch("subprocess.run")
 class UpdatePomXmlTest(LoggingTestCase):
     """Unit tests for finding the pom.xml files and running Maven over each of them."""
@@ -399,8 +401,8 @@ class UpdatePomXmlTest(LoggingTestCase):
             self.rule_sets.append(rule_set)
             yield _RULES
 
-        self.enterContext(patch.object(maven_module, "_effective_pom_file", effective_pom_file))
-        self.enterContext(patch.object(maven_module, "_rule_set_file", rule_set_file))
+        self.enterContext(patch.object(reactor_module, "_effective_pom_file", effective_pom_file))
+        self.enterContext(patch.object(versions_plugin, "_rule_set_file", rule_set_file))
         return poms
 
     def find_pom(
@@ -621,8 +623,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_markers(distinct)",
-            "_report_markers(resolved)",
+            "marker_policy.report_markers(distinct)",
+            "marker_policy.report_markers(resolved)",
             "the marker on a property two declarations of one artefact name is reported once per declaration",
         )
     )
@@ -655,7 +657,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
+            maven_marker_policy._report_scopes_on_artefacts_maven_central_does_not_serve,
             'declaration.marker.cooldown_directive if declaration.maven_updates_the_version else ""',
             "declaration.marker.cooldown_directive",
             "a `cooldown` on a version Maven does not update is reported twice, once for each reason",
@@ -740,7 +742,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_redundant_directives,
+            maven_marker_policy._report_redundant_directives,
             "declaration, yanked, Reason",
             "declaration, declaration.marker.raw, Reason",
             "the warning quotes every item of the marker, so it calls an `ignore[update]` beside the yank redundant",
@@ -808,13 +810,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
+            maven_marker_policy._report_scopes_on_artefacts_maven_central_does_not_serve,
             "if directives and not maven_central.serves",
             "if not maven_central.serves",
             "Maven Central is asked whether it serves every artefact, whatever its marker carries",
         ),
         Mutation(
-            update_pom_xml_module._report_archived_scopes_without_a_github_repository,
+            maven_marker_policy._report_archived_scopes_without_a_github_repository,
             "if archived and maven_central.lacks_a_github_repository",
             "if maven_central.lacks_a_github_repository",
             "Maven Central's poms are read for every artefact, whether or not its marker carries an `archived` scope",
@@ -1063,8 +1065,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_scopes_on_artefacts_maven_central_does_not_serve(declared)",
-            "_report_scopes_on_artefacts_maven_central_does_not_serve(resolvable)",
+            "marker_policy.report_redundant_scopes(declared,",
+            "marker_policy.report_redundant_scopes(resolvable,",
             "a scope checked at the managing declaration is reported twice, once for each reason",
         )
     )
@@ -1149,7 +1151,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "_LOG.effective_pom_unreadable(self.pom_xml)",
             "pass",
             "Update-time says nothing when it cannot read the effective pom, so the unchecked versions go unnoticed",
@@ -1163,7 +1165,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "_LOG.effective_pom_without_input_locations(self.pom_xml)",
             "pass",
             "an effective pom without input locations resolves nothing, and Update-time says nothing about it",
@@ -1194,7 +1196,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "effective_pom = xml.read(output)",
             "effective_pom = xml.read(output) if result.succeeded else None",
             "a failed run discards the effective pom it wrote, so the versions the parent declares go unchecked",
@@ -1217,13 +1219,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "effective_pom = _effective_pom_written_elsewhere(result.stdout)",
             "effective_pom = None",
             "the effective pom of a project configuring the help plugin's output goes unread",
         ),
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "_effective_pom_written_elsewhere(result.stdout)",
             "_effective_pom_written_elsewhere(result.stdout) if result.succeeded else None",
             "a failed run discards the effective pom it wrote elsewhere, so what the parent declares goes unchecked",
@@ -1252,7 +1254,7 @@ class UpdatePomXmlTest(LoggingTestCase):
                     update_pom_xmls()
                 if failure:
                     self.assert_command_failed_logged(_maven_command(), failure)
-                mock_read_bytes.assert_called_once_with(Path("/project/target/effective-pom.xml"))
+                mock_read_bytes.assert_called_once_with(_PROJECT / "target/effective-pom.xml")
                 _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
                 self.assert_no_warnings_logged()
 
@@ -1286,7 +1288,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             'return _rule(artefact, *ignored) if ignored else ""',
             "return _rule(artefact, *ignored)",
             "a pom holding nothing back gets a rule set holding an empty rule",
@@ -1377,7 +1379,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_range_module._tighter,
+            version_range._tighter,
             "return other if boundary.included else boundary",
             "return boundary",
             "two clauses ending at one version keep the first one's end, so `===34.1` holds 34.1 back despite `!=34.1`",
@@ -1396,7 +1398,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_range_module._Boundary.lower_end,
+            version_range._Boundary.lower_end,
             "'[' if self.included else '('",
             "'['",
             "a range starting past a version starts at it, so `allow[update===34.1]` holds 34.1 back",
@@ -1483,31 +1485,31 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "max(cooldown_days(declaration.marker) for declaration in declarations)",
             "cooldown_days(declarations[-1].marker)",
             "the last declaration of an artefact sets its cooldown, so a shorter one undoes a longer one before it",
         ),
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "max(cooldown_days(declaration.marker) for declaration in declarations)",
             "cooldown_days(declarations[0].marker)",
             "the first declaration of an artefact sets its cooldown, so a shorter one undoes a longer one after it",
         ),
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "for declaration in declarations if",
             "for declaration in declarations[-1:] if",
             "the last declaration's bound replaces the ones before it, so Maven crosses an earlier declaration's bound",
         ),
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "ignored = unique(",
             "ignored = (",
             "two declarations setting one bound name its range twice in the artefact's rule",
         ),
         Mutation(
-            maven_module._variant_versions,
+            versions_plugin._variant_versions,
             "_other_variants(*(declaration.current_version for declaration in declarations))",
             "_other_variants(declarations[0].current_version)",
             "the first declaration of an artefact sets its variant, so the second declaration's variant is held back",
@@ -1576,13 +1578,13 @@ class UpdatePomXmlTest(LoggingTestCase):
             "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
         ),
         Mutation(
-            maven_module._new_version,
+            versions_plugin._new_version,
             "if not pom_xml_manifest.fully_resolved(update.effective.pinned):",
             "if False:",
             "Maven Central is asked for the changes and the date of coordinates holding an unresolved property",
         ),
         Mutation(
-            maven_module._ReactorModule.update,
+            reactor_module._ReactorModule.update,
             "if result.succeeded:",
             "if effective_pom is not None:",
             "Update-time skips the updates wherever it cannot read the effective pom, although the run succeeded",
@@ -1675,15 +1677,15 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule.update,
-            "self._run_goals(options, _VERSIONS_GOALS)",
-            "self._run_goals(_VERSIONS_OPTIONS, _VERSIONS_GOALS)",
+            reactor_module._ReactorModule.update,
+            "self._run_goals(options, VERSIONS_GOALS)",
+            "self._run_goals(options[:-1], VERSIONS_GOALS)",
             "the rule set stays out of the versions run, so a group the parent declares escapes the cooldown",
         ),
         Mutation(
-            maven_module._ReactorModule.update,
-            "self._run_goals(options, _VERSIONS_GOALS)",
-            "self._run_goals_writing_effective_pom(options, _VERSIONS_GOALS)",
+            reactor_module._ReactorModule.update,
+            "self._run_goals(options, VERSIONS_GOALS)",
+            "self._run_goals_writing_effective_pom(options, VERSIONS_GOALS)",
             "the updates write the effective pom again, costing a goal per pom that the first run already paid for",
         ),
     )
@@ -1723,7 +1725,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule.update,
+            reactor_module._ReactorModule.update,
             "if result.succeeded:",
             "if True:",
             "the updates run on a model Maven could not build, so its failure is reported a second time",
@@ -1742,7 +1744,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._cooldown_versions,
+            versions_plugin._cooldown_versions,
             "days <= 0",
             "days < 0",
             "a cooldown of zero days asks the repository about the artefact and ignores the answer",
@@ -1781,8 +1783,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "maven.report_new_versions(before, after, resolved)",
-            "maven.report_new_versions(before, after, after)",
+            "versions_plugin.report_new_versions(before, after, resolved)",
+            "versions_plugin.report_new_versions(before, after, after)",
             "the report names a dependency as the pom spells it, so a group the parent declares stays a property",
         ),
     )
@@ -1899,7 +1901,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._unreportable_updates,
+            versions_plugin._unreportable_updates,
             "update.new.version_property in properties_on_central",
             "properties_on_central",
             "an unserved artefact goes unreported whenever a served artefact moved, whatever property each names",
@@ -1935,7 +1937,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.report_new_versions,
+            versions_plugin.report_new_versions,
             "in unique(zip(before, after, resolved, strict=True))",
             "in zip(before, after, resolved, strict=True)",
             "a property two declarations of one artefact name is reported as moved once per declaration, at one line",
@@ -1964,8 +1966,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "maven.report_new_versions(before, after, resolved)",
-            "maven.report_new_versions(before, resolved, resolved)",
+            "versions_plugin.report_new_versions(before, after, resolved)",
+            "versions_plugin.report_new_versions(before, resolved, resolved)",
             "Update-time reports a move from the parent's property to the version it holds, though Maven moved nothing",
         ),
     )
@@ -2042,7 +2044,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals,
+            reactor_module._ReactorModule._run_goals,
             " and result.stdout:",
             ":",
             "a missing Maven is reported twice: once by `run`, and again as a failed run that wrote nothing",
@@ -2059,19 +2061,19 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._maven,
+            reactor_module._maven,
             'f"./{_WRAPPER}" if (directory / _WRAPPER).exists() else "mvn"',
             '"mvn"',
             "a project's own Maven wrapper is passed over, so another Maven than it builds with updates it",
         ),
         Mutation(
-            maven_module._maven,
+            reactor_module._maven,
             "(directory / _WRAPPER).exists()",
             "Path(_WRAPPER).exists()",
             "the wrapper is looked for in the directory the scan runs in, so a reactor's own wrapper goes unused",
         ),
         Mutation(
-            maven_module._ReactorModule._run_goals,
+            reactor_module._ReactorModule._run_goals,
             "_maven(self.root)",
             "_maven(self.pom_xml.parent)",
             "the wrapper is looked for beside the module, so a module's run from the reactor root passes it over",
@@ -2126,7 +2128,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
+            reactor_module,
             r"\d+ projects?",
             "1 project",
             "a reactor holding more than one pom Maven cannot read is taken for a readable one",
@@ -2165,13 +2167,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.Reactor.update,
+            reactor_module.Reactor.update,
             "else None",
             "else self._changed_pom",
             "the error blames an update that a later run read the reactor after",
         ),
         Mutation(
-            maven_module.Reactor._report_unreadable,
+            reactor_module.Reactor._report_unreadable,
             "and self._first_run",
             "and True",
             "the error says the scan found the reactor unreadable, although an earlier run read it",
@@ -2220,7 +2222,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
+            reactor_module,
             r'"The build could not read \d+ projects?"',
             r'"\[ERROR\]"',
             "any failed run that reports an error stops Maven for the rest of its reactor",

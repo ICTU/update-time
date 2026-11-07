@@ -1,11 +1,26 @@
-"""What a Markdown file's own markup says about its lines."""
+"""How a file name or a content type marks a text as Markdown, and what Markdown markup says about a line."""
 
 import re
+from urllib.parse import urlparse
 
+# A Markdown file carries this extension.
+EXTENSION = ".md"
+# A server reports Markdown text under this media type.
+_CONTENT_TYPE = "text/markdown"
 # The runs of characters a fenced code block is opened and closed with.
 _FENCES = ("```", "~~~")
 # The target of an inline link, in the parentheses that follow the link's text.
 _LINK_TARGET = re.compile(r"(?<=\])\([^)]*\)")
+
+
+def is_file(name: str) -> bool:
+    """Return whether the name of a file, or of the URL serving it, says the file is written in Markdown."""
+    return urlparse(name).path.lower().endswith(EXTENSION)
+
+
+def is_content_type(content_type: str) -> bool:
+    """Return whether the content type says its text is written in Markdown, whatever parameters follow it."""
+    return content_type.partition(";")[0].strip().lower() == _CONTENT_TYPE
 
 
 def is_fence(line: str) -> bool:

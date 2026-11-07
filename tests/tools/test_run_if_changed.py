@@ -7,6 +7,7 @@ import subprocess  # nosec
 import sys
 import unittest
 from fnmatch import fnmatch
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
@@ -29,7 +30,7 @@ def answer() -> int:
 '''
 
 
-def _files_listed(paths: list[str], command_exit_status: int = 0) -> Mock:
+def _files_listed(paths: list[Path], command_exit_status: int = 0) -> Mock:
     """Return a stub for `subprocess.run` whose `git ls-files` lists the files, reading the list at each call.
 
     It lists the files that match a pathspec the command ends on, as git does. Any other command exits with the given
@@ -39,7 +40,7 @@ def _files_listed(paths: list[str], command_exit_status: int = 0) -> Mock:
     def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         if command[0] == "git":
             pathspecs = [argument for argument in command[2:] if not argument.startswith("-")]
-            listed = [path for path in paths if any(fnmatch(path, pathspec) for pathspec in pathspecs)]
+            listed = [path for path in paths if any(fnmatch(path.as_posix(), pathspec) for pathspec in pathspecs)]
             return subprocess.CompletedProcess(command, 0, stdout="".join(f"{path}\0" for path in listed), stderr="")
         return subprocess.CompletedProcess(command, command_exit_status)
 
@@ -73,7 +74,12 @@ _COMMAND = ("just", "test")
 # Every test gives the tool these inputs and this record, unless it names its own.
 _SHARED_OPTIONS = ("--inputs", "*.py", "--record", "py-code")
 # The file that keeps the fingerprints of that record.
-_RECORD_FILE = "build/py-code-fingerprints.json"
+_RECORD_FILE = Path("build/py-code-fingerprints.json")
+# The Python files most tests change.
+_ANSWER = Path("src/answer.py")
+_OTHER = Path("src/other.py")
+# The input other than Python that tests change.
+_UV_LOCK = Path("uv.lock")
 
 
 def _argv(*options: str) -> list[str]:
@@ -92,53 +98,53 @@ class MainTest(unittest.TestCase):
 
     def test_without_a_fingerprint_the_code_is_fingerprinted_and_the_command_run(self):
         """Test that, where no fingerprint exists, the tool runs the command and fingerprints the code per file."""
-        files = FakeFiles({"src/answer.py": _MODULE})
-        with _patched(_files_listed(["src/answer.py"]), files):
+        files = FakeFiles({_ANSWER: _MODULE})
+        with _patched(_files_listed([_ANSWER]), files):
             self.assertEqual(run_if_changed.main(), 0)
-        self.assertEqual(list(json.loads(files.files[_RECORD_FILE])), ["src/answer.py"])
+        self.assertEqual(list(json.loads(files[_RECORD_FILE])), [str(_ANSWER)])
 
     def test_a_change_to_an_input_runs_the_command_and_a_change_elsewhere_skips_it(self):
         """Test that the files `--inputs` names decide whether the command runs, and the other files do not."""
         argv = _argv("--inputs", "tools/*.py")
-        files = FakeFiles({"src/answer.py": _MODULE, "tools/answer.py": _MODULE})
-        run = _files_listed(["src/answer.py", "tools/answer.py"])
+        files = FakeFiles({_ANSWER: _MODULE, Path("tools/answer.py"): _MODULE})
+        run = _files_listed([_ANSWER, Path("tools/answer.py")])
         with patch.object(sys, "argv", argv), _patched(run, files):
             run_if_changed.main()
-            files.files["src/answer.py"] = _MODULE.replace("42", "43")
+            files[_ANSWER] = _MODULE.replace("42", "43")
             self.assertEqual(run_if_changed.main(), _SKIPPED)
-            files.files["tools/answer.py"] = _MODULE.replace("42", "43")
+            files[Path("tools/answer.py")] = _MODULE.replace("42", "43")
             self.assertEqual(run_if_changed.main(), 0)
         self.assertEqual(_commands_run(run), [_COMMAND, _COMMAND])
 
     def test_an_input_other_than_python_counts_as_changed_by_any_edit(self):
         """Test that an input other than a Python file is fingerprinted by its content, parsing as Python or not."""
-        argv = _argv("--inputs", "uv.lock")
+        argv = _argv("--inputs", str(_UV_LOCK))
         for case, lock in (("parses as Python", "version = 1\n"), ("does not parse as Python", "lock-version = 1\n")):
-            files = FakeFiles({"uv.lock": lock})
+            files = FakeFiles({_UV_LOCK: lock})
             with (
                 self.subTest(case),
                 patch.object(sys, "argv", argv),
-                _patched(_files_listed(["uv.lock"]), files),
+                _patched(_files_listed([_UV_LOCK]), files),
             ):
                 run_if_changed.main()
                 self.assertEqual(run_if_changed.main(), _SKIPPED)
-                files.files["uv.lock"] = f"{lock}# A comment.\n"
+                files[_UV_LOCK] = f"{lock}# A comment.\n"
                 self.assertEqual(run_if_changed.main(), 0)
 
     def test_an_input_git_ignores_counts_where_named_by_its_path(self):
         """Test that deleting a file git ignores, which the inputs name by its path, runs the command."""
-        files = FakeFiles({"uv.lock": "version = 1\n", ".venv/pyvenv.cfg": "home = /usr/bin\n"})
-        run = _files_listed(["uv.lock"])  # Git leaves the ignored environment out of its listing.
-        with patch.object(sys, "argv", _argv("--inputs", "uv.lock", ".venv/pyvenv.cfg")), _patched(run, files):
+        files = FakeFiles({_UV_LOCK: "version = 1\n", Path(".venv/pyvenv.cfg"): "home = /usr/bin\n"})
+        run = _files_listed([_UV_LOCK])  # Git leaves the ignored environment out of its listing.
+        with patch.object(sys, "argv", _argv("--inputs", str(_UV_LOCK), ".venv/pyvenv.cfg")), _patched(run, files):
             run_if_changed.main()
             self.assertEqual(run_if_changed.main(), _SKIPPED)
-            del files.files[".venv/pyvenv.cfg"]
+            del files[Path(".venv/pyvenv.cfg")]
             self.assertEqual(run_if_changed.main(), 0)
 
     def test_each_record_keeps_its_own_fingerprint(self):
         """Test that a command passing under one record leaves the command of another record to run."""
-        files = FakeFiles({"src/answer.py": _MODULE})
-        run = _files_listed(["src/answer.py"])
+        files = FakeFiles({_ANSWER: _MODULE})
+        run = _files_listed([_ANSWER])
         with _patched(run, files):
             with patch.object(sys, "argv", _argv("--record", "lint")):
                 self.assertEqual(run_if_changed.main(), 0)
@@ -146,51 +152,49 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(run_if_changed.main(), 0)
         self.assertEqual(_commands_run(run), [_COMMAND, _COMMAND])
         self.assertEqual(
-            sorted(files.files),
-            ["build/audit-fingerprints.json", "build/lint-fingerprints.json", "src/answer.py"],
+            sorted(files),
+            [Path("build/audit-fingerprints.json"), Path("build/lint-fingerprints.json"), _ANSWER],
         )
 
     def test_the_command_is_passed_the_files_that_changed_among_those_it_lints(self):
         """Test that `--pass-changed` hands the command the files it names that changed, or all without a record."""
-        files = FakeFiles({"src/answer.py": _MODULE, "src/other.py": _MODULE})
-        run = _files_listed(["src/answer.py", "src/other.py"])
+        files = FakeFiles({_ANSWER: _MODULE, _OTHER: _MODULE})
+        run = _files_listed([_ANSWER, _OTHER])
         with (
-            patch.object(sys, "argv", _argv("--inputs", "uv.lock", "--pass-changed", "src/*.py")),
+            patch.object(sys, "argv", _argv("--inputs", str(_UV_LOCK), "--pass-changed", "src/*.py")),
             _patched(run, files),
         ):
             run_if_changed.main()
-            files.files["src/other.py"] = _MODULE.replace("42", "43")
+            files[_OTHER] = _MODULE.replace("42", "43")
             self.assertEqual(run_if_changed.main(), 0)
             self.assertEqual(run_if_changed.main(), _SKIPPED)
-        self.assertEqual(
-            _commands_run(run), [(*_COMMAND, "src/answer.py", "src/other.py"), (*_COMMAND, "src/other.py")]
-        )
+        self.assertEqual(_commands_run(run), [(*_COMMAND, str(_ANSWER), str(_OTHER)), (*_COMMAND, str(_OTHER))])
 
     def test_with_whole_files_an_edit_to_a_comment_alone_runs_the_command(self):
         """Test that `--whole-files` fingerprints a Python file whole, so an edit to a comment runs the command."""
-        files = FakeFiles({"src/answer.py": _MODULE})
+        files = FakeFiles({_ANSWER: _MODULE})
         with (
             patch.object(sys, "argv", _argv("--whole-files")),
-            _patched(_files_listed(["src/answer.py"]), files),
+            _patched(_files_listed([_ANSWER]), files),
         ):
             run_if_changed.main()
-            files.files["src/answer.py"] = _MODULE.replace("return 42", "return 42  # nosec")
+            files[_ANSWER] = _MODULE.replace("return 42", "return 42  # nosec")
             self.assertEqual(run_if_changed.main(), 0)
 
     def test_a_file_to_pass_deleted_alone_is_recorded_without_running_the_command(self):
         """Test that deleting one of the files `--pass-changed` names, and nothing else, skips the command."""
-        files = FakeFiles({"src/answer.py": _MODULE, "src/other.py": _MODULE})
+        files = FakeFiles({_ANSWER: _MODULE, _OTHER: _MODULE})
         # Git keeps listing a tracked file removed from the working tree until the removal is committed.
-        run = _files_listed(["src/answer.py", "src/other.py"])
+        run = _files_listed([_ANSWER, _OTHER])
         with (
-            patch.object(sys, "argv", _argv("--inputs", "uv.lock", "--pass-changed", "src/*.py")),
+            patch.object(sys, "argv", _argv("--inputs", str(_UV_LOCK), "--pass-changed", "src/*.py")),
             _patched(run, files),
         ):
             run_if_changed.main()
-            del files.files["src/other.py"]
+            del files[_OTHER]
             self.assertEqual(run_if_changed.main(), _SKIPPED)
         self.assertEqual(len(_commands_run(run)), 1)
-        self.assertEqual(list(json.loads(files.files[_RECORD_FILE])), ["src/answer.py"])
+        self.assertEqual(list(json.loads(files[_RECORD_FILE])), [str(_ANSWER)])
 
     def test_a_changed_input_hands_the_command_every_file_to_pass(self):
         """Test that editing or deleting an input `--inputs` names hands the command every file `--pass-changed` names.
@@ -198,26 +202,26 @@ class MainTest(unittest.TestCase):
         That holds for an input `--pass-changed` names as well.
         """
         for case, path, content in (
-            ("an input edited", "uv.lock", "version = 2\n"),
-            ("an input deleted", "uv.lock", None),
-            ("a file to pass that is an input as well, edited", "src/answer.py", _MODULE.replace("42", "43")),
+            ("an input edited", _UV_LOCK, "version = 2\n"),
+            ("an input deleted", _UV_LOCK, None),
+            ("a file to pass that is an input as well, edited", _ANSWER, _MODULE.replace("42", "43")),
         ):
-            files = FakeFiles({"uv.lock": "version = 1\n", "src/answer.py": _MODULE, "src/other.py": _MODULE})
-            run = _files_listed(["uv.lock", "src/answer.py", "src/other.py"])
-            argv = _argv("--inputs", "uv.lock", "src/answer.py", "--pass-changed", "src/*.py")
+            files = FakeFiles({_UV_LOCK: "version = 1\n", _ANSWER: _MODULE, _OTHER: _MODULE})
+            run = _files_listed([_UV_LOCK, _ANSWER, _OTHER])
+            argv = _argv("--inputs", str(_UV_LOCK), str(_ANSWER), "--pass-changed", "src/*.py")
             with self.subTest(case), patch.object(sys, "argv", argv), _patched(run, files):
                 run_if_changed.main()
                 if content is None:
-                    del files.files[path]
+                    del files[path]
                 else:
-                    files.files[path] = content
+                    files[path] = content
                 self.assertEqual(run_if_changed.main(), 0)
-                self.assertEqual(_commands_run(run)[1:], [(*_COMMAND, "src/answer.py", "src/other.py")])
+                self.assertEqual(_commands_run(run)[1:], [(*_COMMAND, str(_ANSWER), str(_OTHER))])
 
     def test_code_equal_to_the_fingerprint_is_skipped(self):
         """Test that a second run over unchanged code exits with the skip status and does not run the command."""
-        files = FakeFiles({"src/answer.py": _MODULE})
-        run = _files_listed(["src/answer.py"])
+        files = FakeFiles({_ANSWER: _MODULE})
+        run = _files_listed([_ANSWER])
         with _patched(run, files):
             run_if_changed.main()
             run.reset_mock()
@@ -235,12 +239,12 @@ class MainTest(unittest.TestCase):
     def test_a_command_that_fails_leaves_no_fingerprint_and_gives_a_failing_exit_status(self):
         """Test that a failing command does not leave a fingerprint, and gives its status, or 1 for the skip status."""
         for case, command_exit_status, exit_status in (("another status", 2, 2), ("the skip status", _SKIPPED, 1)):
-            files = FakeFiles({"src/answer.py": _MODULE})
-            run = _files_listed(["src/answer.py"], command_exit_status=command_exit_status)
+            files = FakeFiles({_ANSWER: _MODULE})
+            run = _files_listed([_ANSWER], command_exit_status=command_exit_status)
             with self.subTest(case), _patched(run, files):
                 self.assertEqual(run_if_changed.main(), exit_status)
                 self.assertEqual(_commands_run(run), [_COMMAND])
-                self.assertNotIn(_RECORD_FILE, files.files)
+                self.assertNotIn(_RECORD_FILE, files)
 
     @kills(
         Mutation(
@@ -281,16 +285,16 @@ class MainTest(unittest.TestCase):
             "its code": (_MODULE.replace("return 42", "return 43"), 0, True),
         }
         for edit, (edited, exit_status, rewritten) in edits.items():
-            files = FakeFiles({"src/answer.py": _MODULE})
+            files = FakeFiles({_ANSWER: _MODULE})
             with (
                 self.subTest(edit=edit),
-                _patched(_files_listed(["src/answer.py"]), files),
+                _patched(_files_listed([_ANSWER]), files),
             ):
                 run_if_changed.main()
-                fingerprint = files.files[_RECORD_FILE]
-                files.files["src/answer.py"] = edited
+                fingerprint = files[_RECORD_FILE]
+                files[_ANSWER] = edited
                 self.assertEqual(run_if_changed.main(), exit_status)
-                self.assertEqual(files.files[_RECORD_FILE] != fingerprint, rewritten)
+                self.assertEqual(files[_RECORD_FILE] != fingerprint, rewritten)
 
     @kills(
         Mutation(
@@ -305,18 +309,18 @@ class MainTest(unittest.TestCase):
         """Test that, after a first run, a file added or removed is reported as a code change."""
         # Git keeps listing a tracked file removed from the working tree until the removal is committed, so the
         # listing keeps it.
-        edits = {"a file removed": ({"src/other.py"}, {}), "a file added": (set(), {"src/new.py": _MODULE})}
+        edits = {"a file removed": ({_OTHER}, {}), "a file added": (set(), {Path("src/new.py"): _MODULE})}
         for edit, (removed, added) in edits.items():
-            files = FakeFiles({"src/answer.py": _MODULE, "src/other.py": _MODULE})
-            listed = ["src/answer.py", "src/other.py"]
+            files = FakeFiles({_ANSWER: _MODULE, _OTHER: _MODULE})
+            listed = [_ANSWER, _OTHER]
             with (
                 self.subTest(edit=edit),
                 _patched(_files_listed(listed), files),
             ):
                 run_if_changed.main()
                 for path in removed:
-                    del files.files[path]
-                files.files.update(added)
+                    del files[path]
+                files.update(added)
                 listed.extend(added)
                 self.assertEqual(run_if_changed.main(), 0)
 
@@ -331,14 +335,14 @@ class MainTest(unittest.TestCase):
     )
     def test_a_python_file_that_does_not_parse_is_a_code_change_and_says_so(self):
         """Test that a file that does not parse is reported as a code change, and that stderr names it."""
-        files = FakeFiles({"src/answer.py": "def answer(:\n"})
+        files = FakeFiles({_ANSWER: "def answer(:\n"})
         with (
-            _patched(_files_listed(["src/answer.py"]), files),
+            _patched(_files_listed([_ANSWER]), files),
             contextlib.redirect_stderr(io.StringIO()) as stderr,
         ):
             self.assertEqual(run_if_changed.main(), 0)
-        self.assertIn("src/answer.py", stderr.getvalue())
-        self.assertNotIn(_RECORD_FILE, files.files)
+        self.assertIn(str(_ANSWER), stderr.getvalue())
+        self.assertNotIn(_RECORD_FILE, files)
 
     @kills(
         Mutation(
@@ -352,13 +356,13 @@ class MainTest(unittest.TestCase):
     )
     def test_a_fingerprint_that_does_not_parse_runs_the_command_and_says_so(self):
         """Test that a fingerprint that is not JSON runs the command, and that stderr names the fingerprint."""
-        files = FakeFiles({"src/answer.py": _MODULE, _RECORD_FILE: "{"})
+        files = FakeFiles({_ANSWER: _MODULE, _RECORD_FILE: "{"})
         with (
-            _patched(_files_listed(["src/answer.py"]), files),
+            _patched(_files_listed([_ANSWER]), files),
             contextlib.redirect_stderr(io.StringIO()) as stderr,
         ):
             self.assertEqual(run_if_changed.main(), 0)
-        self.assertIn(_RECORD_FILE, stderr.getvalue())
+        self.assertIn(str(_RECORD_FILE), stderr.getvalue())
 
     @kills(
         Mutation(

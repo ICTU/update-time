@@ -13,7 +13,7 @@ from update_time.io.log import get_logger
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_version import PYTHON, PYTHON_VERSION_REFERENCE
 from update_time.markers.marker import Scope
-from update_time.package_managers import uv
+from update_time.package_managers.uv import uv
 from update_time.references.file import update_file
 from update_time.references.match import matched_reference, reference_matches
 from update_time.sources.oci import get_latest_tag

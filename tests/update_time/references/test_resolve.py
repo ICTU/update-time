@@ -27,7 +27,7 @@ from tests.update_time.helpers import (
     resolved_reference,
     staleness_disabled,
 )
-from tests.update_time.references.helpers import mock_project_getter, new_version_getter
+from tests.update_time.references.helpers import mock_logger, mock_project_getter, new_version_getter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -90,7 +90,7 @@ class LatestVersionTest(unittest.TestCase):
     def setUp(self) -> None:
         """Use a mock logger and path so log calls can be asserted."""
         super().setUp()
-        self.log = Mock()
+        self.log = mock_logger()
         self.path = Mock()
 
     def reference(self, dependency: str = "python") -> Reference:
@@ -270,7 +270,7 @@ class ReportProjectChecksTest(unittest.TestCase):
     def setUp(self) -> None:
         """Use a mock logger and path so log calls can be asserted."""
         super().setUp()
-        self.log = Mock()
+        self.log = mock_logger()
         self.path = Mock()
 
     def project(self, archival: Archival) -> Mock:

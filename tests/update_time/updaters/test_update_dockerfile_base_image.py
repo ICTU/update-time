@@ -14,11 +14,11 @@ from update_time.primitives.location import Location
 from update_time.updaters import update_dockerfile_base_image
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
-from tests.helpers import mock_path
+from tests.helpers import mock_path, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_hub_version, docker_tag, message_of
+from tests.update_time.helpers import SCAN_ROOT, docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -83,7 +83,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 self.run_updater(mock_dockerfile)
                 expected = f"{indentation}FROM python:3.14.7@{DIGEST} AS deps\nFROM deps\n"
                 mock_dockerfile.write_text.assert_called_once_with(expected)
-                requested = "".join(call.args[0] for call in self.requests.call_args_list)
+                requested = "".join(requested_urls(self.requests))
                 self.assertNotIn("deps", requested)
                 location = Location(mock_dockerfile, 2)
                 self.assert_image_not_looked_up_logged("deps", "", location, ImageNotLookedUp.BUILD_STAGE)
@@ -627,7 +627,7 @@ def _scanned_dockerfiles(*tree: str) -> list[str]:
     def glob(self: Path, pattern: str, *, case_sensitive: bool | None = None, **_: object) -> list[Path]:
         return [self / path for path in tree if PurePath(path).full_match(pattern, case_sensitive=case_sensitive)]
 
-    with patch("pathlib.Path.cwd", return_value=Path("/")), patch("pathlib.Path.glob", autospec=True, side_effect=glob):
+    with patch("pathlib.Path.cwd", return_value=SCAN_ROOT), patch("pathlib.Path.glob", autospec=True, side_effect=glob):
         return [str(path.relative_to("/")) for path in glob_for(file_type.DOCKERFILES)]
 
 

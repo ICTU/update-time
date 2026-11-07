@@ -7,17 +7,19 @@ from update_time.io.log import get_logger
 from update_time.manifests import pyproject_toml as pyproject_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_dependency_toml import is_well_formed
-from update_time.package_managers import uv
+from update_time.package_managers.uv import marker_policy, uv
+from update_time.package_managers.uv.lock import update_workspaces
 from update_time.updaters.uv_pins import warn_about_pins
 
 _LOG = get_logger("pyproject.toml")
 
 
 def update_pyproject_tomls() -> None:
-    """Find all uv-managed pyproject.toml files, update them, and then update the uv.lock files.
+    """Find all uv-managed pyproject.toml files, and update their exact pins and their uv.lock files.
 
     uv runs only for a pyproject.toml that declares a dependency for it to resolve, since `uv lock` writes a uv.lock
     beside any pyproject.toml it runs for. Update-time checks the pins of every uv-managed pyproject.toml.
+    Where uv cannot lock a workspace's new pins, each pyproject.toml the run rewrote gets back the pins it held before.
     """
     uv_projects: list[PyprojectToml] = []
     projects_with_dependencies: list[PyprojectToml] = []
@@ -36,20 +38,12 @@ def update_pyproject_tomls() -> None:
                 projects_with_dependencies.append(pyproject_toml)
             else:
                 _LOG.no_dependencies(path, "uv", "resolve")
-                uv.report_file_markers(pyproject_toml, _LOG)
-    # Persist the cooldown into config before running uv, so `uv tree`/`uv lock` read it and the lockfile they
-    # produce stays reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`).
-    uv.configure_cooldown([pyproject_toml.path for pyproject_toml in projects_with_dependencies])
-    # Update every pyproject.toml first, then lock (a uv workspace shares one lockfile, so all member manifests
-    # must be bumped before locking). Skip the lockfile update for files whose `uv tree` failed: it would fail too.
-    updated = [
-        pyproject_toml
-        for pyproject_toml in projects_with_dependencies
-        if uv.update_pyproject_toml(pyproject_toml, _LOG)
-    ]
-    for pyproject_toml in updated:
-        uv.update_uv_lock(pyproject_toml.path)
-    warn_about_pins(uv_projects, _LOG)
+                marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.MARKER_POLICY)
+    # Persist the cooldown into config before running uv, so `uv lock` reads it and the lockfile it produces stays
+    # reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`). Then update each workspace, so the
+    # files get the text they hold now back where uv cannot lock.
+    uv.configure_cooldown(projects_with_dependencies)
+    warn_about_pins(uv_projects, _LOG, update_workspaces(projects_with_dependencies, _LOG))
 
 
 def main() -> None:  # pragma: no cover

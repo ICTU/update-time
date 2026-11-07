@@ -8,11 +8,11 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from update_time.domain import changelog
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, PinnedDependency, Release, Yank
+from update_time.formats import markdown as markdown_format
 from update_time.io.log import Logger
 from update_time.sources import github, pypi
 from update_time.sources.pypi import (
@@ -197,8 +197,8 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._changelog_from_url,
-            "markdown=is_markdown_content_type(content_type) or is_markdown_file(url)",
-            "markdown=is_markdown_file(url)",
+            "markdown=markdown.is_content_type(content_type) or markdown.is_file(url)",
+            "markdown=markdown.is_file(url)",
             "the content type a changelog URL is served with is passed over, so its Markdown is shown raw",
         ),
     )
@@ -218,14 +218,14 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._changelog_from_url,
-            "markdown=is_markdown_content_type(content_type) or is_markdown_file(url)",
+            "markdown=markdown.is_content_type(content_type) or markdown.is_file(url)",
             "markdown=True",
             "a changelog URL's extension is passed over, so a reStructuredText changelog is read as Markdown",
         ),
         Mutation(
-            changelog.is_markdown_file,
-            "return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)",
-            "return name.lower().endswith(MARKDOWN_EXTENSION)",
+            markdown_format.is_file,
+            "return urlparse(name).path.lower().endswith(EXTENSION)",
+            "return name.lower().endswith(EXTENSION)",
             "a query or a fragment after a URL's extension hides it, so its Markdown is shown raw",
         ),
     )
@@ -343,7 +343,7 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._changelog_from_description,
-            "markdown=is_markdown_content_type(content_type)",
+            "markdown=markdown.is_content_type(content_type)",
             "markdown=True",
             "the content type is passed over, so a reStructuredText description is read as Markdown",
         ),
@@ -457,7 +457,7 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             github._changes_from_tree,
-            "markdown=is_markdown_file(name)",
+            "markdown=markdown.is_file(name)",
             "markdown=False",
             "a Markdown changelog below a documentation directory is read as text, so its markup is shown raw",
         ),

@@ -792,7 +792,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     @kills(
         Mutation(
             github._changes_from_files,
-            'markdown=is_markdown_file(entry["name"])',
+            'markdown=markdown.is_file(entry["name"])',
             "markdown=False",
             "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
         ),

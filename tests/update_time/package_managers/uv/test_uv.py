@@ -8,8 +8,8 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
-from update_time.package_managers import uv
-from update_time.package_managers.uv import (
+from update_time.package_managers.uv import uv
+from update_time.package_managers.uv.uv import (
     _persist_exclude_newer,
     _workspace_root,
     _workspace_table,
@@ -152,30 +152,30 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
 class ConfigureCooldownTest(unittest.TestCase):
     """Unit tests for orchestrating the cooldown persistence across a run's projects (workspace routing mocked)."""
 
-    @patch("update_time.package_managers.uv._persist_exclude_newer")
-    @patch("update_time.package_managers.uv._workspace_root")
+    @patch("update_time.package_managers.uv.uv._persist_exclude_newer")
+    @patch("update_time.package_managers.uv.uv._workspace_root")
     def test_writes_once_per_workspace_root(self, workspace_root: Mock, persist: Mock):
         """Test that members sharing a workspace root yield a single write to that root."""
         root = Path("/ws/pyproject.toml")
         workspace_root.return_value = root  # Every member resolves to the same root.
         members = [Path("/ws/packages/a/pyproject.toml"), Path("/ws/packages/b/pyproject.toml"), root]
-        configure_cooldown(members)
+        configure_cooldown([PyprojectToml(member) for member in members])
         persist.assert_called_once_with(root)
 
-    @patch("update_time.package_managers.uv._persist_exclude_newer")
-    @patch("update_time.package_managers.uv._workspace_root")
+    @patch("update_time.package_managers.uv.uv._persist_exclude_newer")
+    @patch("update_time.package_managers.uv.uv._workspace_root")
     def test_persists_each_distinct_root(self, workspace_root: Mock, persist: Mock):
         """Test that standalone projects (each its own root) are all persisted."""
         workspace_root.side_effect = lambda pyproject_toml: pyproject_toml
         first, second = Path("/a/pyproject.toml"), Path("/b/pyproject.toml")
-        configure_cooldown([first, second])
+        configure_cooldown([PyprojectToml(first), PyprojectToml(second)])
         self.assertEqual(persist.call_args_list, [call(first), call(second)])
 
-    @patch("update_time.package_managers.uv._persist_exclude_newer")
+    @patch("update_time.package_managers.uv.uv._persist_exclude_newer")
     @patch_environ({"UV_EXCLUDE_NEWER": "2024-01-01"})
     def test_environment_override_writes_nothing(self, persist: Mock):
         """Test that nothing is persisted when the user sets the UV_EXCLUDE_NEWER environment variable."""
-        configure_cooldown([Path("/proj/pyproject.toml")])
+        configure_cooldown([PyprojectToml(Path("/proj/pyproject.toml"))])
         persist.assert_not_called()
 
 
@@ -188,7 +188,7 @@ class WorkspaceRootTest(unittest.TestCase):
     def workspace_at_root(self, **workspace: object):
         """Patch `_workspace_table` so only the root declares the given `[tool.uv.workspace]` table."""
         return patch(
-            "update_time.package_managers.uv._workspace_table",
+            "update_time.package_managers.uv.uv._workspace_table",
             side_effect=lambda pyproject_toml: workspace if pyproject_toml == self.ROOT else None,
         )
 
@@ -204,7 +204,7 @@ class WorkspaceRootTest(unittest.TestCase):
 
     def test_standalone_resolves_to_self(self):
         """Test that a project in no workspace resolves to itself."""
-        with patch("update_time.package_managers.uv._workspace_table", return_value=None):
+        with patch("update_time.package_managers.uv.uv._workspace_table", return_value=None):
             self.assertEqual(self.MEMBER, _workspace_root(self.MEMBER))
 
     def test_excluded_member_resolves_to_self(self):

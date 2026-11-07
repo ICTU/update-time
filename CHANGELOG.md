@@ -6,11 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Narrow the versions uv locks for a `pyproject.toml` or inline script metadata dependency by the bound of its marker, and keep a dependency without an exact pin on its locked version where its marker says `ignore[update]`, in a `pyproject.toml` and in a script that has a lock. See [#508](https://github.com/ICTU/update-time/issues/508).
+
 ### Fixed
 
 - Report a version that npm, or uv or pip-compile recompiling a requirements file, moves back to honour the cooldown as moved back, rather than as a new version with the older version's changelog. Closes [#505](https://github.com/ICTU/update-time/issues/505).
 - Keep a `.python-version` entry within the `requires-python` of the project's `pyproject.toml`, so uv still runs for the project, and warn about an entry outside it. Closes [#509](https://github.com/ICTU/update-time/issues/509).
 - Match each directory `--exclude-path` names relative to the scan root, also for the YAML files under `.github/`, CircleCI configs, Helm charts, and the Sphinx config. Closes [#504](https://github.com/ICTU/update-time/issues/504).
+- Move each exact pin of a `pyproject.toml` or of inline script metadata to the newest version that installs together with the other dependencies, rather than to the newest release of its package, and leave a pin with an environment marker as it is. See [#508](https://github.com/ICTU/update-time/issues/508).
+- Report a version that the `uv.lock` of a `pyproject.toml`, or the lock of a script, moves back to honour the cooldown as moved back. See [#508](https://github.com/ICTU/update-time/issues/508).
 
 ## 0.0.55 - 2026-11-01
 

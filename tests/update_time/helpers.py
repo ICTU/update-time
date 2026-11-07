@@ -46,9 +46,29 @@ if TYPE_CHECKING:
     from update_time.markers.directive import RedundancyReason
 
 
-def declaration(dependency: str, version: str, path: Mock, line: int, position: int) -> Declaration:
-    """Return the declaration a file makes at the line, of a dependency PyPI serves a release for."""
-    return Declaration(dependency, version, Location(path, line), uv_sourced=False, direct_url=False, position=position)
+def declaration(  # noqa: PLR0913 — a declaration is that many facts
+    dependency: str,
+    version: str,
+    path: Mock,
+    line: int,
+    position: int,
+    *,
+    uv_sourced: bool = False,
+    direct_url: bool = False,
+    build_requirement: bool = False,
+    environment_marker: str = "",
+) -> Declaration:
+    """Return the declaration a file makes at the line, by default of a dependency PyPI serves a release for."""
+    return Declaration(
+        dependency,
+        version,
+        Location(path, line),
+        uv_sourced=uv_sourced,
+        direct_url=direct_url,
+        build_requirement=build_requirement,
+        environment_marker=environment_marker,
+        position=position,
+    )
 
 
 @cache
@@ -745,9 +765,9 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that a single 'command wrote to stderr' warning was logged, optionally for a given command/stderr."""
         self.assert_logged(message_of(Logger.command_stderr), command=command, stderr=stderr)
 
-    def assert_uv_dependencies_not_updated_logged(self, path: Path) -> None:
-        """Assert that the file's dependencies were reported as not updated, because `uv tree` failed."""
-        self.assert_error_logged(message_of(Logger.uv_dependencies_not_updated), location=Location(path))
+    def assert_uv_dependencies_not_updated_logged(self, path: Path, tool: str) -> None:
+        """Assert that the file's dependencies were reported as not updated, because the uv command failed."""
+        self.assert_error_logged(message_of(Logger.uv_dependencies_not_updated), location=Location(path), tool=tool)
 
     def assert_no_info_logged(self) -> None:
         """Assert that nothing was logged at INFO."""
@@ -831,6 +851,11 @@ def pyproject(*specs: str, marker: str = "") -> str:
     return f"[project]\ndependencies = [{dependencies}]{comment}\n"
 
 
+def uv_path_source(dependency: str) -> str:
+    """Return the `[tool.uv] sources` table that has uv resolve the dependency from a path rather than from PyPI."""
+    return f'[tool.uv.sources]\n{dependency} = {{path = "../{dependency}"}}\n'
+
+
 def days_ago(days: int) -> datetime:
     """Return the instant the given number of days ago."""
     return datetime.now(UTC) - timedelta(days=days)
@@ -841,6 +866,9 @@ def published_version(version: str, published: str | datetime) -> str:
     timestamp = published if isinstance(published, datetime) else datetime.fromisoformat(published)
     return str(DependencyVersion(version, publication=LookedUp(timestamp)))
 
+
+# The tests scan this directory, and patch it in as the working directory.
+SCAN_ROOT = pathlib.Path("/")
 
 # The artefact most Maven tests declare.
 GUAVA = "com.google.guava:guava"

@@ -12,6 +12,7 @@ from update_time.markers.marker import Scope
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import ImageNotLookedUp
+    from update_time.markers.marker import Marker
     from update_time.primitives.capability import HasCapability
 
 
@@ -28,6 +29,14 @@ class Reason(StrEnum):
     NO_ARCHIVAL_SIGNAL = "this dependency's source does not publish an archival signal"
     NO_VERSION_TO_UPDATE = "this requirement does not pin a version to update"
     BOUND_DECIDES_NOTHING = "the package manager resolves this dependency's version, so a bound decides nothing"
+    BUILD_REQUIREMENT_NOT_LOCKED = "uv does not lock a build requirement, so a bound decides nothing"
+    BUILD_REQUIREMENT_KEPT = "Update-time leaves a build requirement as it is"
+    URL_RATHER_THAN_VERSION = "this requirement names a URL rather than a version, so a bound decides nothing"
+    ENVIRONMENT_MARKER_PIN_KEPT = (
+        "Update-time leaves a pin with an environment marker as it is, so a bound decides nothing"
+    )
+    ENVIRONMENT_MARKER_PIN_LEFT = "Update-time leaves a pin with an environment marker as it is"
+    BOUND_ON_A_HELD_BACK_UPDATE = "this reference's update is held back, so a bound decides nothing"
     FOLLOWS_A_BRANCH = (
         "this reference follows a branch or a floating tag rather than a version, so a bound decides nothing"
     )
@@ -37,6 +46,8 @@ class Reason(StrEnum):
     NO_HASH_PIN = "this reference does not carry a hash pin that could drift"
     INTEGRITY_MISMATCH_NEVER_ADOPTED = "Update-time never adopts an integrity hash mismatch"
     MANAGER_RESOLVES_THE_VERSION = "the package manager resolves this dependency's version"
+    NO_LOCKED_VERSION = "the lock file does not record a version for this dependency"
+    SEVERAL_LOCKED_VERSIONS = "the lock file records more than one version of this dependency"
     COOLDOWN_PER_RUN = "the package manager applies the cooldown per run rather than per dependency"
     NO_PYPI_RELEASE = "PyPI does not serve a release for this dependency"
     NO_NPM_RELEASE = "the npm registry does not serve a release for this dependency"
@@ -154,4 +165,19 @@ DIRECTIVES = (
 WARNING_DIRECTIVES = tuple(directive for directive in DIRECTIVES if directive.scope is not Scope.COOLDOWN)
 
 # A held-back update makes each opt-in redundant, for the reason given beside the scope it opts into.
-HELD_BACK_OPT_INS = {Scope.FLOATING_PIN: Reason.NEVER_PINNED, Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED}
+_HELD_BACK_OPT_INS = {Scope.FLOATING_PIN: Reason.NEVER_PINNED, Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED}
+
+
+def opt_in_redundancy(
+    marker: Marker, scope: Scope, reason: RedundancyReason | None, *, update_held_back: bool
+) -> RedundancyReason | None:
+    """Return why the marker's opt-in to the scope is redundant, or None where the opt-in decides something.
+
+    The reference's own `reason` wins, so removing a hold-back never changes it. Without one, the opt-in is redundant
+    only where the update is held back.
+    """
+    if not marker.allows(scope):
+        return None
+    if reason is not None or not update_held_back:
+        return reason
+    return _HELD_BACK_OPT_INS[scope]

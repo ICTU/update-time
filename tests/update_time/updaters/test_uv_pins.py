@@ -1,7 +1,6 @@
 """Unit tests for the checks the updaters that delegate to uv run over the dependencies their files declare."""
 
-from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import Yank
@@ -10,7 +9,7 @@ from update_time.io.log import Logger, get_logger
 from update_time.manifests.inline_script import InlineScript
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
-from update_time.package_managers import uv as uv_module
+from update_time.package_managers.uv import uv as uv_module
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
 from update_time.updaters.uv_pins import warn_about_pins
@@ -18,10 +17,12 @@ from update_time.updaters.uv_pins import warn_about_pins
 from tests.helpers import mock_path, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
+    SCAN_ROOT,
     LoggingTestCase,
     message_of,
     pyproject,
     staleness_disabled,
+    uv_path_source,
 )
 from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, pypi_index, pypi_release, yanked_file
 from tests.update_time.updaters.fixtures import (
@@ -42,10 +43,10 @@ from tests.update_time.updaters.helpers import (
     pyproject_per_line,
 )
 
-_LOG = get_logger("uv pins")
+if TYPE_CHECKING:
+    from update_time.manifests.python_dependency_toml import PythonDependencyToml
 
-# The `[tool.uv] sources` table naming `local`, so uv resolves that dependency from a path and PyPI serves it not.
-_UV_SOURCE = '[tool.uv.sources]\nlocal = {path = "../local"}\n'
+_LOG = get_logger("uv pins")
 
 # The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about
 # another check answer it with an index that lists no version and no distribution file to read a yank from.
@@ -68,7 +69,7 @@ class PythonDependencyTomlTestCase(LoggingTestCase):
 
     def file_holding(self, contents: str) -> PyprojectToml:
         """Return a mock file holding the contents, whichever way they declare their dependencies."""
-        return PyprojectToml(mock_path(contents, parent=Path("/")))
+        return PyprojectToml(mock_path(contents, parent=SCAN_ROOT))
 
 
 @no_vulnerabilities
@@ -82,7 +83,7 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         for spec in ("package==1.0", "package>=1.0"):
             with self.subTest(spec=spec):
                 file = self.dependency_toml_file(spec)
-                warn_about_pins([file], _LOG)
+                warn_about_pins([file], _LOG, {})
                 self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     @kills(
@@ -103,22 +104,22 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         }
         for case, block in cases.items():
             with self.subTest(case=case):
-                malformed = InlineScript(mock_path(f"# /// script\n{block}# ///\n", parent=Path("/")))
+                malformed = InlineScript(mock_path(f"# /// script\n{block}# ///\n", parent=SCAN_ROOT))
                 file = self.dependency_toml_file("package>=1.0")
-                warn_about_pins([malformed, file], _LOG)
+                warn_about_pins([malformed, file], _LOG, {})
                 self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_dependency_without_an_exact_pin_the_index_lists_no_release_for(self, get: Mock):
         """Test that a dependency whose package the index lists no release for is not warned about."""
         get.return_value = pypi_index()
-        warn_about_pins([self.dependency_toml_file("package>=1.0")], _LOG)
+        warn_about_pins([self.dependency_toml_file("package>=1.0")], _LOG, {})
         self.assert_no_warnings_logged()
 
     def test_stale_pin_a_marker_silences_not_warned(self, get: Mock):
         """Test that a `set[stale-after=0]` marker silences the staleness warning, and is reported as silencing it."""
         get.return_value = dated_pypi_index("1.0")
         file = self.dependency_toml_file("package==1.0", marker="set[stale-after=0]")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_no_warnings_logged()
         self.assert_ignored_staleness_logged("package", Location(file.path, 2), "set[stale-after=0]")
 
@@ -126,7 +127,7 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         """Test that a marker on one declaration's line leaves the dependency declared below it warned about."""
         get.return_value = dated_pypi_index("1.0")
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker="set[stale-after=0]"))
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_stale_dependency_logged("other", "1.0", Location(file.path, 4))
         self.assert_no_staleness_warning_logged("package", Location(file.path, 3))
 
@@ -138,13 +139,13 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         """
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
         file = self.dependency_toml_file("package==1.0", marker="set[stale-after=90]")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_recent_pin_not_warned(self, get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD)
-        warn_about_pins([self.dependency_toml_file("package==1.0")], _LOG)
+        warn_about_pins([self.dependency_toml_file("package==1.0")], _LOG, {})
         self.assert_no_warnings_logged()
 
 
@@ -164,7 +165,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """Run the checks over a file declaring one pin, on a release its maintainer yanked, and return the file."""
         get.return_value = self.yanked_simple_api("1.0")
         file = self.dependency_toml_file("package==1.0", marker=marker)
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         return file
 
     def test_yanked_pin_warned(self, get: Mock):
@@ -177,7 +178,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """Test that a pin left on a yanked release is warned about although PyPI has a newer release to move to."""
         get.side_effect = [self.yanked_simple_api("1.0", "2.0"), pypi_release(PYPI_OLD_UPLOAD)]
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_makes_no_pypi_request_of_its_own(self, get: Mock):
@@ -193,7 +194,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """
         get.return_value = self.yanked_simple_api("1.0")
         file = self.dependency_toml_file("broken==nightly", "wild==1.0.*", "package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_a_marker_silences_the_yank_warning(self, get: Mock):
@@ -214,7 +215,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """Test that a marker on one pin's line leaves the pin declared below it warned about."""
         get.return_value = self.yanked_simple_api("1.0")
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker="ignore[yanked]"))
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("other", "1.0", Location(file.path, 4))
         self.assert_ignored_yank_logged("package", Location(file.path, 3))
 
@@ -238,7 +239,7 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
     def check_pins(self, file: PyprojectToml, *advisories: dict[str, object]) -> Mock:
         """Run the checks over the file, with OSV answering the advisories, and return the mocked OSV endpoint."""
         with osv(*advisories) as mock_post:
-            warn_about_pins([file], _LOG)
+            warn_about_pins([file], _LOG, {})
         return mock_post
 
     def test_vulnerable_pin_warned(self):
@@ -252,7 +253,7 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
         file = PyprojectToml(
             mock_path(
                 '[project]\ndependencies = ["django==3.2.0"]\n[dependency-groups]\ndev = ["django==4.2.0"]\n',
-                parent=Path("/"),
+                parent=SCAN_ROOT,
             )
         )
         self.check_pins(file, DJANGO_ADVISORY)
@@ -317,14 +318,14 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         """Test that a dependency declared without an exact pin is warned about, at the line declaring it."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
         file = self.dependency_toml_file("package>=1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
     def test_archived_dependency_a_marker_silences_not_warned(self, get: Mock):
         """Test that an `ignore[archived]` marker silences the archival warning, and is reported as silencing it."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
         file = self.dependency_toml_file("package==1.0", marker="ignore[archived]")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_no_warnings_logged()
         self.assert_ignored_archival_logged("package", Location(file.path, 2))
 
@@ -337,14 +338,14 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         for marker, index in cases.items():
             with self.subTest(marker=marker):
                 get.return_value = index
-                warn_about_pins([self.dependency_toml_file("package>=1.0", marker=marker)], _LOG)
+                warn_about_pins([self.dependency_toml_file("package>=1.0", marker=marker)], _LOG, {})
                 self.assert_no_warnings_logged()
 
     def test_stale_and_archived_dependency_warned_about_on_both_counts(self, get: Mock):
         """Test that a project whose newest release is old and that PyPI declares archived gets both warnings."""
         get.return_value = dated_pypi_index("1.0", archived=True)
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2), among_others=True)
         self.assert_archived_dependency_logged("package", Location(file.path, 2), among_others=True)
 
@@ -361,14 +362,14 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         """Test that an archived project is warned about when the staleness check is switched off."""
         get.return_value = dated_pypi_index("1.0", archived=True)
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
     def test_archived_pin_warned_at_the_cost_of_one_request(self, get: Mock):
         """Test that a pin on an archived project is warned about, reading the index the staleness check fetched."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
         self.assertEqual(get.call_count, 1)
 
@@ -385,7 +386,7 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         """Test that an archived project is warned about although the index lists no release for it."""
         get.return_value = pypi_index(archived=True)
         file = self.dependency_toml_file("package>=1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
 
@@ -394,10 +395,10 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
 class RedundantDirectiveTest(PythonDependencyTomlTestCase):
     """Unit tests for the directives that hold nothing back for the dependency carrying them."""
 
-    def check_dependencies(self, get: Mock, file: PyprojectToml) -> None:
+    def check_dependencies(self, get: Mock, file: PythonDependencyToml) -> None:
         """Run the checks over the file, with PyPI listing an undated release, so nothing is warned about as stale."""
         get.return_value = pypi_index("1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
 
     def test_a_scope_needing_a_version_is_redundant_without_an_exact_pin(self, get: Mock):
         """Test that a scope whose check needs a version reports that the dependency pins none."""
@@ -424,7 +425,7 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                 )
 
     def test_an_ignore_update_is_reported_when_it_keeps_no_pin(self, get: Mock):
-        """Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it."""
+        """Test that an `ignore[update]` on a dependency that does not pin a version is reported."""
         file = self.dependency_toml_file("package>=1.0", marker="ignore[update]")
         self.check_dependencies(get, file)
         self.assert_redundant_directive_logged(
@@ -435,27 +436,20 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
     def unserved_declarations(directive: str) -> dict[str, str]:
         """Return the contents of a file per way a declaration escapes PyPI, the directive steering its dependency."""
         return {
-            "uv source": pyproject("local==1.0", marker=directive) + _UV_SOURCE,
+            "uv source": pyproject("local==1.0", marker=directive) + uv_path_source("local"),
             "direct URL": pyproject("local @ https://example.com/local-1.0.tar.gz", marker=directive),
         }
 
     def test_an_ignore_update_keeping_an_unserved_pin_is_not_reported(self, get: Mock):
-        """Test that an `ignore[update]` on two dependencies is reported for the one that does not pin a version."""
-        file = self.file_holding(pyproject("local==1.0", "other>=1.0", marker="ignore[update]") + _UV_SOURCE)
+        """Test that an `ignore[update]` on two dependencies is reported for the one not pinning a version."""
+        file = self.file_holding(
+            pyproject("local==1.0", "other>=1.0", marker="ignore[update]") + uv_path_source("local")
+        )
         self.check_dependencies(get, file)
         self.assert_redundant_directive_logged(
             Reason.MANAGER_RESOLVES_THE_VERSION, "other", Location(file.path, 2), "ignore[update]"
         )
 
-    @kills(
-        Mutation(
-            uv_module._unchecked_scopes,
-            "return {} if declaration.names_a_release else ManagerPolicy.every_warning_scope(Reason.NO_PYPI_RELEASE)",
-            "return {}",
-            "a dependency PyPI serves no release for is judged as if it did, so a warning scope on it is reported "
-            "in the wrong words or not at all",
-        )
-    )
     def test_a_scope_is_reported_for_a_dependency_pypi_serves_no_release_for(self, get: Mock):
         """Test that each warning scope is reported for a dependency PyPI is asked about nowhere."""
         for directive in ("set[stale-after=0]", "ignore[yanked]", "set[vulnerability-level=none]", "ignore[archived]"):
@@ -466,33 +460,6 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                     self.assert_redundant_directive_logged(
                         Reason.NO_PYPI_RELEASE, "local", Location(file.path, 2), directive
                     )
-
-    def test_a_bound_is_reported_as_deciding_nothing(self, get: Mock):
-        """Test that a bound is reported for either spec, in whichever form the marker sets it."""
-        for spec in ("package==1.0", "package>=1.0"):
-            for bound in ("allow[update<5]", "ignore[minor-update]"):
-                with self.subTest(spec=spec, bound=bound):
-                    file = self.dependency_toml_file(spec, marker=bound)
-                    self.check_dependencies(get, file)
-                    self.assert_redundant_directive_logged(
-                        Reason.BOUND_DECIDES_NOTHING, "package", Location(file.path, 2), bound
-                    )
-
-    @kills(
-        Mutation(
-            delegated_module._redundant_update_directives,
-            "if bound := reference.marker.version_bound_directive:",
-            "if not reference.marker.ignores(Scope.UPDATE) and (bound := reference.marker.version_bound_directive):",
-            "the `ignore[update]` beside a bound hides it, so the directive that decides nothing goes unreported",
-        )
-    )
-    def test_a_bound_beside_an_ignore_update_is_reported(self, get: Mock):
-        """Test that a bound on a pin is reported, though the `ignore[update]` beside it does keep that pin."""
-        file = self.dependency_toml_file("package==1.0", marker="ignore[update] allow[update<5]")
-        self.check_dependencies(get, file)
-        self.assert_redundant_directive_logged(
-            Reason.BOUND_DECIDES_NOTHING, "package", Location(file.path, 2), "allow[update<5]"
-        )
 
     def test_an_opt_in_directive_is_reported(self, get: Mock):
         """Test that each opt-in is reported for the reason it decides nothing, on an exact pin and on a range."""
@@ -534,14 +501,10 @@ class UvSourcedDependencyTest(PythonDependencyTomlTestCase):
 
     def test_a_pin_with_a_uv_source_is_asked_about_nowhere(self, get: Mock):
         """Test that a pin uv resolves from a source of its own is looked up at neither PyPI nor OSV."""
-        contents = (
-            '[project]\ndependencies = ["local==1.0", "django==3.2.0"]\n'
-            '[tool.uv.sources]\nlocal = {path = "../local"}\n'
-        )
-        file = PyprojectToml(mock_path(contents, parent=Path("/")))
+        file = self.file_holding(pyproject("local==1.0", "django==3.2.0") + uv_path_source("local"))
         get.return_value = dated_pypi_index("3.2.0", upload_time=PYPI_RECENT_UPLOAD)
         with osv(DJANGO_ADVISORY) as mock_post:
-            warn_about_pins([file], _LOG)
+            warn_about_pins([file], _LOG, {})
         self.assertEqual(requested_urls(get), ["https://pypi.org/simple/django/"])
         # The first request batches every pin the check looks up; the ones after it follow from what it answered.
         self.assertEqual(mock_post.call_args_list[0].kwargs["json"], osv_queries(("django", "3.2.0")))

@@ -12,7 +12,7 @@ from urllib.parse import urlencode, urlparse
 from packaging.version import Version
 
 from update_time.domain.archival import archival_reporting
-from update_time.domain.changelog import MARKDOWN_EXTENSION, get_version_changes_from_changelog, is_markdown_file
+from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import CooldownWalk, first_eligible, within_cooldown
 from update_time.domain.dependency import (
     NO_CHANGES,
@@ -29,6 +29,7 @@ from update_time.domain.dependency import (
     is_valid,
 )
 from update_time.domain.publication import publication_date_reporting
+from update_time.formats import markdown, restructured_text
 from update_time.io.fetch import Fetched, Response, failure_reason, fetch, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import DeferredLookup, LookedUp
@@ -70,7 +71,7 @@ _RAW_GITHUB = "https://raw.githubusercontent.com"
 GITHUB = "https://github.com"
 # The names a repository gives the changelog file, and the extensions it carries, compared in lower case.
 _CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})
-_CHANGELOG_FILE_EXTENSIONS = frozenset({"", MARKDOWN_EXTENSION, ".rst", ".txt"})
+_CHANGELOG_FILE_EXTENSIONS = frozenset({"", markdown.EXTENSION, restructured_text.EXTENSION, ".txt"})
 # The names a repository gives the directory it keeps its documentation in, compared in lower case.
 _DOCUMENTATION_DIRECTORY_NAMES = frozenset({"doc", "docs"})
 
@@ -786,7 +787,7 @@ def _changes_from_files(entries: tuple[_ContentJSON, ...], version: str) -> Chan
     for entry in entries:
         url = entry["download_url"]
         if _is_changelog_file(entry["name"]) and url and (changes := _changes_from_changelog_url(url, version)):
-            return Changes(changes, markdown=is_markdown_file(entry["name"]), url=entry["html_url"] or "")
+            return Changes(changes, markdown=markdown.is_file(entry["name"]), url=entry["html_url"] or "")
     return NO_CHANGES
 
 
@@ -819,7 +820,7 @@ def _changes_from_tree(repository: GitHubRepository, directory: _ContentJSON, ve
     for path in _list_tree(directory["git_url"]):
         name = path.rpartition("/")[2]
         if _is_changelog_file(name) and (changes := _changes_from_changelog_url(f"{root_url}/{path}", version)):
-            return Changes(changes, markdown=is_markdown_file(name), url=f"{page_root_url}/{path}")
+            return Changes(changes, markdown=markdown.is_file(name), url=f"{page_root_url}/{path}")
     return NO_CHANGES
 
 

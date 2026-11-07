@@ -30,7 +30,7 @@ from update_time.domain.reference import DriftedPin, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
-from update_time.manifests.requirements_txt import Unrecompilable
+from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
 from update_time.primitives.location import Location
@@ -236,17 +236,31 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
     drift = capture.take()
 
-    log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_DECIDES_NOTHING)
-    log.redundant_directive(managed, "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION)
+    script = reference("humanize", Location(Path("tool.py"), 4))
+    log.redundant_directive(script, "allow[update<5]", Reason.BOUND_DECIDES_NOTHING)
+    log.redundant_directive(script, "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION)
+    build_requirement = reference("hatchling", Location(Path("pyproject.toml"), 3))
+    log.redundant_directive(build_requirement, "allow[update<2]", Reason.BUILD_REQUIREMENT_NOT_LOCKED)
+    log.redundant_directive(build_requirement, "ignore[update]", Reason.BUILD_REQUIREMENT_KEPT)
+    url = reference("internal-lib", Location(Path("pyproject.toml"), 9))
+    log.redundant_directive(url, "allow[update<2]", Reason.URL_RATHER_THAN_VERSION)
+    log.redundant_directive(managed, "allow[update<5]", Reason.ENVIRONMENT_MARKER_PIN_KEPT)
+    log.redundant_directive(managed, "ignore[update]", Reason.ENVIRONMENT_MARKER_PIN_LEFT)
+    log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_ON_A_HELD_BACK_UPDATE)
     log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "allow[update<5]", Reason.PINS_A_COMMIT)
     log.redundant_directive(branch, "allow[update<6]", Reason.FOLLOWS_A_BRANCH)
     log.redundant_directive(held_elsewhere, "ignore[major-update]", Reason.VERSION_HELD_ELSEWHERE)
     log.redundant_directive(plugin, "allow[update<4]", Reason.PLUGIN_NOT_UPDATED)
+    bounds = capture.take()
+
+    log.redundant_directive(managed, "ignore[major-update]", Reason.NO_LOCKED_VERSION)
+    log.redundant_directive(managed, "ignore[update]", Reason.SEVERAL_LOCKED_VERSIONS)
     return {
         "@@REDUNDANT_COOLDOWN_WARNINGS@@": cooldowns,
         "@@REDUNDANT_HASH_DRIFT_WARNINGS@@": drift,
-        "@@REDUNDANT_BOUND_WARNINGS@@": capture.take(),
+        "@@REDUNDANT_BOUND_WARNINGS@@": bounds,
+        "@@REDUNDANT_UNANCHORED_WARNINGS@@": capture.take(),
     }
 
 
@@ -470,6 +484,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_manifests_without_dependencies(log, capture),
         **_range_rewrites(log, capture),
         **_versions_moved_back(log, capture),
+        **_pin_with_environment_marker(log, capture),
+        **_unserved_new_version(log, capture),
         **_requires_python_reports(log, capture),
         **_uv_cooldown_not_set(log, capture),
         **_compiled_requirements_files(log, capture),
@@ -532,6 +548,18 @@ def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
     return {"@@RANGE_REWRITES@@": capture.take()}
+
+
+def _pin_with_environment_marker(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that a pin with an environment marker is left as it is, and pair the line."""
+    log.pin_with_environment_marker_left_as_is(reference("humanize", Location(Path("pyproject.toml"), 3), "4.15.0"))
+    return {"@@PIN_WITH_ENVIRONMENT_MARKER@@": capture.take()}
+
+
+def _unserved_new_version(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log the new version of a pin that a uv source resolves, without a changelog, and pair the line."""
+    log.new_version(reference("internal-lib", Location(Path("pyproject.toml"), 2)), DependencyVersion("1.3.0"))
+    return {"@@UNSERVED_NEW_VERSION@@": capture.take()}
 
 
 def _versions_moved_back(log: Logger, capture: _Capture) -> dict[str, str]:
@@ -601,10 +629,17 @@ def _property_moved_for_other_artefacts(log: Logger, capture: _Capture) -> dict[
 
 
 def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that the dependencies in a pyproject.toml are not updated, as `uv tree` failed or uv is not on the path."""
-    log.uv_dependencies_not_updated(Path("pyproject.toml"))
+    """Log the failures that leave the dependencies of a file as they were, and a .py file that cannot be read."""
+    log.uv_dependencies_not_updated(Path("tool.py"), "uv lock")
+    log.uv_dependencies_not_updated(Path("pyproject.toml"), "uv lock")
+    log.lock_not_read(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
+    log.file_not_written(Path("pyproject.toml"), PermissionError(13, "Permission denied", "pyproject.toml"))
+    log.file_not_restored(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
+    log.lock_not_removed(Path("tool.py.lock"), PermissionError(13, "Permission denied", "tool.py.lock"))
     log.uv_not_on_path(Path("pyproject.toml"))
-    return {"@@UV_DEPENDENCIES_NOT_UPDATED@@": capture.take()}
+    not_updated = capture.take()
+    log.unreadable_script(Path("tool.py"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"))
+    return {"@@UV_DEPENDENCIES_NOT_UPDATED@@": not_updated, "@@UNREADABLE_SCRIPT@@": capture.take()}
 
 
 def _rate_limits(log: Logger, capture: _Capture) -> dict[str, str]:

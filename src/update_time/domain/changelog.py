@@ -1,14 +1,8 @@
 """The changes a changelog records for one version."""
 
 import re
-import string
-from urllib.parse import urlparse
 
-from update_time.formats import markdown
-
-# The extension a changelog file carries, and the media type a source reports for it, when it is written in Markdown.
-MARKDOWN_EXTENSION = ".md"
-_MARKDOWN_CONTENT_TYPE = "text/markdown"
+from update_time.formats import markdown, restructured_text
 
 
 def is_markdown(changes: str) -> bool:
@@ -16,40 +10,12 @@ def is_markdown(changes: str) -> bool:
     return getattr(changes, "markdown", False)
 
 
-def is_markdown_file(name: str) -> bool:
-    """Return whether the name of a changelog file, or of the URL serving it, says it is written in Markdown."""
-    return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)
-
-
-def is_markdown_content_type(content_type: str) -> bool:
-    """Return whether the content type says its text is written in Markdown, whatever parameters follow it."""
-    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE
-
-
-# The characters reStructuredText allows a heading to be underlined with.
-_ADORNMENT_CHARACTERS = frozenset(string.punctuation)
-# The target of a reStructuredText hyperlink, in the angle brackets that follow the link's text. A match starts where
-# the whitespace before the target starts, so a long run of whitespace is not scanned again from each of its characters.
-_RESTRUCTUREDTEXT_LINK_TARGET = re.compile(r"(?<!\s)\s*<[^>]*>(?=`_)")
 # The version a changelog names at the head of a section.
 _VERSION = re.compile(r"\d+(?:\.\d+)+")
 # What a version may not follow, so the tail of a longer version does not read as a version of its own.
 _VERSION_START = r"(?<![\d.])"
 # The number of lines a version's changes are cut at where no later version ends them.
 _MAX_LENGTH = 30
-
-
-def _underline_character(lines: list[str], index: int) -> str:
-    """Return the character underlining the line at the index, or nothing when the line below underlines nothing.
-
-    reStructuredText has an underline begin in column 1, so an indented run, such as a literal block holds,
-    underlines nothing.
-    """
-    below = lines[index + 1].rstrip() if index + 1 < len(lines) else ""
-    character = below[:1]
-    if len(below) > 1 and character in _ADORNMENT_CHARACTERS and below == character * len(below):
-        return character
-    return ""
 
 
 def _heading_level(lines: list[str], index: int) -> str:
@@ -64,7 +30,7 @@ def _heading_level(lines: list[str], index: int) -> str:
         return ""
     if (marked := markdown.heading(line)) is not None:
         return "#" * marked[0]
-    return _underline_character(lines, index)
+    return restructured_text.underline_character(lines[index + 1] if index + 1 < len(lines) else "")
 
 
 def _names_version(line: str, version: str) -> bool:
@@ -75,7 +41,7 @@ def _names_version(line: str, version: str) -> bool:
     A link's target does not name a version, so `[1.0.1](compare/v1.0.0...v1.0.1)` names `1.0.1` alone, and so
     does its reStructuredText spelling.
     """
-    text = _RESTRUCTUREDTEXT_LINK_TARGET.sub("", markdown.without_link_targets(line))
+    text = restructured_text.without_link_targets(markdown.without_link_targets(line))
     return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\.?\w)", text) is not None
 
 

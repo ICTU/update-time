@@ -3,6 +3,7 @@
 import types
 import unittest
 from functools import cache
+from pathlib import Path
 from unittest.mock import patch
 
 import update_time
@@ -12,7 +13,7 @@ from update_time.package_managers.requirements_compiler import RequirementsCompi
 from update_time.sources import pypi
 from update_time.sources.pypi import release_metadata
 
-from tests.helpers import patch_get
+from tests.helpers import FakeFiles, patch_get
 from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     CacheClearingTestCase,
@@ -152,3 +153,15 @@ class AssertNoRedundantSuppressionLoggedTest(unittest.TestCase):
         pin = reference("django", create_location("requirements.txt", 1), "3.2.0")
         Logger("test").redundant_vulnerable_level(pin, VULNERABILITY_LEVEL_NONE, "none", "low")
         self.assertRaises(AssertionError, case.assert_no_redundant_suppression_logged)
+
+
+class FakeFilesTest(unittest.TestCase):
+    """Unit tests for the file system in memory."""
+
+    def test_removing_a_file_that_does_not_exist_raises_unless_that_is_allowed(self):
+        """Test that removing a missing file raises, as `Path.unlink` does, unless `missing_ok` allows it."""
+        path = Path("/missing.txt")
+        with FakeFiles().patched():
+            path.unlink(missing_ok=True)
+            with self.assertRaises(FileNotFoundError):
+                path.unlink()

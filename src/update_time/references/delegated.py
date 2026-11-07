@@ -105,14 +105,13 @@ def _redundant_update_directives[ReferenceT: SteeredReference](
 ) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each redundant directive steering the update, with the reason it is redundant.
 
-    An `ignore[update]` holds something back only where the policy keeps the reference's pin. A bound narrows
-    candidates the package manager never offers, so it decides nothing whatever the reference pins, and whatever an
-    `ignore[update]` beside it holds back.
+    The policy says why an `ignore[update]` or a bound decides nothing for the reference, whatever an `ignore[update]`
+    beside a bound holds back.
     """
-    if reference.marker.ignores(Scope.UPDATE) and not policy.keeps_the_pin(reference):
-        yield reference.marker.bound_directive, Reason.MANAGER_RESOLVES_THE_VERSION
-    if bound := reference.marker.version_bound_directive:
-        yield bound, Reason.BOUND_DECIDES_NOTHING
+    if reference.marker.ignores(Scope.UPDATE) and (reason := policy.hold_back_redundancy(reference)):
+        yield reference.marker.bound_directive, reason
+    if (bound := reference.marker.version_bound_directive) and (reason := policy.bound_redundancy(reference)):
+        yield bound, reason
 
 
 def _redundant_cooldown_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:

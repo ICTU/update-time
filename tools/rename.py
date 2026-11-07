@@ -13,7 +13,14 @@ import libcst
 from libcst.codemod import CodemodContext
 from libcst.codemod.commands.rename import RenameCommand
 from libcst.helpers import get_full_name_for_node
-from libcst.metadata import QualifiedNameProvider
+from libcst.metadata import (
+    ImportAssignment,
+    MetadataWrapper,
+    ParentNodeProvider,
+    PositionProvider,
+    QualifiedNameProvider,
+    ScopeProvider,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -54,6 +61,59 @@ def _occurrence_line(node: ast.AST, name: str) -> int | None:
             return node.lineno if name in (imported.rsplit(".", 1)[-1], bound) else None
         case _:
             return None
+
+
+class _ReferenceFinder(libcst.CSTVisitor):
+    """Find the lines where a name still refers to what sits at module level, rather than to a local of that name."""
+
+    METADATA_DEPENDENCIES = (ParentNodeProvider, PositionProvider, ScopeProvider)
+
+    def __init__(self, name: str) -> None:
+        """Remember the name to look for."""
+        super().__init__()
+        self._name = name
+        self.lines: set[int] = set()
+
+    def visit_Name(self, node: libcst.Name) -> None:  # noqa: N802
+        """Record the line of the name where it refers to what sits at module level.
+
+        An attribute does where the code reads it through an import. Another name does unless a function or a class
+        binds it between the name and the module.
+        """
+        if node.value != self._name:
+            return
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        if isinstance(parent, libcst.Attribute) and parent.attr is node:
+            refers = self._read_through_an_import(parent)
+        else:
+            refers = not self._bound_locally(node)
+        if refers:
+            self.lines.add(self.get_metadata(PositionProvider, node).start.line)
+
+    def _read_through_an_import(self, attribute: libcst.Attribute) -> bool:
+        """Return whether the attribute is read through a name an import binds, as a module's name is."""
+        root = attribute.value
+        while isinstance(root, libcst.Attribute):
+            root = root.value
+        if not isinstance(root, libcst.Name) or (scope := self.get_metadata(ScopeProvider, root, None)) is None:
+            return False
+        return any(isinstance(assignment, ImportAssignment) for assignment in scope[root.value])
+
+    def _bound_locally(self, node: libcst.Name) -> bool:
+        """Return whether a scope between the name and the module binds the name, as a parameter or a local does."""
+        scope = self.get_metadata(ScopeProvider, node, None)
+        while scope is not None and scope is not scope.globals:
+            if self._name in scope.assignments:
+                return True
+            scope = scope.parent
+        return False
+
+
+def _surviving_references(name: str, source: str) -> list[int]:
+    """Return the lines of the source where the name still refers to what sits at module level."""
+    finder = _ReferenceFinder(name)
+    MetadataWrapper(libcst.parse_module(source)).visit(finder)
+    return sorted(finder.lines)
 
 
 def stale_mentions(name: str, files: Iterable[Path]) -> list[str]:
@@ -304,7 +364,7 @@ def main() -> int:
     left = (
         []
         if member
-        else [f"{path}:{line}" for path, source in renamed.items() for line in surviving_occurrences(name, source)]
+        else [f"{path}:{line}" for path, source in renamed.items() for line in _surviving_references(name, source)]
     )
     if left:
         _report(_survivors_message(name, left, changed))

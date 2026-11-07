@@ -10,11 +10,7 @@ from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import Version
 
 from update_time.domain.archival import archival_reporting
-from update_time.domain.changelog import (
-    get_version_changes_from_changelog,
-    is_markdown_content_type,
-    is_markdown_file,
-)
+from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import CooldownWalk, first_eligible
 from update_time.domain.dependency import (
     NO_CHANGES,
@@ -32,6 +28,7 @@ from update_time.domain.dependency import (
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import with_yank_state, yank_reporting
+from update_time.formats import markdown
 from update_time.io.fetch import failure_reason, fetch
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import LookedUp
@@ -354,7 +351,7 @@ def _changelog_from_url(url: str, version: str) -> Changes:
     if content_type.startswith("text/html"):
         return NO_CHANGES
     changes = get_version_changes_from_changelog(changelog_response.text, version)
-    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url), url=url)
+    return Changes(changes, markdown=markdown.is_content_type(content_type) or markdown.is_file(url), url=url)
 
 
 def _changelog_from_description(info: _Info, package: str, version: str) -> Changes:
@@ -363,7 +360,7 @@ def _changelog_from_description(info: _Info, package: str, version: str) -> Chan
     content_type = info.get("description_content_type") or ""
     changes = Changes(
         get_version_changes_from_changelog(description, version),
-        markdown=is_markdown_content_type(content_type),
+        markdown=markdown.is_content_type(content_type),
         url=f"{_PYPI}/project/{package}/{version}/",
     )
     return changes or _changelog_from_github_url_in_description(description, package, version)

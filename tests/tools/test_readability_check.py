@@ -438,7 +438,7 @@ class MainTest(unittest.TestCase):
         tokenizer.return_value.span_tokenize.side_effect = lambda masked: [(0, len(masked))]
         files = FakeFiles() if files is None else files
         if whitelist is not None:
-            files.files["prose.txt"] = "".join(f"{sentence}\n" for sentence in whitelist)
+            files[Path("prose.txt")] = "".join(f"{sentence}\n" for sentence in whitelist)
         argv = ["check", *(() if whitelist is None else (option, "prose.txt")), *arguments]
         written = io.StringIO()
         with redirect_stdout(written), patch.object(sys, "argv", argv), files.patched():
@@ -592,7 +592,7 @@ class MainTest(unittest.TestCase):
             tokenizer, extract, *texts, whitelist=whitelist, option="--make-whitelist", files=files
         )
         self.assertEqual((exit_code, written), (0, ""))
-        return files["prose.txt"]
+        return files[Path("prose.txt")]
 
     def test_making_the_whitelist(self, tokenizer: Mock, extract: Mock):
         """Test that the file `--make-whitelist` names keeps a flagged sentence on one line only where it holds it."""

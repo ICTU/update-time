@@ -18,6 +18,9 @@ from update_time.primitives.location import Location
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, message_of
 
+# The tests run a tool in this directory.
+_PROJECT = Path("/project")
+
 
 @patch("subprocess.run")
 class RunTests(LoggingTestCase):
@@ -125,11 +128,11 @@ class ToolVersionTests(LoggingTestCase):
     def test_version_is_logged_with_the_directory_the_command_runs_in(self, mock_run: Mock):
         """Test that the version of the executable is logged with the directory the command runs in."""
         mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
-        run(Command("npm", "outdated"), cwd=Path("/project"))
+        run(Command("npm", "outdated"), cwd=_PROJECT)
         self.assert_logged(
             message_of(Logger.tool_version),
             executable="npm",
-            directory=Location(Path("/project")),
+            directory=Location(_PROJECT),
             version="11.19.1",
         )
 
@@ -147,17 +150,17 @@ class ToolVersionTests(LoggingTestCase):
     def test_version_is_asked_once_per_executable_and_directory(self, mock_run: Mock):
         """Test that an executable is asked for its version before its first command in each directory alone."""
         mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
-        project, frontend = Path("/project"), Path("/project/frontend")
-        run(Command("npm", "outdated"), cwd=project)
-        run(Command("npm", "update"), cwd=project)
+        frontend = _PROJECT / "frontend"
+        run(Command("npm", "outdated"), cwd=_PROJECT)
+        run(Command("npm", "update"), cwd=_PROJECT)
         run(Command("npm", "list"), cwd=frontend)
         run(Command("uv", "lock"))
         self.assertEqual(
             self.commands_run(mock_run),
             [
-                (Command("npm", "--version"), project),
-                (Command("npm", "outdated"), project),
-                (Command("npm", "update"), project),
+                (Command("npm", "--version"), _PROJECT),
+                (Command("npm", "outdated"), _PROJECT),
+                (Command("npm", "update"), _PROJECT),
                 (Command("npm", "--version"), frontend),
                 (Command("npm", "list"), frontend),
                 (Command("uv", "--version"), Path.cwd()),
@@ -191,11 +194,11 @@ class ToolVersionTests(LoggingTestCase):
         ):
             with self.subTest(case):
                 mock_run.side_effect = [outcome, Mock(stdout="output", stderr="")]
-                self.assertEqual(run(Command("pnpm", "outdated"), cwd=Path("/project")).stdout, "output")
+                self.assertEqual(run(Command("pnpm", "outdated"), cwd=_PROJECT).stdout, "output")
                 self.assert_logged(
                     message_of(Logger.tool_version_unknown),
                     executable="pnpm",
-                    directory=Location(Path("/project")),
+                    directory=Location(_PROJECT),
                     reason=reason,
                 )
                 self.assert_no_debug_logged()
@@ -210,7 +213,7 @@ class ToolVersionTests(LoggingTestCase):
             with self.subTest(case):
                 mock_run.reset_mock()
                 mock_run.side_effect = error
-                run(Command("pnpm", "outdated"), cwd=Path("/project"))
+                run(Command("pnpm", "outdated"), cwd=_PROJECT)
                 self.assertEqual(mock_run.call_count, 2)
                 self.assert_no_warnings_logged()
                 self.assert_error_logged(message, command=Command("pnpm", "outdated"), **fields)

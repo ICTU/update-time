@@ -8,9 +8,10 @@ from unittest.mock import ANY, DEFAULT, Mock, patch
 from update_time.domain import version_scheme
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
-from update_time.manifests import requirements_txt
-from update_time.manifests.requirements_txt import CompiledRequirementsTxt
-from update_time.package_managers import pip_tools, requirements_compiler, uv
+from update_time.lock_files import compiled_requirements_txt
+from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt
+from update_time.package_managers import moved_versions, pip_tools, requirements_compiler
+from update_time.package_managers.uv import uv
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import _compiler_for
@@ -18,7 +19,7 @@ from update_time.updaters.update_requirements_txt import _compiler_for
 from tests.helpers import FakeFiles, patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import message_of, published_version
-from tests.update_time.manifests.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
+from tests.update_time.lock_files.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
 from tests.update_time.package_managers.helpers import (
     CONFIGURED_EXCLUDE_NEWER,
     UNREADABLE_SETTINGS,
@@ -85,7 +86,7 @@ class RecompileTest(UvSettingsTestCase):
         exclude_newer = CONFIGURED_EXCLUDE_NEWER if "--exclude-newer" in command else self.configured_exclude_newer
         return self.uv_settings(exclude_newer)
 
-    def recompile(self, files: Mapping[str | Path, str], compiled: Path = _COMPILED) -> FakeFiles:
+    def recompile(self, files: Mapping[Path, str], compiled: Path = _COMPILED) -> FakeFiles:
         """Recompile the compiled file among the files, and return the files the recompile left."""
         fake_files = FakeFiles(files)
         self.mock_run.reset_mock()  # So a case of a table sees only the processes its own recompile started
@@ -161,7 +162,7 @@ class RecompileTest(UvSettingsTestCase):
 
     @kills(
         Mutation(
-            requirements_txt,
+            compiled_requirements_txt,
             r'(?:uv pip compile|pip-compile)(?:[ \t].*)?)$"',
             r'(?:uv pip compile|pip-compile)\s.*)$"',
             "Update-time reads the next header line into a bare pip-compile command",
@@ -180,7 +181,7 @@ class RecompileTest(UvSettingsTestCase):
         compiled = _ROOT / "sub" / "requirements.txt"
         contents = requirements_compiled_by_pip_compile("sub/requirements.in", output=None)
         contents = contents.replace("flask==1.0\n", "aaa==1.0\n    # via -r sub/base.in\nflask==1.0\n")
-        files: dict[str | Path, str] = {
+        files: dict[Path, str] = {
             compiled: contents,
             _ROOT / "sub" / "requirements.in": "-r base.in\nflask==1.0\n",
             _ROOT / "sub" / "base.in": "aaa==1.0\n",
@@ -611,19 +612,13 @@ class RecompileTest(UvSettingsTestCase):
 
     @kills(
         Mutation(
-            requirements_compiler.RequirementsCompiler._report_moved_versions,
-            "PEP_440.is_downgrade(old, pin.version)",
-            "False",
-            "the recompile reports a version it moved back as a new version",
-        ),
-        Mutation(
             requirements_compiler.RequirementsCompiler._recompiled,
             "self._report_moved_versions(command.executable, declarations)",
             'self._report_moved_versions("uv", declarations)',
             "a version pip-compile moved back is reported as moved back by uv",
         ),
         Mutation(
-            requirements_compiler.RequirementsCompiler._report_moved_versions,
+            moved_versions.log_moved_versions,
             "Reference(pin.name, old, location)",
             "Reference(pin.name, old, locations[name][0])",
             "a version moved back is reported at the first line declaring it alone",
@@ -656,9 +651,9 @@ class RecompileTest(UvSettingsTestCase):
             raises="packaging.version.InvalidVersion: Invalid version: '2004d'",
         ),
         Mutation(
-            requirements_compiler.RequirementsCompiler._report_moved_versions,
-            'before.get(name, "")',
-            'before.get(name, "9")',
+            moved_versions.log_moved_versions,
+            'versions_before.get(name, "")',
+            'versions_before.get(name, "9")',
             "the recompile compares a package it pins for the first time with a version the file never pinned",
         ),
     )
