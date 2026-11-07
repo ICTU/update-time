@@ -1063,6 +1063,16 @@ class Logger:
         """Log that the package manager does not run for a file that declares nothing for it to install or resolve."""
         return self._file_fields(path, manager=manager, verb=verb)
 
+    @_debug("Not running uv for %(location)s: it does not have a %(table)s table, and %(lock)s does not exist")
+    def not_a_uv_project(self, path: Path, lock: Path) -> dict[str, object]:
+        """Log that uv does not run for a pyproject.toml that uv does not manage."""
+        return self._file_fields(path, table="[tool.uv]", lock=Location(lock))
+
+    @_debug("Not running uv for %(location)s: the %(table)s table of %(root)s sets managed = false")
+    def project_marked_unmanaged(self, path: Path, root: Path) -> dict[str, object]:
+        """Log that uv does not run for a pyproject.toml whose workspace root tells uv not to manage it."""
+        return self._file_fields(path, table="[tool.uv]", root=Location(root))
+
     @_warning("Skipping %(location)s: it is not valid %(format)s")
     def invalid_file(self, path: Path, file_format: str) -> dict[str, object]:
         """Warn that a file does not parse."""

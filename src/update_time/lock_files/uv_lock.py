@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from update_time.domain.dependency import PinnedDependency
 from update_time.domain.version_scheme import PEP_440
@@ -23,6 +23,11 @@ class UvLock:
     """A lock uv writes, read per operation, so a lock uv has rewritten reads back as it now is."""
 
     path: Path
+
+    @classmethod
+    def beside(cls, pyproject_toml: Path) -> Self:
+        """Return the lock uv writes beside the pyproject.toml."""
+        return cls(pyproject_toml.parent / "uv.lock")
 
     def read(self) -> str | None:
         """Return the lock's text, or None where there is no lock."""
