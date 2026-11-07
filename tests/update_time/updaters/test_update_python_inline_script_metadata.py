@@ -232,10 +232,18 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    @kills(
+        Mutation(
+            update_python_inline_script_metadata._scripts,
+            "_LOG.path(path)",
+            "pass",
+            "a script is not logged as checked before the lines about it",
+        )
+    )
     def test_a_failed_uv_lock_of_the_script_as_written_is_reported_at_error_and_nothing_locks_after_it(
         self, run: Mock, get: Mock, glob: Mock
     ):
-        """Test that a failed lock of the script as written is reported with its markers, and nothing locks after it."""
+        """Test that a script's failed first lock is reported after its checked line, and nothing locks after it."""
         contents = script("package==1.0", marker="ignore[update]")
         left = self.updated_with_failing_lock(run, glob, contents)
         self.assertEqual(["--upgrade" in command for command in uv_locks(run)], [False])
@@ -243,16 +251,26 @@ class ScriptLockTest(_ScriptLockTestCase):
         get.assert_not_called()
         self.assert_command_stderr_logged(stderr=NO_SOLUTION)
         self.assert_uv_dependencies_not_updated_logged(_SCRIPT, "uv lock")
+        self.assert_path_logged_first(_SCRIPT)
         self.assert_recognised_marker_logged("package", Location(_SCRIPT, 4), Marker(ignored_scopes=Scope.UPDATE))
 
+    @kills(
+        Mutation(
+            update_python_inline_script_metadata._scripts,
+            "if carries_a_block:\n            _LOG.path(path)",
+            "_LOG.path(path)\n        if carries_a_block:",
+            "every .py file is logged as checked, whether or not it carries a script block",
+        )
+    )
     def test_skip_py_file_without_script_block(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a .py file without a `# /// script` block is left untouched and does not invoke uv."""
+        """Test that a .py file without a `# /// script` block is left untouched and not logged as checked."""
         contents = "import os\n\nprint(os.getcwd())\n"
         left = self.files_after_update(run, get, glob, {_SCRIPT: contents}, LOCK_FAILS)
         run.assert_not_called()
         get.assert_not_called()
         self.assertEqual(left[_SCRIPT], contents)
         self.assert_no_new_version_logged()
+        self.assert_no_debug_logged()
 
 
 @no_vulnerabilities

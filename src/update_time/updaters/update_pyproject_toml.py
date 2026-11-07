@@ -25,6 +25,7 @@ def update_pyproject_tomls() -> None:
     projects_for_uv: list[PyprojectToml] = []
     unmanaged_projects: list[PyprojectToml] = []
     for path in glob_for(PYPROJECT_TOML):
+        _LOG.path(path)
         config = toml.read(path)
         if config is None:
             _LOG.invalid_file(path, toml.FORMAT)  # Exists but isn't valid TOML: skip rather than crash on it.

@@ -671,6 +671,19 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(files_at_the_first_lock[PYPROJECT_TOML], contents + cooldown)
         self.assertEqual(left[PYPROJECT_TOML], contents + cooldown)
 
+    def test_a_pyproject_toml_is_logged_as_checked_before_any_other_line_about_it(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that the line saying the pyproject.toml is checked comes before the cooldown the run sets in it."""
+
+        def configure_cooldown(pyproject_tomls: list[PyprojectToml]) -> None:
+            for pyproject_toml in pyproject_tomls:
+                uv._LOG.configured_uv_cooldown(pyproject_toml.path, "7 days")
+
+        with patch("update_time.package_managers.uv.uv.configure_cooldown", side_effect=configure_cooldown):
+            self.updated_pin(run, get, glob)
+        self.assert_path_logged_first(PYPROJECT_TOML)
+
     def test_without_an_earlier_lock_only_the_exact_pin_is_reported_and_the_new_uv_lock_stays(
         self, run: Mock, get: Mock, glob: Mock
     ):
@@ -941,7 +954,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_no_new_version_logged()
 
     def test_skip_invalid_pyproject_toml(self, run: Mock, get: Mock, glob: Mock):
-        """Test that an unparsable pyproject.toml is skipped with a warning, without running uv or crashing."""
+        """Test that an unparsable pyproject.toml is logged as checked, then skipped with a warning, and uv not run."""
         not_utf_8 = mock_path("", parent=SCAN_ROOT)
         not_utf_8.read_text.side_effect = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
         for case, mock_pyproject_toml in (
@@ -955,6 +968,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 get.assert_not_called()
                 mock_pyproject_toml.write_text.assert_not_called()
                 self.assert_invalid_file_logged(mock_pyproject_toml, "TOML")
+                self.assert_path_logged_first(mock_pyproject_toml)
                 self.assert_no_new_version_logged()
 
     @kills(
@@ -1015,7 +1029,9 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 get.assert_not_called()
                 configure_cooldown.assert_called_once_with([])
                 mock_pyproject_toml.write_text.assert_not_called()
-                self.assert_no_dependencies_logged(mock_pyproject_toml, "uv", "resolve")
+                self.assert_debug_logged_after_path(
+                    mock_pyproject_toml, message_of(Logger.no_dependencies), manager="uv", verb="resolve"
+                )
 
     @kills(
         Mutation(
@@ -1055,7 +1071,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 get.assert_not_called()
                 configure_cooldown.assert_called_once_with([])
                 self.assertEqual(dict(left), files)
-                self.assert_logged(message, location=Location(PYPROJECT_TOML), table="[tool.uv]", **fields)
+                self.assert_debug_logged_after_path(PYPROJECT_TOML, message, table="[tool.uv]", **fields)
 
     @kills(
         Mutation(

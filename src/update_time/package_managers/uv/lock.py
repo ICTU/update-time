@@ -46,11 +46,11 @@ class _MemberSnapshot:
     def steered_member(
         self, locked_as_written: RecordedVersions | None, member_policy: ManagerPolicy[Declaration], log: Logger
     ) -> _Member:
-        """Report the path, the markers, and the redundant bounds of the file, and return the member with its markers.
+        """Report the markers and the redundant bounds of the file, and return the member with its markers.
 
         A declaration without an exact pin takes its current version from what uv locks for the files as written.
         """
-        declarations = _report_path_and_markers(self.file, member_policy, log)
+        declarations = marker_policy.report_file_markers(self.file, log, member_policy)
         member = _Member(self, declarations, locked_as_written, member_policy)
         member.warn_about_redundant_bounds(log)
         return member
@@ -398,14 +398,6 @@ def _log_new_pins(moved_pins: Mapping[Declaration, PinnedDependency], log: Logge
         locations.setdefault(pin, []).append(declaration.location)
     for pin, pin_locations in locations.items():
         log_new_version(log, pin.name, pin.version, pin_locations)
-
-
-def _report_path_and_markers(
-    file: PythonDependencyToml, member_policy: ManagerPolicy[Declaration], log: Logger
-) -> list[Declaration]:
-    """Log the path and the markers of the file, and return its declarations with the effective markers."""
-    log.path(file.path)
-    return marker_policy.report_file_markers(file, log, member_policy)
 
 
 def update_workspaces(

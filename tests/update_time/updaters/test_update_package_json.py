@@ -315,8 +315,20 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     error=str(error),
                 )
 
+    @kills(
+        Mutation(
+            update_package_jsons,
+            "_LOG.path(package_json)\n"
+            "        if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
+            "            continue",
+            "if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
+            "            continue\n"
+            "        _LOG.path(package_json)",
+            "a package.json that does not parse is warned about without being logged as checked first",
+        )
+    )
     def test_package_json_that_does_not_parse_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a package.json the scan finds that does not parse is warned about, and the others still update."""
+        """Test that a package.json that does not parse is logged as checked and warned about, and the others update."""
         cases = {"invalid JSON": (_UNREADABLE, _UNREADABLE_ERROR), "not an object": ("[]", _NOT_AN_OBJECT_ERROR)}
         for case, (contents, error) in cases.items():
             with self.subTest(case):
@@ -328,6 +340,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 update_package_jsons()
                 self.assert_npm_called(mock_run)
                 self.assert_unreadable_package_json_warned(fixture, error)
+                self.assert_path_logged_first(fixture)
 
     def test_package_json_above_naming_no_manager_string_is_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json above whose `packageManager` is a number is passed over silently."""
@@ -941,7 +954,9 @@ class SkipPackageJsonWithoutDependenciesTest(LoggingTestCase):
                 update_package_jsons()
                 mock_run.assert_not_called()
                 mock_package_json.write_text.assert_not_called()
-                self.assert_no_dependencies_logged(mock_package_json, manager, "install")
+                self.assert_debug_logged_after_path(
+                    mock_package_json, message_of(Logger.no_dependencies), manager=manager, verb="install"
+                )
 
 
 class NoUpdateTestCase(LoggingTestCase):
