@@ -179,7 +179,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | 🔍 | `DEBUG` | what Update-time is doing: its version and command-line arguments, which [credentials](#increasing-rate-limits) are set, the OS and Python version it runs on, the version of each tool it runs and a warning for a tool that reports none, the proxies and CA bundle it uses, files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning), a version a package manager moved back to honour the [cooldown](#-cooldown) |
 | ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a [Python version outside the project's `requires-python`](#what-versions-are-updated-4), a source it cannot reach, a file it cannot parse, an advisory it cannot read, a marker that is [invalid](#invalid-markers) or [redundant](#redundant-markers) |
-| ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed or a [GitHub rate limit](#increasing-rate-limits) that is used up, and a signal such as Ctrl-C that stops the run |
+| ❌ | `ERROR` | failures that stop an update, such as a package manager that is not on the path or a [GitHub rate limit](#increasing-rate-limits) that is used up, and a signal such as Ctrl-C that stops the run |
 
 ### Workflow
 
@@ -1229,6 +1229,12 @@ Update-time runs npm or pnpm only for a `package.json` that declares dependencie
 DEBUG Not running npm for ui/static/package.json: it does not declare dependencies for npm to install
 ```
 
+Where npm or pnpm is not on the path, Update-time does not run it. It leaves the `package.json` as it is, still checks its dependencies, and reports the missing package manager at `ERROR`:
+
+```console
+ERROR Could not update the dependencies in web/package.json: pnpm is not on the path
+```
+
 #### What dependencies are updated?
 
 Update-time delegates updating Node dependencies to the package manager that manages the `package.json`. If that is npm, it runs `npm update --save --include=dev`. If it is pnpm, it runs `pnpm update`.
@@ -1310,6 +1316,12 @@ WARNING Redundant update-time directive set[stale-after=0] for lodash in package
 Update-time looks for `pom.xml` files recursively from the starting path.
 
 Update-time delegates updating Maven dependencies to Maven. Maven runs over each pom in turn, as a module of its reactor: the poms that the topmost pom's `<modules>` reach. So Maven reads a BOM of the same project from the working tree, rather than a copy from a repository. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the topmost pom, and the `mvn` on your path where the project ships none.
+
+Where the project does not ship a wrapper and `mvn` is not on the path, Update-time does not run Maven. It leaves each pom as it is, still checks it, and reports the missing Maven at `ERROR`:
+
+```console
+ERROR Could not update the dependencies in pom.xml: mvn is not on the path
+```
 
 Once Maven cannot read a pom of the reactor, Update-time runs Maven over none of the reactor's poms, and still checks them, as the sections below describe. A module that declares a dependency without its version breaks the reactor, for example, when the BOM managing that version drops the dependency. The error names the cause where Update-time can tell it:
 

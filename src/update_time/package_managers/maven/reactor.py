@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from update_time.formats import xml
 from update_time.io.log import get_logger
-from update_time.io.process import run
+from update_time.io.process import is_installed, run
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.package_managers.maven.plugins import HELP_PLUGIN
 from update_time.package_managers.maven.versions_plugin import VERSIONS_GOALS, versions_options
@@ -43,18 +43,24 @@ _EFFECTIVE_POM_WRITTEN = re.compile(r"Effective-POM written to: (?P<path>.+)")
 # A project ships this wrapper script beside its root pom. The script runs the Maven version that project builds with.
 _WRAPPER = "mvnw"
 
+# The Maven on the path, which runs where the project does not ship a wrapper.
+_MVN = "mvn"
 
-def _maven(directory: Path) -> str:
-    """Return the Maven to run in the directory: the project's wrapper, or the mvn on the path where it ships none."""
-    return f"./{_WRAPPER}" if (directory / _WRAPPER).exists() else "mvn"
+
+def _maven(directory: Path) -> str | None:
+    """Return the Maven to run in the directory, if any: the project's wrapper, or else the mvn on the path."""
+    if (directory / _WRAPPER).exists():
+        return f"./{_WRAPPER}"
+    return _MVN if is_installed(_MVN) else None
 
 
 @dataclass(frozen=True)
 class _ReactorModule:
-    """A pom, and the root directory of the reactor Maven builds it in."""
+    """A pom, the root directory of the reactor Maven builds it in, and the Maven that builds it."""
 
     pom_xml: Path
     root: Path
+    maven: str
 
     @property
     def _selection(self) -> tuple[str, ...]:
@@ -63,10 +69,10 @@ class _ReactorModule:
 
     def _run_goals(self, options: tuple[str, ...], goals: tuple[str, ...]) -> Result:
         """Run Maven over the pom, and return what the run wrote and whether it succeeded."""
-        command = Command(_maven(self.root), *_OPTIONS, *self._selection, *options, *goals)
+        command = Command(self.maven, *_OPTIONS, *self._selection, *options, *goals)
         result = run(command, cwd=self.root)
         # Maven writes its [ERROR] lines to stdout and leaves stderr empty, so `run` surfaces nothing for a failed run.
-        # A run whose executable was missing wrote nothing at all, and `run` reported that itself.
+        # A run the system refused to start wrote nothing at all, and `run` reported that itself.
         if not result.succeeded and result.stdout:
             _LOG.command_failed(command, result.stdout)
         return result
@@ -124,15 +130,19 @@ class Reactor:
 
         Maven reads every pom of the reactor in each run, so once a run cannot read them, Maven runs over none of the
         reactor's poms after it. Each run that reads the reactor reads every pom the runs before it changed. So the pom
-        that broke the reactor is the one changed by the latest run that read the reactor.
+        that broke the reactor is the one changed by the latest run that read the reactor. Where the project does not
+        ship a wrapper and mvn is not on the path, each pom gets an error.
         """
+        if (maven := _maven(self._root)) is None:
+            _LOG.package_manager_not_on_path(pom_xml, _MVN)
+            return None
         if self._readable is None:
             self._readable = self._every_pom_parses()
         if not self._readable:
             _LOG.maven_not_run(pom_xml)
             return None
         before = _lines(pom_xml)
-        result, effective_pom = _ReactorModule(pom_xml, self._root).update()
+        result, effective_pom = _ReactorModule(pom_xml, self._root, maven).update()
         self._readable = not _UNREADABLE_REACTOR.search(result.stdout)
         if self._readable:
             self._changed_pom = pom_xml if _lines(pom_xml) != before else None

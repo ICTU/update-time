@@ -33,7 +33,7 @@ from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     GUAVA,
     SCAN_ROOT,
-    LoggingTestCase,
+    ExecutablesOnPathTestCase,
     bound,
     days_ago,
     message_of,
@@ -373,7 +373,7 @@ _CHILDS_EFFECTIVE_POM_LISTING_A_PROFILE = effective_pom_declaring(
 @patch.object(maven_central_module, "versions_held_back", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT, exists=False)
 @patch("subprocess.run")
-class UpdatePomXmlTest(LoggingTestCase):
+class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     """Unit tests for finding the pom.xml files and running Maven over each of them."""
 
     def find_poms(
@@ -2047,23 +2047,26 @@ class UpdatePomXmlTest(LoggingTestCase):
             reactor_module._ReactorModule._run_goals,
             " and result.stdout:",
             ":",
-            "a missing Maven is reported twice: once by `run`, and again as a failed run that wrote nothing",
+            "a refused Maven run is reported twice: once by `run`, and again as a failed run that wrote nothing",
         ),
     )
-    def test_a_missing_maven_is_reported_and_the_next_pom_is_still_checked(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a missing Maven executable is reported once, and leaves the next pom checked as usual."""
+    def test_a_maven_the_system_refuses_to_run_is_reported_and_the_next_pom_is_still_checked(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a Maven the system refuses to run is reported once, and leaves the next pom checked as usual."""
         second = self.find_poms(mock_run, mock_glob, "<project/>", "<project/>")[1]
-        mock_run.side_effect = [FileNotFoundError, _maven_succeeded()]
+        refusal = PermissionError(13, "Permission denied")
+        mock_run.side_effect = [refusal, _maven_succeeded()]
         update_pom_xmls()
-        self.assert_error_logged(message_of(Logger.command_not_found), command=_maven_command(), executable="mvn")
+        self.assert_error_logged(message_of(Logger.command_error), command=_maven_command(), error=refusal)
         self.assertEqual(mock_run.call_count, 2)
         self.assert_path_logged(second)
 
     @kills(
         Mutation(
             reactor_module._maven,
-            'f"./{_WRAPPER}" if (directory / _WRAPPER).exists() else "mvn"',
-            '"mvn"',
+            'return f"./{_WRAPPER}"',
+            "return _MVN",
             "a project's own Maven wrapper is passed over, so another Maven than it builds with updates it",
         ),
         Mutation(
@@ -2073,14 +2076,15 @@ class UpdatePomXmlTest(LoggingTestCase):
             "the wrapper is looked for in the directory the scan runs in, so a reactor's own wrapper goes unused",
         ),
         Mutation(
-            reactor_module._ReactorModule._run_goals,
-            "_maven(self.root)",
-            "_maven(self.pom_xml.parent)",
+            reactor_module.Reactor.update,
+            "_maven(self._root)",
+            "_maven(pom_xml.parent)",
             "the wrapper is looked for beside the module, so a module's run from the reactor root passes it over",
         ),
     )
     def test_the_maven_wrapper_runs_when_it_sits_in_the_reactor_root(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the wrapper in the reactor root runs for each pom of the reactor, not the mvn on the path."""
+        """Test that the wrapper in the reactor root runs for each pom of the reactor, even without mvn on the path."""
+        self.leave_off_the_path("mvn", "./mvnw")
         self.find_reactor(mock_run, mock_glob, {".": _aggregator("app"), "app": "<project/>"})
         with patch("pathlib.Path.exists", lambda self: self == _PROJECT / "mvnw"):
             update_pom_xmls()
@@ -2200,6 +2204,26 @@ class UpdatePomXmlTest(LoggingTestCase):
             poms="2 other poms",
         )
         self.assert_maven_not_run_logged(root, lib)
+
+    @kills(
+        Mutation(
+            reactor_module.Reactor.update,
+            "_LOG.package_manager_not_on_path(pom_xml, _MVN)\n            return None",
+            "_LOG.package_manager_not_on_path(pom_xml, _MVN)",
+            "a missing Maven is reported, and the pom is then handled as if Maven were on the path",
+        ),
+    )
+    def test_a_missing_maven_is_reported_once_for_each_pom_that_parses(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a missing mvn is reported once for each pom that parses, where another pom does not parse."""
+        self.leave_off_the_path("mvn")
+        poms = {".": _aggregator("app", "lib"), "app": "<project>", "lib": "<project/>"}
+        root, _app, lib = self.find_reactor(mock_run, mock_glob, poms)
+        update_pom_xmls()
+        self.assert_errors_logged(
+            (message_of(Logger.package_manager_not_on_path), {"location": Location(root), "executable": "mvn"}),
+            (message_of(Logger.package_manager_not_on_path), {"location": Location(lib), "executable": "mvn"}),
+        )
+        self.assert_maven_not_run_logged()
 
     def test_a_single_pom_maven_cannot_read_gets_mavens_error_alone(self, mock_run: Mock, mock_glob: Mock):
         """Test that a pom forming a reactor of its own, which Maven cannot read, gets Maven's error alone."""

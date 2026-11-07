@@ -1033,10 +1033,10 @@ class Logger:
         """Log that a file uv locks cannot be written, so the files uv locks together keep the dependencies they had."""
         return self._file_fields(path, error=str(error))
 
-    @_error("Could not update the dependencies in %(location)s: uv is not on the path")
-    def uv_not_on_path(self, path: Path) -> dict[str, object]:
-        """Log that uv, which updates a file's dependencies, is not on the path."""
-        return self._file_fields(path)
+    @_error("Could not update the dependencies in %(location)s: %(executable)s is not on the path")
+    def package_manager_not_on_path(self, path: Path, executable: str) -> dict[str, object]:
+        """Log that the package manager that updates a file's dependencies is not on the path."""
+        return self._file_fields(path, executable=executable)
 
     @_warning("Could not read %(version)r, the version %(location)s pins %(dependency)s to; not upgrading it")
     def pinned_version_unreadable(self, path: Path, dependency: str, version: str) -> dict[str, object]:
