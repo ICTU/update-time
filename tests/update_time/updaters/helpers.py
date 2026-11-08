@@ -11,7 +11,7 @@ from update_time.domain.dependency import DependencyVersion, Project
 
 from tests.helpers import FakeFiles, mock_response
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
-from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, vulnerability
+from tests.update_time.helpers import SCAN_ROOT, ExecutablesOnPathTestCase, vulnerability
 from tests.update_time.sources.helpers import (
     PYPI_OLD_UPLOAD,
     github_commits_json,
@@ -187,7 +187,7 @@ def _failing_uv_lock(*_arguments: object, **_options: object) -> NoReturn:
     raise subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr=NO_SOLUTION)
 
 
-class UvLockTestCase(LoggingTestCase):
+class UvLockTestCase(ExecutablesOnPathTestCase):
     """Base for the tests that run an updater delegating to uv, with uv lock faked.
 
     A subclass names the file the scan discovers, the lock uv writes for it, and the updater. `locks` holds each faked

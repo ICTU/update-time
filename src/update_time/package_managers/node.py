@@ -11,7 +11,7 @@ from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import SEMVER
 from update_time.io.log import get_logger
-from update_time.io.process import run
+from update_time.io.process import is_installed, run
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS, PackageJson
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
@@ -125,8 +125,12 @@ class _PackageManager:
         """Update the package.json and its lockfile using this package manager, and log what it moved and rewrote.
 
         The update moves the dependencies of the package.json's project, and those of the workspace members below.
+        Without the package manager on the path, the package.json gets an error and stays as it is.
         """
         path = package_json.path
+        if not is_installed(executable := self.update.executable):
+            _LOG.package_manager_not_on_path(path, executable)
+            return package_json
         directory = path.parent
         workspace_root = self._workspace_root(directory)
         project = PurePosixPath(os.path.relpath(directory.resolve(), workspace_root.resolve()))

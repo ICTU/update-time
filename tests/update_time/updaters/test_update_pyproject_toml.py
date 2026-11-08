@@ -22,7 +22,7 @@ from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import CHANGELOG
 from tests.update_time.helpers import (
     SCAN_ROOT,
-    LoggingTestCase,
+    ExecutablesOnPathTestCase,
     message_of,
     published_version,
     pyproject,
@@ -919,16 +919,18 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 )
                 self.assert_no_new_version_logged()
 
-    @patch("shutil.which", Mock(return_value=None))
     def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
         """Test that a missing uv is reported in one line naming the file, and that Update-time does not run it."""
+        self.leave_off_the_path("uv")
         run.side_effect = FileNotFoundError("uv")
         mock_pyproject_toml = _discovered_pyproject_toml(glob, pyproject("package==1.0") + _UV_TABLE)
         update_pyproject_tomls()
         run.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
-        self.assert_error_logged(message_of(Logger.uv_not_on_path), location=Location(mock_pyproject_toml))
+        self.assert_error_logged(
+            message_of(Logger.package_manager_not_on_path), location=Location(mock_pyproject_toml), executable="uv"
+        )
 
     def test_skip_non_uv_tool_section(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pyproject.toml with a non-uv tool section (e.g. [tool.poetry]) is skipped without running uv."""
@@ -1443,20 +1445,21 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
             Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
         )
 
-    @patch("shutil.which", Mock(return_value=None))
     def test_without_uv_an_ignore_update_is_obeyed_and_not_judged_by_the_uv_lock_before_the_run(
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that, without uv on the path, an `ignore[update]` holds the update back, unjudged by the uv.lock."""
+        self.leave_off_the_path("uv")
         contents = pyproject("package>=0.9", marker="ignore[update] set[cooldown=30]")
         self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents, _UV_LOCK: _uv_lock("1.0")}, _uv_lock("1.0"))
         self.assert_redundant_directive_logged(
             Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
         )
         self.assert_ignored_logged("package", Location(PYPROJECT_TOML, 2), "ignore[update]", among_others=True)
-        self.assert_error_logged(message_of(Logger.uv_not_on_path), location=Location(PYPROJECT_TOML))
+        self.assert_error_logged(
+            message_of(Logger.package_manager_not_on_path), location=Location(PYPROJECT_TOML), executable="uv"
+        )
 
-    @patch("shutil.which", Mock(return_value=None))
     @kills(
         Mutation(
             lock._LockSnapshot.update,
@@ -1473,6 +1476,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
     )
     def test_without_uv_a_directive_needing_a_locked_version_is_not_judged(self, run: Mock, get: Mock, glob: Mock):
         """Test that, without uv on the path, an `ignore[update]` and a bound go unjudged, as uv locks nothing."""
+        self.leave_off_the_path("uv")
         for directive in ("ignore[update]", "ignore[minor-update]", "ignore[update] allow[update<2]"):
             for lock_case, lock_before in _LOCKS_WITHOUT_THE_PACKAGE.items():
                 with self.subTest(directive=directive, lock=lock_case):
@@ -1481,14 +1485,18 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                     self.assert_redundant_directive_logged(
                         Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
                     )
-                    self.assert_error_logged(message_of(Logger.uv_not_on_path), location=Location(PYPROJECT_TOML))
+                    self.assert_error_logged(
+                        message_of(Logger.package_manager_not_on_path),
+                        location=Location(PYPROJECT_TOML),
+                        executable="uv",
+                    )
 
 
 @patch("update_time.package_managers.uv.uv.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("requests.Session.get")
 @patch("subprocess.run")
-class CheckedPinsTest(LoggingTestCase):
+class CheckedPinsTest(ExecutablesOnPathTestCase):
     """Unit test for handing the discovered manifests to the checks uv-delegated updaters share."""
 
     @kills(

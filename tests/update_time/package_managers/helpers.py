@@ -4,7 +4,7 @@ from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from tests.update_time.helpers import LoggingTestCase
+from tests.update_time.helpers import ExecutablesOnPathTestCase
 
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
@@ -22,16 +22,15 @@ UNREADABLE_SETTINGS = {
 }
 
 
-class UvSettingsTestCase(LoggingTestCase):
+class UvSettingsTestCase(ExecutablesOnPathTestCase):
     """A test case whose stubbed processes answer `uv --show-settings`, without an `exclude-newer` unless set."""
 
     def setUp(self) -> None:
-        """Stub out subprocess.run, so a test does not start a process, and find every executable on the path."""
+        """Stub out subprocess.run, so a test does not start a process."""
         super().setUp()
         self.configured_exclude_newer = "None"
         self.settings_answer: object = None
         self.mock_run = self.enterContext(patch("subprocess.run", side_effect=self.run_tool))
-        self.which = self.enterContext(patch("shutil.which", side_effect=lambda executable: f"/bin/{executable}"))
 
     def run_tool(self, _command: Command, /, **_options: object) -> object:
         """Answer the command as `uv --show-settings` does."""

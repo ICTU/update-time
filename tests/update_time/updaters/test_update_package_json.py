@@ -25,7 +25,14 @@ from update_time.updaters.update_package_json import update_package_jsons
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
-from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, message_of, published_version, staleness_disabled
+from tests.update_time.helpers import (
+    SCAN_ROOT,
+    ExecutablesOnPathTestCase,
+    LoggingTestCase,
+    message_of,
+    published_version,
+    staleness_disabled,
+)
 from tests.update_time.sources.helpers import github_release_json, npm_registry
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
@@ -206,7 +213,7 @@ class PackageLookupResponsesTest(unittest.TestCase):
             _package_lookup_responses()("https://api.github.com/repos/package/1.1/commits")
 
 
-class _PackageJsonFilesTestCase(LoggingTestCase):
+class _PackageJsonFilesTestCase(ExecutablesOnPathTestCase):
     """Base for the tests that read and write package.json files in a file system in memory."""
 
     def setUp(self) -> None:
@@ -934,11 +941,12 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
 
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
-class SkipPackageJsonWithoutDependenciesTest(LoggingTestCase):
+class SkipPackageJsonWithoutDependenciesTest(ExecutablesOnPathTestCase):
     """Unit tests for a package.json that declares nothing for its package manager to update."""
 
     def test_package_manager_not_run(self, mock_run: Mock, mock_glob: Mock):
-        """Test that npm and pnpm do not run for a package.json that declares nothing to update, and say so."""
+        """Test that npm and pnpm, both off the path, are skipped for a package.json declaring nothing, saying why."""
+        self.leave_off_the_path("npm", "pnpm")
         cases = {
             "fields other than dependencies": (
                 '{"name": "spark-ui", "license": "Apache License 2.0", "type": "module"}',
@@ -959,7 +967,7 @@ class SkipPackageJsonWithoutDependenciesTest(LoggingTestCase):
                 )
 
 
-class NoUpdateTestCase(LoggingTestCase):
+class NoUpdateTestCase(ExecutablesOnPathTestCase):
     """Base for the tests of the checks over the dependencies a package.json declares, run while none is updated."""
 
     @staticmethod
@@ -1132,6 +1140,45 @@ class StaleDependencyTest(NoUpdateTestCase):
         update_package_jsons()
         get.assert_not_called()
         self.assert_no_warnings_logged()
+
+
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
+@patch("subprocess.run", side_effect=FileNotFoundError)
+class MissingPackageManagerTest(NoUpdateTestCase):
+    """Unit tests for a package.json whose package manager is not on the path."""
+
+    @patch("requests.Session.get")
+    @kills(
+        Mutation(
+            node_module._PackageManager.update_package_json,
+            "_LOG.package_manager_not_on_path(path, executable)\n            return package_json",
+            "_LOG.package_manager_not_on_path(path, executable)",
+            "a missing package manager is reported, and then run anyway, failing once per command",
+        ),
+        Mutation(
+            node_module._PackageManager.update_package_json,
+            "executable := self.update.executable",
+            'executable := "npm"',
+            "a pnpm-managed package.json is checked for npm rather than for pnpm",
+        ),
+    )
+    def test_a_missing_manager_is_reported_once_and_the_checks_still_run(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a missing npm or pnpm is reported in one line naming the file, and that the checks still run."""
+        pnpm_contents = (
+            '{\n  "packageManager": "pnpm@9.15.0",\n  "dependencies": {\n    "clipboard": "^2.0.11"\n  }\n}\n'
+        )
+        for manager, contents in {"npm": self.clipboard_contents(), "pnpm": pnpm_contents}.items():
+            with self.subTest(manager):
+                self.leave_off_the_path(manager)
+                mock_run.reset_mock()
+                get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
+                package_json = _discover_package_json(glob, contents)
+                update_package_jsons()
+                self.assert_error_logged(
+                    message_of(Logger.package_manager_not_on_path), location=Location(package_json), executable=manager
+                )
+                mock_run.assert_not_called()
+                self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
 
 
 @no_vulnerabilities

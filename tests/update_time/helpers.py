@@ -793,6 +793,19 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assertEqual(self.records(WARNING), [])
 
 
+class ExecutablesOnPathTestCase(LoggingTestCase):
+    """A test case whose path holds every executable, so the tests run the same whatever the machine installed."""
+
+    def setUp(self) -> None:
+        """Find every executable on the path."""
+        super().setUp()
+        self.which = self.enterContext(patch("shutil.which", side_effect=lambda executable: f"/bin/{executable}"))
+
+    def leave_off_the_path(self, *missing: str) -> None:
+        """Find every executable on the path except the missing ones."""
+        self.which.side_effect = lambda executable: None if executable in missing else f"/bin/{executable}"
+
+
 def drift_warning(kind: Drift, drifted: DriftedPin) -> tuple[LogMessage, dict[str, object]]:
     """Return the warning about the drift, and the fields it carries."""
     fields = Logger._drift_fields(kind, drifted, **kind.warning_words)

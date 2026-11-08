@@ -548,7 +548,7 @@ class RecompileTest(UvSettingsTestCase):
     )
     def test_a_tool_missing_from_the_path_is_reported_without_asking_for_its_settings(self):
         """Test that Update-time reports a missing pip-compile in one line, and runs neither it nor a settings query."""
-        self.which.side_effect = lambda _executable: None
+        self.leave_off_the_path("pip-compile")
         self.recompile({_COMPILED: requirements_compiled_by_pip_compile("base.in"), _SOURCE: "flask==1.0\n"})
         self.mock_run.assert_not_called()
         self.assert_errors_logged(

@@ -244,7 +244,7 @@ class _LockSnapshot:
         files = [member.file for member in self.members]
         if not is_installed("uv"):
             for file in files:
-                self.log.uv_not_on_path(file.path)
+                self.log.package_manager_not_on_path(file.path, "uv")
             return False
         return self.target.lock(files, self.log, *self.target.cooldown_options)
 

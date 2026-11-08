@@ -486,6 +486,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
+        **_package_managers_not_on_path(log, capture),
         **_not_a_uv_project(log, capture),
         **_range_rewrites(log, capture),
         **_versions_moved_back(log, capture),
@@ -545,6 +546,14 @@ def _manifests_without_dependencies(log: Logger, capture: _Capture) -> dict[str,
     package_json = capture.take()
     log.no_dependencies(Path("pyproject.toml"), "uv", "resolve")
     return {"@@NO_NODE_DEPENDENCIES@@": package_json, "@@NO_PYTHON_DEPENDENCIES@@": capture.take()}
+
+
+def _package_managers_not_on_path(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that pnpm and Maven are not on the path, and pair the lines."""
+    log.package_manager_not_on_path(Path("web/package.json"), "pnpm")
+    package_json = capture.take()
+    log.package_manager_not_on_path(Path("pom.xml"), "mvn")
+    return {"@@NODE_MANAGER_NOT_ON_PATH@@": package_json, "@@MAVEN_NOT_ON_PATH@@": capture.take()}
 
 
 def _not_a_uv_project(log: Logger, capture: _Capture) -> dict[str, str]:
@@ -648,7 +657,7 @@ def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, st
     log.file_not_written(Path("pyproject.toml"), PermissionError(13, "Permission denied", "pyproject.toml"))
     log.file_not_restored(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
     log.lock_not_removed(Path("tool.py.lock"), PermissionError(13, "Permission denied", "tool.py.lock"))
-    log.uv_not_on_path(Path("pyproject.toml"))
+    log.package_manager_not_on_path(Path("pyproject.toml"), "uv")
     not_updated = capture.take()
     log.unreadable_script(Path("tool.py"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"))
     return {"@@UV_DEPENDENCIES_NOT_UPDATED@@": not_updated, "@@UNREADABLE_SCRIPT@@": capture.take()}

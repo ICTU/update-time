@@ -338,9 +338,10 @@ vulture: (py-check "vulture" f"{{ vulture }} {{ code }} {{ vulture_whitelist }}"
 codespell: (py-check "codespell" f"{{ uv_run }} codespell")
 
 # Run vale to check the prose for style. `vale sync` fetches the styles `.vale.ini` names, on every run and over the
-# network, so this check needs a connection as `pip-audit` and `uv-audit` do.
+# network. Where the fetch fails, as on a 504 from GitHub, vale checks with the styles an earlier run fetched. A style
+# no run fetched fails the check, so a fresh checkout needs a connection, as `pip-audit` and `uv-audit` do.
 [private]
-vale: (py-check "vale" f"{{ uv_run }} vale sync && {{ uv_run }} vale --no-wrap --glob '*.md*' {{ prose }}")
+vale: (py-check "vale" f"{{ uv_run }} vale sync || echo 'vale sync failed, so vale checks with the styles an earlier run fetched'; {{ uv_run }} vale --no-wrap --glob '*.md*' {{ prose }}")
 
 # Run yamllint to lint YAML files such as workflow definitions.
 [private]

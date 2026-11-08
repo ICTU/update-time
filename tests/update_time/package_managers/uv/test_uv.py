@@ -131,7 +131,7 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
     )
     def test_writes_nothing_where_uv_is_not_on_the_path(self):
         """Test that Update-time neither asks a missing uv for its settings nor writes a cooldown for it."""
-        self.which.side_effect = lambda _executable: None
+        self.leave_off_the_path("uv")
         pyproject_toml = self.persist(pyproject("a==1.0"))
         pyproject_toml.write_text.assert_not_called()
         self.mock_run.assert_not_called()
