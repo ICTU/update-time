@@ -33,6 +33,7 @@ from update_time.io.log import Logger
 from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
+from update_time.package_managers.maven.versions_plugin import OverrideConsequence
 from update_time.primitives.location import Location
 from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
 
@@ -479,6 +480,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@PINNED_INTEGRITY_HASH@@": pinned_integrity_hash,
         **maven_runs,
         **_property_moved_for_other_artefacts(log, capture),
+        **_versions_plugin_overridden(log, capture),
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
@@ -640,6 +642,20 @@ def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log that a pyproject.toml whose tool tables cannot hold the cooldown gets none, and pair the line."""
     log.uv_cooldown_not_set(Path("pyproject.toml"))
     return {"@@UV_COOLDOWN_NOT_SET@@": capture.take()}
+
+
+def _versions_plugin_overridden(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that a pom's versions plugin configuration wins over Update-time, and markers that then steer nothing."""
+    pom = Path("pom.xml")
+    log.option_overridden_by_the_pom(pom, "rulesUri", OverrideConsequence.RULES, "org.example:parent:1.0", 12)
+    overridden = capture.take()
+    guava = "com.google.guava:guava"
+    log.redundant_directive(reference(guava, Location(pom, 6)), "ignore[update]", Reason.RULES_OF_THE_POM)
+    log.invalid_bracket_item_holding_nothing_back(guava, "stlae", Location(pom, 9))
+    return {
+        "@@OPTION_OVERRIDDEN_BY_THE_POM@@": overridden,
+        "@@REDUNDANT_UNDER_RULES_OF_THE_POM_WARNING@@": capture.take(),
+    }
 
 
 def _property_moved_for_other_artefacts(log: Logger, capture: _Capture) -> dict[str, str]:

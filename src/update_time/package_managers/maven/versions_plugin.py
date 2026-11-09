@@ -1,9 +1,10 @@
-"""The goals of the versions plugin, their options and rule sets, and the report of what the plugin moved."""
+"""The versions plugin's goals, their options and rule sets, the pom settings winning over them, and what it moved."""
 
 import re
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from itertools import starmap
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,7 +16,7 @@ from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import Reason
-from update_time.package_managers.maven.plugins import VERSIONS_PLUGIN
+from update_time.package_managers.maven.plugins import VERSIONS_ARTEFACT, VERSIONS_PLUGIN
 from update_time.package_managers.maven.version_range import maven_range
 from update_time.primitives.iterables import unique
 from update_time.sources import maven_central
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.formats.xml import XmlElement
 
 _LOG = get_logger("pom.xml")
 
@@ -117,6 +119,75 @@ def versions_options(declarations: list[pom_xml_manifest.Declaration]) -> Genera
         yield (*options, f"-Dmaven.version.rules={path.as_uri()}")
 
 
+class OverrideConsequence(StrEnum):
+    """What Maven may do once a pom overrides an option of the versions plugin that Update-time sets or relies on."""
+
+    RULES = (
+        "Maven may adopt versions of another variant, versions inside the cooldown, and versions a marker holds back"
+    )
+    PRE_RELEASES = "Maven may adopt pre-releases"
+    PROPERTIES = "Maven may advance properties that the rule set Update-time passes does not cover"
+    BACKUP_POMS = "Maven leaves a pom.xml.versionsBackup beside each pom it rewrites"
+    SNAPSHOTS = "Maven may advance a property to a snapshot"
+    PARENT = "Maven may update the version of the parent pom, which neither the cooldown nor a marker holds back"
+
+
+# The settings of the versions plugin's configuration that win over an option Update-time sets or relies on, and the
+# consequence. A rules URI or a rule set replaces the rule set, ignored versions the pre-release pattern, and included
+# properties the properties the declarations name. Generating backup poms, allowing snapshots, and processing the parent
+# switch on what Update-time keeps off.
+_OVERRIDING_SETTINGS = {
+    "rulesUri": OverrideConsequence.RULES,
+    "ruleSet": OverrideConsequence.RULES,
+    "ignoredVersions": OverrideConsequence.PRE_RELEASES,
+    "includeProperties": OverrideConsequence.PROPERTIES,
+    "generateBackupPoms": OverrideConsequence.BACKUP_POMS,
+    "allowSnapshots": OverrideConsequence.SNAPSHOTS,
+    "processParent": OverrideConsequence.PARENT,
+}
+
+# An empty setting takes the value of the property Update-time passes. A rule set does not have a property, so an
+# empty one is a rule set without rules, which still replaces the rule set Update-time passes.
+_OVERRIDING_WHEN_EMPTY = ("ruleSet",)
+
+# The settings that switch something on or off, which override the option only where they switch it on. Maven reads a
+# switch as on where it holds `true`, in any case.
+_SWITCHES = ("generateBackupPoms", "allowSnapshots", "processParent")
+
+
+def _overrides_the_option(name: str, setting: pom_xml_manifest.PluginSetting) -> bool:
+    """Return whether the setting of that name wins over Update-time."""
+    if name in _SWITCHES:
+        return setting.text.lower() == "true"
+    return name in _OVERRIDING_WHEN_EMPTY or not setting.is_empty
+
+
+@dataclass(frozen=True)
+class _Override:
+    """A setting of the pom's versions plugin configuration that wins over Update-time."""
+
+    name: str
+    consequence: OverrideConsequence
+    setting: pom_xml_manifest.PluginSetting
+
+
+def _overrides(effective_pom: XmlElement | None) -> list[_Override]:
+    """Return the settings of the pom's versions plugin configuration that win over Update-time."""
+    settings = {} if effective_pom is None else pom_xml_manifest.plugin_settings(effective_pom, VERSIONS_ARTEFACT)
+    return [
+        _Override(name, consequence, setting)
+        for name, setting in settings.items()
+        if (consequence := _OVERRIDING_SETTINGS.get(name)) and _overrides_the_option(name, setting)
+    ]
+
+
+def report_options_the_pom_overrides(pom_xml: Path, effective_pom: XmlElement | None) -> None:
+    """Report each setting of the pom's versions plugin configuration that wins over Update-time."""
+    for override in _overrides(effective_pom):
+        set_at = override.setting.set_at
+        _LOG.option_overridden_by_the_pom(pom_xml, override.name, override.consequence, set_at.pom_name, set_at.line)
+
+
 def _rules(declarations: list[pom_xml_manifest.Declaration]) -> str:
     """Return a rule per artefact whose versions anything holds back, or nothing where nothing does.
 
@@ -198,11 +269,18 @@ def _rule_set_file(rule_set: str) -> Generator[Path]:
         yield Path(file.name)
 
 
-def reason_maven_leaves_the_version(declaration: pom_xml_manifest.Declaration) -> Reason | None:
-    """Return why Maven does not update the declaration's version, or None where it does."""
-    if declaration.maven_updates_the_version:
-        return None
-    return Reason.PLUGIN_NOT_UPDATED if declaration.literal_plugin_version else Reason.VERSION_HELD_ELSEWHERE
+def names_rules_of_its_own(effective_pom: XmlElement | None) -> bool:
+    """Return whether the pom's versions plugin configuration names rules that replace Update-time's rule set."""
+    return any(override.consequence == OverrideConsequence.RULES for override in _overrides(effective_pom))
+
+
+def reason_the_marker_steers_nothing(
+    declaration: pom_xml_manifest.Declaration, *, pom_names_rules: bool
+) -> Reason | None:
+    """Return why the declaration's marker steers nothing of what Maven adopts, or None where it does."""
+    if not declaration.maven_updates_the_version:
+        return Reason.PLUGIN_NOT_UPDATED if declaration.literal_plugin_version else Reason.VERSION_HELD_ELSEWHERE
+    return Reason.RULES_OF_THE_POM if pom_names_rules else None
 
 
 @dataclass(frozen=True)

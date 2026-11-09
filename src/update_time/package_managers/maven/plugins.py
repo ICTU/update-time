@@ -20,4 +20,5 @@ def _declared_plugin_version(version_property: str) -> str:
 
 
 HELP_PLUGIN = f"org.apache.maven.plugins:maven-help-plugin:{_declared_plugin_version('help.plugin.version')}"
-VERSIONS_PLUGIN = f"org.codehaus.mojo:versions-maven-plugin:{_declared_plugin_version('versions.plugin.version')}"
+VERSIONS_ARTEFACT = "org.codehaus.mojo:versions-maven-plugin"
+VERSIONS_PLUGIN = f"{VERSIONS_ARTEFACT}:{_declared_plugin_version('versions.plugin.version')}"

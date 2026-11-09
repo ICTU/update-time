@@ -47,6 +47,7 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor: Re
         _LOG.invalid_file(pom_xml, xml.FORMAT)  # The pom cannot be read, so Maven is not run on it either.
         return
     effective_pom = reactor.update(pom_xml)
+    versions_plugin.report_options_the_pom_overrides(pom_xml, effective_pom)
     after = pom_xml_manifest.declarations(pom_xml)
     resolved = pom_xml_manifest.declarations(pom_xml, effective_pom)
     if after is None or resolved is None:
@@ -57,12 +58,13 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor: Re
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
     distinct = pom_xml_manifest.one_per_artefact_and_line(resolved)
-    marker_policy.report_markers(distinct)
+    pom_names_rules = versions_plugin.names_rules_of_its_own(effective_pom)
+    marker_policy.report_markers(distinct, pom_names_rules=pom_names_rules)
     versions_plugin.report_new_versions(before, after, resolved)
     resolvable = pom_xml_manifest.with_resolved_coordinates(distinct)
     declared = pom_xml_manifest.without_versions_left_to(resolvable, scanned_poms)
     left_to_another = [declaration for declaration in resolvable if declaration not in declared]
-    marker_policy.report_redundant_scopes(declared, left_to_another)
+    marker_policy.report_redundant_scopes(declared, left_to_another, pom_names_rules=pom_names_rules)
     _check_projects(declared)
     _warn_about_vulnerabilities(declared)
 

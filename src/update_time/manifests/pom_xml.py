@@ -1,4 +1,4 @@
-"""Read the dependencies, plugins, markers, properties, parent, and source repository a pom.xml declares.
+"""Read the dependencies, plugins, plugin settings, markers, properties, parent, and source repository of a pom.xml.
 
 This module owns what a pom's elements mean, whether Update-time scans the pom or a registry serves it. Reading the
 XML itself is the formats layer's concern.
@@ -349,6 +349,80 @@ def _effective_pom_name(effective_pom: XmlElement) -> str:
     A project never inherits its own `<artifactId>`, so the input location of that element names the scanned pom.
     """
     return _input_location(effective_pom.child("artifactId")).pom_name
+
+
+@dataclass(frozen=True)
+class PluginSetting:
+    """Where a pom sets a setting of a plugin's configuration, and what the setting holds."""
+
+    set_at: _InputLocation
+    text: str
+    is_empty: bool
+
+
+def plugin_settings(effective_pom: XmlElement, plugin: DependencyName) -> dict[str, PluginSetting]:
+    """Return each setting of the configuration Maven applies to the plugin's goals run from the command line."""
+    entry = _plugin_entry(effective_pom, plugin)
+    configuration = None if entry is None else _command_line_configuration(entry)
+    settings = () if configuration is None else configuration.children
+    return {
+        setting.tag: PluginSetting(_first_input_location(setting), setting.text, not (setting.text or setting.children))
+        for setting in settings
+    }
+
+
+def _plugin_entry(effective_pom: XmlElement, plugin: DependencyName) -> XmlElement | None:
+    """Return the plugin's own entry in the effective pom, or else its managed entry, where it has either.
+
+    The effective pom gives the own entry what the managed entry and the parents contribute, so Maven applies the own
+    entry alone.
+    """
+    build = effective_pom.child("build")
+    management = None if build is None else build.child("pluginManagement")
+    sections = (
+        None if build is None else build.child("plugins"),
+        None if management is None else management.child("plugins"),
+    )
+    entries = (
+        entry
+        for section in sections
+        if section is not None
+        for entry in section.children
+        if _entry_artefact(entry, _ARTEFACT_ELEMENTS["plugin"]) == plugin
+    )
+    return next(entries, None)
+
+
+# The execution whose configuration Maven applies to the goals run from the command line.
+_COMMAND_LINE_EXECUTION = "default-cli"
+
+
+def _command_line_configuration(plugin: XmlElement) -> XmlElement | None:
+    """Return the configuration Maven applies to the plugin's goals run from the command line, if any.
+
+    That is the configuration of the plugin's execution for the command line where it has one, which the effective pom
+    gives what the plugin's own configuration contributes, and the plugin's own configuration otherwise.
+    """
+    executions = plugin.child("executions")
+    command_line = next(
+        (
+            execution
+            for execution in (() if executions is None else executions.children)
+            if _coordinate(execution, "id") == _COMMAND_LINE_EXECUTION
+        ),
+        None,
+    )
+    return (plugin if command_line is None else command_line).child("configuration")
+
+
+def _first_input_location(element: XmlElement) -> _InputLocation:
+    """Return the input location of the element, or else the first one Maven writes inside it.
+
+    Maven locates an element holding a value, so an element holding others is located where the first of them is.
+    """
+    if (own := _input_location(element)).pom_name or not element.children:
+        return own
+    return _first_input_location(element.children[0])
 
 
 def has_input_locations(effective_pom: XmlElement) -> bool:

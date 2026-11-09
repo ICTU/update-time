@@ -18,25 +18,30 @@ if TYPE_CHECKING:
 _LOG = get_logger("pom.xml")
 
 
-def report_markers(declared: list[pom_xml_manifest.Declaration]) -> None:
-    """Report the marker of each dependency and plugin, named as Maven resolves it, and the range a bound holds back."""
+def report_markers(declared: list[pom_xml_manifest.Declaration], *, pom_names_rules: bool) -> None:
+    """Report the marker of each dependency and plugin, named as Maven resolves it, and the range a bound holds back.
+
+    Where the pom names rules of its own, Maven follows those rules, so a marker holds nothing back.
+    """
     for declaration in declared:
-        held_back = versions_plugin.range_held_back(declaration) if declaration.maven_updates_the_version else ""
+        reason = versions_plugin.reason_the_marker_steers_nothing(declaration, pom_names_rules=pom_names_rules)
+        held_back = versions_plugin.range_held_back(declaration) if reason is None else ""
         _LOG.report_marker(
             declaration.dependency,
             declaration.marker,
             declaration.location,
             holds_the_update_back=held_back is None,
+            steers_the_update=not pom_names_rules,
         )
         if held_back:
             _LOG.holding_back_range(declaration, held_back, declaration.marker.version_bound_directive)
-        _report_redundant_directives(declaration)
+        _report_redundant_directives(declaration, reason)
 
 
-def _report_redundant_directives(declaration: pom_xml_manifest.Declaration) -> None:
-    """Report as redundant each directive that decides nothing for the declaration."""
+def _report_redundant_directives(declaration: pom_xml_manifest.Declaration, reason: Reason | None) -> None:
+    """Report as redundant each directive that decides nothing for the declaration, for the reason given, if any."""
     marker = declaration.marker
-    if reason := versions_plugin.reason_maven_leaves_the_version(declaration):
+    if reason:
         for steering in filter(None, (marker.bound_directive, marker.cooldown_directive)):
             _LOG.redundant_directive(declaration, steering, reason)
     else:
@@ -59,13 +64,16 @@ def _report_scopes_checked_at_the_managing_declaration(left_to_another: list[pom
                 _LOG.redundant_directive(declaration, directive, Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
 
 
-def _report_scopes_on_artefacts_maven_central_does_not_serve(declared: list[pom_xml_manifest.Declaration]) -> None:
+def _report_scopes_on_artefacts_maven_central_does_not_serve(
+    declared: list[pom_xml_manifest.Declaration], *, pom_names_rules: bool
+) -> None:
     """Report as redundant each `cooldown`, `stale`, and `archived` scope on an artefact Maven Central does not serve.
 
-    A `cooldown` counts only where Maven updates the version.
+    A `cooldown` counts only where the marker steers what Maven adopts.
     """
     for declaration in declared:
-        cooldown = declaration.marker.cooldown_directive if declaration.maven_updates_the_version else ""
+        steers = versions_plugin.reason_the_marker_steers_nothing(declaration, pom_names_rules=pom_names_rules) is None
+        cooldown = declaration.marker.cooldown_directive if steers else ""
         stale = declaration.marker.directive_for(Scope.STALE)
         archived = declaration.marker.directive_for(Scope.ARCHIVED)
         directives = list(filter(None, (cooldown, stale, archived)))
@@ -83,9 +91,12 @@ def _report_archived_scopes_without_a_github_repository(declared: list[pom_xml_m
 
 
 def report_redundant_scopes(
-    declared: list[pom_xml_manifest.Declaration], left_to_another: list[pom_xml_manifest.Declaration]
+    declared: list[pom_xml_manifest.Declaration],
+    left_to_another: list[pom_xml_manifest.Declaration],
+    *,
+    pom_names_rules: bool,
 ) -> None:
     """Report the scopes that decide nothing: on a declaration leaving its version to another, and on an artefact."""
     _report_scopes_checked_at_the_managing_declaration(left_to_another)
-    _report_scopes_on_artefacts_maven_central_does_not_serve(declared)
+    _report_scopes_on_artefacts_maven_central_does_not_serve(declared, pom_names_rules=pom_names_rules)
     _report_archived_scopes_without_a_github_repository(declared)

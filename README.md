@@ -544,7 +544,7 @@ A marker wins over the command-line option that sets the same thing, whatever th
 
 An `ignore[update]` wins over any directive beside it that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched.
 
-Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says. It holds nothing back either on a `requirements.txt` requirement that does not pin an exact version, or on a `pom.xml` declaration whose version Maven does not update. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. On a `pyproject.toml` dependency without an exact pin, and on one in a script that has a lock, an `ignore[update]` keeps the version uv locks for the file as written. It holds nothing back on a direct URL, on a build requirement, on a pin with an environment marker, in a `pyproject.toml` that uv does not manage, in a script without a lock, or where the lock does not record exactly one version (see [Python dependencies](#markers)).
+Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says. It holds nothing back either on a `requirements.txt` requirement that does not pin an exact version, on a `pom.xml` declaration whose version Maven does not update, or in a pom whose versions plugin configuration names rules of its own. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. On a `pyproject.toml` dependency without an exact pin, and on one in a script that has a lock, an `ignore[update]` keeps the version uv locks for the file as written. It holds nothing back on a direct URL, on a build requirement, on a pin with an environment marker, in a `pyproject.toml` that uv does not manage, in a script without a lock, or where the lock does not record exactly one version (see [Python dependencies](#markers)).
 
 ### Silencing a warning
 
@@ -800,6 +800,8 @@ A line about a warning appears only when the marker actually silenced one, so an
 DEBUG Holding back the versions [34,) of com.google.guava:guava in pom.xml:12 (update-time: ignore[update>=34])
 ```
 
+In a pom whose versions plugin configuration names rules of its own, a marker does not hold the update back, so the lines about the update do not appear there (see [Maven dependencies](#markers-2)).
+
 ### Redundant markers
 
 A directive is redundant when it decides nothing for the reference it sits on. A scope can silence a warning that reference never gets. A staleness threshold can judge the newest release as `--stale-after` does, and a risk level can report the vulnerabilities `--vulnerability-level` reports. A bound can narrow nothing, and a directive can ask for what Update-time does without it. Update-time reports each one at `WARNING`.
@@ -876,6 +878,7 @@ A cooldown holds nothing back in these cases, so Update-time reports the `cooldo
 - uv, pip-compile, npm, or pnpm applies the cooldown. They take one per run rather than per dependency, except uv when it recompiles a requirements file (see [Cooldown](#-cooldown)).
 - Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are.
 - The source does not report a publication date. That holds for an image on a registry other than Docker Hub, and for an artefact Maven Central does not serve.
+- A pom's versions plugin configuration names rules of its own, which Maven follows instead of the cooldown (see [Maven dependencies](#markers-2)).
 - Update-time does not update the reference. That holds for a `requirements.txt` requirement that does not pin an exact version, unless it sits in the source of a file Update-time recompiles. It holds for a GitHub Action or pre-commit hook that names a commit SHA. A short SHA that a version tag names is the exception: Update-time pins it as that version, and from the next run on the cooldown governs its updates. Not updated either are a `pom.xml` declaration whose version Maven does not update, an image the file does not pull, and a reference through a variable or a template that Update-time cannot substitute.
 
 Update-time reports the cases above as:
@@ -956,11 +959,12 @@ WARNING Redundant update-time directive allow[update>=3.12] for python in Docker
 WARNING Redundant update-time directive ignore[update>=3.12] for python in Dockerfile:2: this bound blocks every update at version 3.12
 ```
 
-Update-time also reports every bound as redundant in these cases. In the first four, it reports an `ignore[update]` as redundant as well:
+Update-time also reports every bound as redundant in these cases. In the first five, it reports an `ignore[update]` as redundant as well:
 
 - Update-time does not resolve an update for a `requirements.txt` requirement that does not pin an exact version. The source of a file Update-time recompiles is the exception, since there the marker steers the recompile (see [Python dependencies](#markers)).
 - npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says.
 - Maven does not update the version of some `pom.xml` dependencies and plugins (see [What dependencies are updated?](#what-dependencies-are-updated-2)).
+- A pom's versions plugin configuration names rules of its own, which Maven follows instead of the marker (see [Maven dependencies](#markers-2)).
 - A script without a lock before the run has none after it, so uv resolves a dependency without an exact pin afresh on every run.
 - uv does not lock a `pyproject.toml` build requirement, and Update-time leaves its pin as it is. An `ignore[update]` is redundant there as well.
 - A `pyproject.toml` or inline script metadata dependency given as a direct URL names a URL rather than a version. An `ignore[update]` is redundant there as well.
@@ -1015,7 +1019,7 @@ A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — i
 WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
 ```
 
-Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. The checks still run, since Update-time never reads that item as silencing a warning. An unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[yanked, stlae]` still silences the yank warning.
+Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. A pom whose versions plugin configuration names rules of its own is the exception, since Maven follows those rules whatever the marker says (see [Maven dependencies](#markers-2)). The checks still run, since Update-time never reads that item as silencing a warning. An unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[yanked, stlae]` still silences the yank warning.
 
 A `set` item names a key Update-time knows and a value for it. So Update-time reports `set[stale=90]` as invalid, since `stale` is a scope rather than an option. It reports `set[cooldown]` as invalid too, since that item does not set a value.
 
@@ -1354,11 +1358,17 @@ For a group or artifact the pom leaves to its parent, such as `${project.groupId
 
 #### What versions are updated?
 
-Maven moves each dependency and plugin it advances to the newest release. Maven never adopts a snapshot, and Update-time keeps it from adopting a pre-release, such as a release candidate.
+Maven moves each dependency and plugin it advances to the newest release. It does not adopt a snapshot, and Update-time keeps it from adopting a pre-release, such as a release candidate.
 
 Some projects publish a release in several variants, which a suffix after the version tells apart. Byte Buddy publishes `1.18.14-jdk5` beside `1.18.14`, and Spock publishes `2.5-groovy-4.0` beside `2.5-groovy-5.0`. Update-time keeps each dependency and plugin on its variant: `1.18.10` moves to `1.18.14`, and `2.4-groovy-4.0` to `2.5-groovy-4.0`. A suffix marking a release, such as `.Final`, `-GA`, or `.RELEASE`, does not name a variant. Neither does a date, such as the `.v20250814` of Jetty's `9.4.58.v20250814`.
 
 The versions plugin takes the versions it may not adopt per artefact, rather than per declaration. So Maven moves all declarations of an artefact in a pom to the same version: the newest on any of their variants. A pom declaring guava on both `33.0.0-jre` and `33.0.0-android` moves both declarations to a version such as `33.7.2-jre`.
+
+A pom can configure the versions plugin itself, under `<plugins>` or `<pluginManagement>`, or in its `default-cli` execution, and so can its parent. Such a configuration wins over what Update-time tells the plugin, so Update-time leaves the decision to the pom. A `rulesUri` or a `ruleSet` decides which versions Maven adopts, an `ignoredVersions` which pre-releases, and an `includeProperties` which properties Maven advances. Set to `true`, an `allowSnapshots` lets Maven advance a property to a snapshot, and a `processParent` lets Maven update the version of the parent pom. A `generateBackupPoms` set to `true` has Maven write a backup beside each pom it rewrites. Update-time reports each such setting at `DEBUG`:
+
+```console
+DEBUG The versions plugin's rulesUri, set on line 12 of org.example:parent:1.0, wins over Update-time for pom.xml, so Maven may adopt versions of another variant, versions inside the cooldown, and versions a marker holds back
+```
 
 #### Pinning
 
@@ -1366,7 +1376,7 @@ Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to h
 
 #### Cooldown
 
-Update-time reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/). It holds back every version published inside the cooldown, for each dependency and plugin whose version Maven updates.
+Update-time reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/). It holds back every version published inside the cooldown, for each dependency and plugin whose version Maven updates. Update-time cannot hold those versions back in a pom whose versions plugin configuration names rules of its own, since Maven follows those rules instead (see [What versions are updated?](#what-versions-are-updated-2)).
 
 Maven Central does not serve an artefact that a project resolves from a mirror or a private repository. Update-time then cannot read its publication date, so it holds nothing back for that artefact.
 
@@ -1435,6 +1445,13 @@ WARNING Redundant update-time directive set[cooldown=30] for nl.example:internal
 ```
 
 A marker steers the update only where Maven updates the version (see [What dependencies are updated?](#what-dependencies-are-updated-2)). There, an `ignore[update]` and an item Update-time cannot read each hold back every version of the artefact.
+
+A marker does not steer the update either in a pom whose versions plugin configuration names rules of its own, since Maven follows those rules instead. Update-time reports an `ignore[update]`, a bound, and a `set[cooldown=…]` there as redundant. It reports an item it cannot read as invalid, without saying that the reference stays unchanged:
+
+```console
+WARNING Redundant update-time directive ignore[update] for com.google.guava:guava in pom.xml:6: the versions plugin's configuration names rules of its own, which Maven follows instead of the marker
+WARNING Invalid 'stlae' in the update-time marker for com.google.guava:guava in pom.xml:9
+```
 
 A bound holds back the versions it drops. Update-time reports those versions at `DEBUG`, as Maven ranges (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound reads a version up to the first character that is neither a digit nor a dot, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
 
