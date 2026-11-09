@@ -171,16 +171,28 @@ def effective_dependency_element(
 
 
 def effective_plugin_element(
-    artefact: str, version: str | None, line: int, *, managed_at: tuple[str, int] | None = None
+    artefact: str,
+    version: str | None,
+    line: int,
+    *,
+    managed_at: tuple[str, int] | None = None,
+    elements: str = "",
 ) -> str:
     """Return a `<plugin>` of the effective pom, located in the scanned pom as a dependency is.
 
-    Maven leaves out the `<groupId>` of a plugin in its default plugin group.
+    Maven leaves out the `<groupId>` of a plugin in its default plugin group. The elements follow the coordinates,
+    such as the plugin's `<configuration>`.
     """
     group = {} if artefact.startswith("org.apache.maven.plugins:") else {"groupId": (SCANNED_POM_ID, line - 1)}
     locations = group | {"artifactId": (SCANNED_POM_ID, line)}
     locations |= _version_location(version, managed_at or (SCANNED_POM_ID, line + 1))
-    return f"      <plugin>\n{_located_coordinates(artefact, version, locations)}      </plugin>\n"
+    return f"      <plugin>\n{_located_coordinates(artefact, version, locations)}{elements}      </plugin>\n"
+
+
+def located_setting(tag: str, value: str, location: tuple[str, int]) -> str:
+    """Return a setting of a plugin's `<configuration>` in the effective pom, followed by its input location."""
+    pom, line = location
+    return f"          <{tag}>{value}</{tag}>  <!-- {pom}, line {line} -->\n"
 
 
 def _version_location(version: str | None, location: tuple[str, int]) -> dict[str, tuple[str, int]]:

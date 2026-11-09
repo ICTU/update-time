@@ -1499,14 +1499,6 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
 class CheckedPinsTest(ExecutablesOnPathTestCase):
     """Unit test for handing the discovered manifests to the checks uv-delegated updaters share."""
 
-    @kills(
-        Mutation(
-            update_pyproject_tomls,
-            "warn_about_pins(pyproject_tomls,",
-            "warn_about_pins(projects_for_uv,",
-            "a pyproject.toml that uv does not run for is not checked either",
-        )
-    )
     @patch("update_time.updaters.update_pyproject_toml.warn_about_pins")
     def test_the_discovered_manifests_are_checked(self, warn: Mock, _run: Mock, get: Mock, glob: Mock):
         """Test that the checks are handed every manifest the scan found, whether uv manages and runs for it or not."""

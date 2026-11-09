@@ -68,6 +68,9 @@ class Reason(StrEnum):
     )
     VERSION_HELD_ELSEWHERE = "this declaration does not hold its version, so Maven does not update that version here"
     PLUGIN_NOT_UPDATED = "Maven does not update this plugin's version"
+    RULES_OF_THE_POM = (
+        "the versions plugin's configuration names rules of its own, which Maven follows instead of the marker"
+    )
     CHECKED_AT_THE_MANAGING_DECLARATION = (
         "Update-time checks this dependency at the declaration that manages its version"
     )

@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Leave a `pyproject.toml` that uv does not manage as it is, rather than writing a `uv.lock` beside it and an `exclude-newer` into it, and still check its dependencies. Closes [#507](https://github.com/ICTU/update-time/issues/507).
 - Log at `DEBUG` that each `pyproject.toml` and `package.json` the scan finds, and each script with inline script metadata, is checked before any other line about it. Closes [#521](https://github.com/ICTU/update-time/issues/521).
 - Report an npm, pnpm, or Maven that is not on the path once per file, as for uv, rather than once per command. Closes [#523](https://github.com/ICTU/update-time/issues/523).
+- Report a pom whose versions plugin configuration overrides an option that Update-time sets or relies on, and report the markers in a pom that names rules of its own as redundant, rather than claiming to hold versions back that Maven then adopts. Closes [#492](https://github.com/ICTU/update-time/issues/492).
 
 ## 0.0.56 - 2026-11-07
 

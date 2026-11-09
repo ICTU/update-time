@@ -824,14 +824,31 @@ class Logger:
         """Warn that a marker carries an invalid bracket item."""
         return {"bracket_item": item, "dependency": dependency, "location": location}
 
+    @_warning("Invalid %(bracket_item)r in the update-time marker for %(dependency)s in %(location)s")
+    def invalid_bracket_item_holding_nothing_back(
+        self, dependency: str, item: str, location: Location
+    ) -> dict[str, object]:
+        """Warn that a marker carries an invalid bracket item, where the marker cannot hold the update back."""
+        return {"bracket_item": item, "dependency": dependency, "location": location}
+
     def report_marker(
-        self, dependency: str, marker: Marker, location: Location, *, holds_the_update_back: bool
+        self,
+        dependency: str,
+        marker: Marker,
+        location: Location,
+        *,
+        holds_the_update_back: bool,
+        steers_the_update: bool = True,
     ) -> Marker:
-        """Report a reference's marker, and return the directives Update-time acts on."""
+        """Report a reference's marker, and return the directives Update-time acts on.
+
+        An invalid item holds the update back only where the marker steers the update at all.
+        """
         for directive in marker.default_directives:
             self.redundant_directive(Reference(dependency, "", location), directive, Reason.ASKS_FOR_THE_DEFAULT)
         if marker.invalid_item is not None:
-            self.invalid_bracket_item(dependency, marker.invalid_item, location)
+            invalid = self.invalid_bracket_item if steers_the_update else self.invalid_bracket_item_holding_nothing_back
+            invalid(dependency, marker.invalid_item, location)
             return marker.effective_directives
         self.recognised_marker(dependency, marker, location)
         if holds_the_update_back:
@@ -1140,6 +1157,21 @@ class Logger:
     def declarations_changed(self, path: Path, before: int, after: int) -> dict[str, object]:
         """Report that the file an updater rewrote declares more or fewer dependencies and plugins than before."""
         return self._file_fields(path, before=before, after=after)
+
+    @_debug(
+        "The versions plugin's %(setting)s, set on line %(line)s of %(pom)s, wins over Update-time "
+        "for %(location)s, so %(consequence)s"
+    )
+    @_debug("The versions plugin's %(setting)s wins over Update-time for %(location)s, so %(consequence)s")
+    def option_overridden_by_the_pom(
+        self, path: Path, setting: str, consequence: str, pom: str, line: int
+    ) -> dict[str, object]:
+        """Log that a setting of the pom's versions plugin configuration wins over Update-time.
+
+        Where the effective pom locates the setting, the message names the pom and the line.
+        """
+        located = {"pom": pom, "line": line} if pom else {}
+        return self._file_fields(path, setting=setting, consequence=consequence, **located)
 
     @_debug(
         "Not reporting a new version for %(dependency)s in %(location)s: Maven moved the property %(property)s to "
