@@ -137,13 +137,14 @@ class _PinResolver:
 
     def latest_pin(self, reference: Reference) -> DependencyVersion | None:
         """Return the version or ref to pin the GitHub reference to, or None to leave the reference as it is."""
-        current_version, current_sha = reference.current_version, reference.current_sha
+        current_sha = reference.current_sha
         commit_sha = _commit_sha(reference)
         if not _reads_as_a_version(reference, commit_sha):
             return self._unversioned_pin(reference, commit_sha)
         # The reference uses the commit its tag points at, named by the highest version tag at it.
         if not current_sha:
-            reference = replace(reference, current_version=version_at_tag(reference.dependency, current_version))
+            version = version_at_tag(reference.dependency, reference.current_version)
+            reference = replace(reference, current_version=version)
         latest = latest_version(reference, self.source, self.marker, self.log)
         self.log.warn_if_the_opt_in_is_redundant(
             reference, self.marker, Scope.HASH_DRIFT, None, update_held_back=self.marker.ignores(Scope.UPDATE)
@@ -153,10 +154,10 @@ class _PinResolver:
             return None
         if latest is None or not latest.sha:
             return None
-        if not current_sha:
-            self.log.pinned(reference, latest)
-        elif Version(latest.version) != Version(current_version):
+        if Version(latest.version) != Version(reference.current_version):
             self.log.new_version(reference, latest)
+        elif not current_sha:
+            self.log.pinned(reference, latest)
         elif not hash_drifted(latest.sha, current_sha):
             return None  # Already pinned and up to date
         else:
