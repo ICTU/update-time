@@ -1493,6 +1493,13 @@ Update-time pins an action referenced by version tag only to the commit SHA of t
 
 Update-time pins a `rev:` referenced by version tag only to the commit SHA the same way. Update-time writes the version's tag in pre-commit's own `# frozen:` comment, so `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`.
 
+Where the latest version is newer than the version the tag names, the reference moves to the latest version. Update-time then reports the new version with its changelog, as for any update. Where the tag names the latest version, or points at the latest version's commit as `v4` can, Update-time reports the pin:
+
+```console
+INFO New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0
+INFO Pinned pre-commit/pre-commit-hooks in .pre-commit-config.yaml:4 to 6.0.0@…
+```
+
 Update-time pins an action referenced by a branch to the commit the branch points at. When a version tag points at that commit, the comment names it, so `uses: actions/checkout@main` becomes `uses: actions/checkout@<sha> # v4.3.0`. When several do, the comment names the highest, spelled most precisely: `v4.3.0` rather than `v4.3` or `v4`. A pre-release tag does not count. When no version tag points at the commit, the comment names the branch, so `@main` becomes `@<sha> # main`. Update-time pins a `rev:` that names a branch the same way, in a `# frozen:` comment. It pins a tag such as `stable-2024` the way it pins a branch.
 
 Update-time pins a short commit SHA to the full SHA, so `rev: 3e8a870` becomes `rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c`. When a version tag points at the commit, the comment names that tag, as for a branch: `rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0`. It leaves a full commit SHA without a comment alone, in a `uses:` and a `rev:` alike. So does a full commit SHA whose comment does not name a version, tag, or branch, such as `# pinned by hand` or `# ratchet:actions/checkout@v4`.

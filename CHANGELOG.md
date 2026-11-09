@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Log at `DEBUG` that each `pyproject.toml` and `package.json` the scan finds, and each script with inline script metadata, is checked before any other line about it. Closes [#521](https://github.com/ICTU/update-time/issues/521).
 - Report an npm, pnpm, or Maven that is not on the path once per file, as for uv, rather than once per command. Closes [#523](https://github.com/ICTU/update-time/issues/523).
 - Report a pom whose versions plugin configuration overrides an option that Update-time sets or relies on, and report the markers in a pom that names rules of its own as redundant, rather than claiming to hold versions back that Maven then adopts. Closes [#492](https://github.com/ICTU/update-time/issues/492).
+- Report a GitHub Action or pre-commit hook referenced by a version tag alone, which Update-time pins to a newer version, as a new version with its changelog rather than as a pin. Closes [#516](https://github.com/ICTU/update-time/issues/516).
 
 ## 0.0.56 - 2026-11-07
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, NoReturn
 from unittest.mock import ANY, DEFAULT, Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.domain.dependency import DependencyVersion, Project
+from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion, Project
 
 from tests.helpers import FakeFiles, mock_response
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
@@ -64,9 +64,9 @@ def pypi_answer(url: str, *_arguments: object, **_options: object) -> Mock:
     return pypi_index("1.0") if "/simple/" in url else mock_response(_pypi_metadata_without_changelog())
 
 
-def github_version(version: str, project: Project = _NO_PROJECT) -> DependencyVersion:
+def github_version(version: str, project: Project = _NO_PROJECT, changes: Changes = NO_CHANGES) -> DependencyVersion:
     """Return the version the GitHub source resolves to, pinned to the new commit and tagged with a `v` prefix."""
-    return DependencyVersion(version=version, sha=COMMIT_SHA2, tag_name=f"v{version}", project=project)
+    return DependencyVersion(version=version, changes=changes, sha=COMMIT_SHA2, tag_name=f"v{version}", project=project)
 
 
 def dated_pypi_index(*versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool | str = False) -> Mock:

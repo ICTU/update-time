@@ -367,6 +367,14 @@ def _no_release_tagged(log: Logger, capture: _Capture, workflow: Location) -> di
     return {"@@NO_RELEASE_TAGGED@@": capture.take()}
 
 
+def _pinned_version_tags(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
+    """Log a version tag pinned to a newer version and one pinned to the version it names, and pair the lines."""
+    log.new_version(reference("actions/checkout", workflow), DependencyVersion("4.3.0", sha=_ELIDED))
+    hooks = reference("pre-commit/pre-commit-hooks", Location(Path(".pre-commit-config.yaml"), 4))
+    log.pinned(hooks, DependencyVersion("6.0.0", sha=_ELIDED))
+    return {"@@PINNED_VERSION_TAGS@@": capture.take()}
+
+
 def _github_refs(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
     """Log a branch kept floating, refs left unpinned, unchecked drift, and undated commits, with placeholders."""
     branch = reference("actions/checkout", workflow, "main")
@@ -485,6 +493,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
         **_no_release_tagged(log, capture, workflow),
+        **_pinned_version_tags(log, capture, workflow),
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),

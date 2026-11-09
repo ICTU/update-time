@@ -65,7 +65,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         )
 
     def test_pin_unpinned_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a rev given as a version tag only is pinned to the commit SHA with a frozen version comment."""
+        """Test that a rev given as a version tag only is pinned to the commit SHA of a newer version."""
         mock_get_latest_version.return_value = github_version("4.6.0")
         config_file = mock_path(config("rev: v4.5.0\n"))
         mock_glob.return_value = [config_file]
@@ -73,8 +73,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.6.0\n"))
         self.assert_resolved(mock_get_latest_version)
         self.assert_path_logged(config_file)
-        self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
-        self.assert_no_new_version_logged()
+        self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_tag_already_at_latest(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -85,7 +84,6 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0\n"))
         self.assert_pinned_logged(self.HOOK, "4.5.0", NEW_SHA, Location(config_file, 3))
-        self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     def test_frozen_comment_names_the_tag_as_the_repository_spells_it(
@@ -98,7 +96,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v24.1.0\n"))
         self.assert_resolved(mock_get_latest_version, "22.10.0")
-        self.assert_pinned_logged(self.HOOK, "24.1.0", NEW_SHA, Location(config_file, 3))
+        self.assert_new_version_logged(self.HOOK, "24.1.0", Location(config_file, 3))
 
     def test_pin_quoted_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a quoted rev tag is pinned, dropping the quotes like pre-commit's own freeze does."""
@@ -207,7 +205,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(f"{repo}    rev: {NEW_SHA}  # frozen: v4.6.0\n")
         self.assert_resolved(mock_get_latest_version)
-        self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
+        self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
         self.assert_no_warnings_logged()
 
     @kills(
@@ -438,7 +436,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: allow[update<5]\n")
         )
         self.assert_resolved(mock_get_latest_version, "v4.5.0", bound(Verb.ALLOW, "update<5"))
-        self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
+        self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
         self.assert_no_warnings_logged()
 
     def test_level_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -451,7 +449,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: ignore[major-update]\n")
         )
         self.assert_resolved(mock_get_latest_version, "v4.5.0", bound(Verb.IGNORE, "major-update"))
-        self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
+        self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
         self.assert_no_warnings_logged()
 
     def test_invalid_specifier_leaves_rev_unchanged(self, mock_glob: Mock, mock_get_latest_version: Mock):

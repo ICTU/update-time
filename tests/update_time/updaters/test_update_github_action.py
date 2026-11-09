@@ -10,7 +10,7 @@ import requests
 
 from update_time.domain.bound import NO_BOUND, Verb, VersionBound, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, PinnedDependency, Project, Release
+from update_time.domain.dependency import Changes, DependencyVersion, PinnedDependency, Project, Release
 from update_time.domain.reference import DriftedPin, RefKind
 from update_time.io.log import Drift, Logger
 from update_time.manifests import github_workflow as github_workflow_manifest
@@ -242,16 +242,16 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_stale_dependency_logged("action/action", "1.2", Location(workflow_yml, 1))
 
     def test_pin_unpinned_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that an action referenced by version tag only is pinned to the commit SHA with a version comment."""
-        mock_get_latest_version.return_value = github_version("4.1.1")
+        """Test that an action referenced by version tag only is pinned to a newer version, logged with its changes."""
+        changes = Changes("Fixed a bug", markdown=False, url="")
+        mock_get_latest_version.return_value = github_version("4.1.1", changes=changes)
         workflow_yml = mock_path("uses: actions/checkout@v4\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         self.assert_resolved(mock_get_latest_version)
         self.assert_path_logged(workflow_yml)
-        self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
-        self.assert_no_new_version_logged()
+        self.assert_new_version_logged("actions/checkout", "4.1.1", Location(workflow_yml, 1), changes=changes)
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_action_already_at_latest(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -264,7 +264,6 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_resolved(mock_get_latest_version, "v4.1.1")
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
-        self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -277,7 +276,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
         )
         self.assert_resolved(mock_get_latest_version, "v4", bound(Verb.ALLOW, "update<5"))
-        self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
+        self.assert_new_version_logged("actions/checkout", "4.2.0", Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a `<5` bound on a v4 pin is live, so no redundancy warning
 
     def test_level_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -290,7 +289,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: ignore[major-update]\n"
         )
         self.assert_resolved(mock_get_latest_version, "v4", bound(Verb.IGNORE, "major-update"))
-        self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
+        self.assert_new_version_logged("actions/checkout", "4.2.0", Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a major-update bound on a v4 pin is live, so no redundancy warning
 
     def test_inline_ignore_marker_leaves_action_untouched(self, mock_glob: Mock, mock_get_latest_version: Mock):
