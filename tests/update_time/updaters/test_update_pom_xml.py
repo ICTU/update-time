@@ -598,8 +598,16 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         with patch.object(maven_central_module, "versions_held_back", versions_held_back):
             yield
 
+    @kills(
+        Mutation(
+            maven_marker_policy.report_markers,
+            "if held_back is None and not marker.holds_the_update_back:",
+            "if held_back is None:",
+            "an `ignore[update]` in a pom is reported twice as holding the update back",
+        )
+    )
     def test_a_marker_holding_every_version_back_is_reported_as_holding_it_back(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker holding every version back is reported as holding the update, naming its directive."""
+        """Test that a marker holding every version back is reported once as holding the update, with its directive."""
         own_property = _marked_property("guava.version", "33.0.0-jre", "ignore[update]")
         surefires_property = _marked_property("surefire.version", "3.5.0", "ignore[update]")
         surefire = build_element(plugin_element("maven-surefire-plugin", "${surefire.version}"))
@@ -647,6 +655,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                 pom = self.find_pom(mock_run, mock_glob, declared)
                 update_pom_xmls()
                 self.assert_ignored_logged(artefact, Location(pom, line), directive, among_others=True)
+                self.assertEqual(len(self.records_of(message_of(Logger.ignored))), 1)
                 self.assert_no_redundant_directive_logged()
 
     def test_a_cooldown_or_a_bound_is_not_reported_as_holding_the_update_back(self, mock_run: Mock, mock_glob: Mock):
@@ -733,6 +742,20 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         pom = self.find_pom_versioned_by_a_parent(mock_run, mock_glob, "ignore[update] allow[update<34]")
         update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.VERSION_HELD_ELSEWHERE, GUAVA, Location(pom, 6), "ignore[update]")
+
+    @kills(
+        Mutation(
+            maven_marker_policy.report_markers,
+            "steers_the_update=reason is None",
+            "steers_the_update=not pom_names_rules",
+            "an invalid item on a version Maven does not update is said to leave the reference unchanged",
+        )
+    )
+    def test_an_invalid_item_on_a_parents_property_holds_nothing_back(self, mock_run: Mock, mock_glob: Mock):
+        """Test that an invalid item on a version a parent's property holds is not said to hold the update back."""
+        pom = self.find_pom_versioned_by_a_parent(mock_run, mock_glob, "ignore[stlae]")
+        update_pom_xmls()
+        self.assert_invalid_bracket_item_logged(GUAVA, Location(pom, 6), "stlae", holding_back=False)
 
     def test_a_marker_on_a_dependency_without_a_version_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker steering the update of a version the parent pom manages is redundant here."""
@@ -1727,14 +1750,6 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.assert_redundant_directive_logged(Reason.RULES_OF_THE_POM, GUAVA, Location(pom, 6), "ignore[update>=34]")
         self.assert_none_logged(message_of(Logger.holding_back_range), "range held back")
 
-    @kills(
-        Mutation(
-            maven_marker_policy.report_markers,
-            "steers_the_update=not pom_names_rules,",
-            "",
-            "an invalid item in a pom naming rules of its own is said to leave the reference unchanged",
-        )
-    )
     def test_an_invalid_item_where_the_pom_names_rules_of_its_own_holds_nothing_back(
         self, mock_run: Mock, mock_glob: Mock
     ):

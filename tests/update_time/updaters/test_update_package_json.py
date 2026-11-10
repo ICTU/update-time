@@ -1551,7 +1551,13 @@ class MarkerTest(NoUpdateTestCase):
             "if marker.invalid_item is None and marker.raw:",
             "if marker.raw:",
             "an unreadable item on an undeclared dependency is reported as redundant as well as invalid",
-        )
+        ),
+        Mutation(
+            update_package_json_module._report_undeclared_reference,
+            "steers_the_update=False",
+            "steers_the_update=True",
+            "an unreadable item on an undeclared dependency is said to leave the reference unchanged",
+        ),
     )
     def test_an_undeclared_marker_that_cannot_be_read_is_reported_as_invalid(
         self, get: Mock, mock_run: Mock, glob: Mock
@@ -1563,7 +1569,7 @@ class MarkerTest(NoUpdateTestCase):
         }.items():
             with self.subTest(case=case):
                 package_json = self.run_on_undeclared_markers(get, mock_run, glob, f'"lodash": {value}')
-                self.assert_invalid_bracket_item_logged("lodash", Location(package_json, 5), item)
+                self.assert_invalid_bracket_item_logged("lodash", Location(package_json, 5), item, holding_back=False)
 
     def test_an_undeclared_marker_without_a_directive_is_not_reported(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that an undeclared dependency's marker without a directive is left unreported."""
@@ -1588,7 +1594,7 @@ class MarkerTest(NoUpdateTestCase):
                 package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
                 location = Location(package_json, 4)
                 self.assert_invalid_bracket_item_logged(
-                    "clipboard", location, "update-time.dependencies.clipboard", among_others=True
+                    "clipboard", location, "update-time.dependencies.clipboard", among_others=True, holding_back=False
                 )
                 self.assert_stale_dependency_logged("clipboard", "2.0.11", location, among_others=True)
                 self.assertEqual(len(self.records(WARNING)), 2)

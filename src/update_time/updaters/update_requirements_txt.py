@@ -87,8 +87,7 @@ def _check_loose_requirements(lines: list[Line], compiler: RequirementsCompiler 
     """
     for line, match, marker in reference_matches(lines, requirements_txt_manifest.LOOSE_REQUIREMENT_REFERENCE):
         # No pass before this one reads these lines, so their markers are reported here.
-        holds_the_update_back = compiler is not None and marker.ignores(Scope.UPDATE)
-        _LOG.report_marker(match["dependency"], marker, line.location, holds_the_update_back=holds_the_update_back)
+        _LOG.report_marker(match["dependency"], marker, line.location, steers_the_update=compiler is not None)
         if requirements_txt_manifest.names_an_archive(dependency := match["dependency"]):
             continue
         reference = Reference(dependency, "", line.location)

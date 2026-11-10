@@ -21,20 +21,19 @@ _LOG = get_logger("pom.xml")
 def report_markers(declared: list[pom_xml_manifest.Declaration], *, pom_names_rules: bool) -> None:
     """Report the marker of each dependency and plugin, named as Maven resolves it, and the range a bound holds back.
 
-    Where the pom names rules of its own, Maven follows those rules, so a marker holds nothing back.
+    Where Maven does not update the version, or follows rules the pom names, a marker holds nothing back. A bound that
+    the rule set cannot express holds every version back, as an `ignore[update]` does.
     """
     for declaration in declared:
         reason = versions_plugin.reason_the_marker_steers_nothing(declaration, pom_names_rules=pom_names_rules)
         held_back = versions_plugin.range_held_back(declaration) if reason is None else ""
-        _LOG.report_marker(
-            declaration.dependency,
-            declaration.marker,
-            declaration.location,
-            holds_the_update_back=held_back is None,
-            steers_the_update=not pom_names_rules,
+        marker = _LOG.report_marker(
+            declaration.dependency, declaration.marker, declaration.location, steers_the_update=reason is None
         )
-        if held_back:
-            _LOG.holding_back_range(declaration, held_back, declaration.marker.version_bound_directive)
+        if held_back is None and not marker.holds_the_update_back:
+            _LOG.ignored(declaration.dependency, marker, declaration.location)
+        elif held_back:
+            _LOG.holding_back_range(declaration, held_back, marker.version_bound_directive)
         _report_redundant_directives(declaration, reason)
 
 

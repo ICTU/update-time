@@ -516,12 +516,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                     self.assert_no_ignored_staleness_logged()
 
     def test_an_invalid_item_on_a_loose_requirement_is_reported(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an unreadable item is reported and silences nothing, so the staleness check still runs."""
+        """Test that an unreadable item is reported as holding nothing back, and that the staleness check still runs."""
         requirements_txt = self.loose_requirement(mock_rglob, "ignore[stlae]")
         mock_get.side_effect = self.stale_pypi("4.15.0")
         update_requirements_txts()
-        self.assert_invalid_bracket_item_logged("humanize", Location(requirements_txt, 1), "stlae", among_others=True)
-        self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1), among_others=True)
+        location = Location(requirements_txt, 1)
+        self.assert_invalid_bracket_item_logged("humanize", location, "stlae", among_others=True, holding_back=False)
+        self.assert_stale_dependency_logged("humanize", "4.15.0", location, among_others=True)
 
     def test_a_readable_item_beside_an_unreadable_one_still_acts(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a `set[stale-after=0]` sharing a bracket with an unreadable item still silences the warning."""
@@ -529,7 +530,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.stale_pypi("4.15.0")
         update_requirements_txts()
         # The unreadable item is the run's only warning, so the staleness warning was silenced:
-        self.assert_invalid_bracket_item_logged("humanize", Location(requirements_txt, 1), "stlae")
+        self.assert_invalid_bracket_item_logged("humanize", Location(requirements_txt, 1), "stlae", holding_back=False)
         self.assert_no_staleness_warning_logged("humanize", Location(requirements_txt, 1))
 
     def test_a_default_beside_an_unreadable_item_is_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
@@ -1287,6 +1288,22 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         source = "flask>=0.1  # update-time: ignore[update]\n"
         self.run_update(mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
         self.assert_ignored_logged("flask", Location(_SOURCE, 1), "ignore[update]", among_others=True)
+
+    @kills(
+        Mutation(
+            update_requirements_txt._check_loose_requirements,
+            "steers_the_update=compiler is not None",
+            "steers_the_update=False",
+            "an invalid item in a source Update-time recompiles is not said to hold the update back",
+        )
+    )
+    def test_an_invalid_item_in_a_source_uv_recompiles_from_is_said_to_leave_the_reference_unchanged(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that an unreadable item on a requirement without an exact pin is said to hold its update back."""
+        source = "flask>=0.1  # update-time: ignore[stlae]\n"
+        self.run_update(mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
+        self.assert_invalid_bracket_item_logged("flask", Location(_SOURCE, 1), "stlae", among_others=True)
 
     def test_each_source_of_a_compiled_file_is_updated(self, mock_rglob: Mock, mock_get: Mock):
         """Test that each source of a compiled file is bumped, and that one line names the sources that exist."""

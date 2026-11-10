@@ -47,9 +47,13 @@ class ManagerPolicy[ReferenceT: SteeredReference]:
             cooldown_redundancy=hold_back_reason,
         )
 
+    def steers_the_update(self, reference: ReferenceT) -> bool:
+        """Return whether the reference's marker steers the update, which it does where an `ignore[update]` keeps it."""
+        return self.hold_back_redundancy(reference) is None
+
     def keeps_the_version(self, reference: ReferenceT) -> bool:
         """Return whether the reference's marker carries an `ignore[update]` that keeps its version where it is."""
-        return reference.marker.ignores(Scope.UPDATE) and self.hold_back_redundancy(reference) is None
+        return reference.marker.ignores(Scope.UPDATE) and self.steers_the_update(reference)
 
 
 def report_markers[ReferenceT: SteeredReference](
@@ -67,5 +71,5 @@ def _report_reference_marker[ReferenceT: SteeredReference](
         reference.dependency,
         reference.marker,
         reference.location,
-        holds_the_update_back=policy.keeps_the_version(reference),
+        steers_the_update=policy.steers_the_update(reference),
     )

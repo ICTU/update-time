@@ -76,7 +76,7 @@ def _report_undeclared_references(files: list[PackageJson]) -> None:
 def _report_undeclared_reference(reference: SteeredReference) -> None:
     """Report the marker of a dependency its section does not declare, and one holding directives as redundant."""
     marker = reference.marker
-    _LOG.report_marker(reference.dependency, marker, reference.location, holds_the_update_back=False)
+    _LOG.report_marker(reference.dependency, marker, reference.location, steers_the_update=False)
     if marker.invalid_item is None and marker.raw:
         _LOG.redundant_directive(reference, marker.raw, Reason.UNDECLARED_DEPENDENCY)
 
