@@ -2,7 +2,7 @@
 
 import unittest
 from pathlib import Path
-from unittest.mock import ANY, Mock, call, patch
+from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
@@ -10,7 +10,6 @@ from update_time.manifests import python_dependency_toml as python_dependency_to
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers.uv import uv
 from update_time.package_managers.uv.uv import (
-    _persist_exclude_newer,
     _workspace_root,
     _workspace_table,
     configure_cooldown,
@@ -34,13 +33,13 @@ def _managed(cooldown: str) -> str:
     return f'\n[tool.uv]\nexclude-newer = "{cooldown}" # {MANAGED_BY_COMMENT}\n'
 
 
-class PersistExcludeNewerTest(UvSettingsTestCase):
+class ConfigureCooldownTest(UvSettingsTestCase):
     """Unit tests for writing the cooldown into a single pyproject.toml, with the file I/O mocked."""
 
-    def persist(self, contents: str) -> Mock:
-        """Run `_persist_exclude_newer` on a mock pyproject.toml with the contents and return the mock."""
+    def configure(self, contents: str) -> Mock:
+        """Run `configure_cooldown` on a mock pyproject.toml with the contents and return the mock."""
         pyproject_toml = mock_path(contents)
-        _persist_exclude_newer(pyproject_toml)
+        configure_cooldown(pyproject_toml)
         return pyproject_toml
 
     @kills(
@@ -53,7 +52,7 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
     )
     def test_writes_when_absent(self):
         """Test that the cooldown is written, with the managed-by comment, when the project configures none."""
-        pyproject_toml = self.persist(pyproject("a==1.0"))
+        pyproject_toml = self.configure(pyproject("a==1.0"))
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
         self.assertIn(MANAGED_BY_COMMENT, written)
@@ -61,12 +60,12 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
 
     def test_creates_tool_uv_section_when_absent(self):
         """Test that a `[tool.uv]` section is created when the pyproject.toml has none at all."""
-        pyproject_toml = self.persist(pyproject("a==1.0"))
+        pyproject_toml = self.configure(pyproject("a==1.0"))
         self.assertIn("[tool.uv]", pyproject_toml.write_text.call_args.args[0])
 
     def test_preserves_other_tool_uv_keys(self):
         """Test that writing exclude-newer preserves an existing exclude-newer-package table."""
-        pyproject_toml = self.persist(
+        pyproject_toml = self.configure(
             pyproject("a==1.0") + "\n[tool.uv]\nexclude-newer-package = { msgpack = false }\n"
         )
         written = pyproject_toml.write_text.call_args.args[0]
@@ -75,7 +74,7 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
 
     @kills(
         Mutation(
-            uv._persist_exclude_newer,
+            uv.configure_cooldown,
             "_LOG.uv_cooldown_not_set(pyproject_toml)",
             "pass",
             "a pyproject.toml that cannot hold the cooldown is passed over without a word",
@@ -83,28 +82,28 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
     )
     def test_warns_about_a_file_whose_tool_tables_cannot_hold_the_cooldown(self):
         """Test that a pyproject.toml whose `tool` is not a table is warned about, and neither written nor logged."""
-        pyproject_toml = self.persist('tool = "x"\n' + pyproject("a==1.0"))
+        pyproject_toml = self.configure('tool = "x"\n' + pyproject("a==1.0"))
         pyproject_toml.write_text.assert_not_called()
         self.assert_logged(message_of(Logger.uv_cooldown_not_set), location=ANY)
 
     def test_leaves_a_user_value_untouched(self):
         """Test that an exclude-newer without the managed-by comment is left alone, writing and logging nothing."""
-        pyproject_toml = self.persist(pyproject("a==1.0") + '\n[tool.uv]\nexclude-newer = "2024-01-01"\n')
+        pyproject_toml = self.configure(pyproject("a==1.0") + '\n[tool.uv]\nexclude-newer = "2024-01-01"\n')
         pyproject_toml.write_text.assert_not_called()
         self.assert_no_info_logged()
 
     @kills(
         Mutation(
-            uv._persist_exclude_newer,
-            "pyproject_toml.parent, pyproject_toml",
-            "Path.cwd(), pyproject_toml",
+            uv.settings_hold_exclude_newer,
+            "file.parent, file",
+            "Path.cwd(), file",
             "uv reads the settings of the directory Update-time runs in rather than those of the project",
         )
     )
     def test_leaves_an_exclude_newer_that_uvs_settings_hold_elsewhere(self):
         """Test that nothing is written where uv's settings, in the file's directory, hold an `exclude-newer`."""
         self.configured_exclude_newer = CONFIGURED_EXCLUDE_NEWER
-        pyproject_toml = self.persist(pyproject("a==1.0"))
+        pyproject_toml = self.configure(pyproject("a==1.0"))
         pyproject_toml.write_text.assert_not_called()
         self.assert_no_info_logged()
         settings = Command("uv", "lock", "--show-settings")
@@ -117,66 +116,43 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
         for case, answer in UNREADABLE_SETTINGS.items():
             with self.subTest(case):
                 self.settings_answer = answer
-                pyproject_toml = self.persist(pyproject("a==1.0"))
+                pyproject_toml = self.configure(pyproject("a==1.0"))
                 self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', pyproject_toml.write_text.call_args.args[0])
                 self.assert_logged_among_others(message_of(Logger.uv_settings_unreadable), location=ANY)
 
     @kills(
         Mutation(
-            uv._persist_exclude_newer,
-            'if not is_installed("uv"):',
-            "if False:",
-            "Update-time queries a missing uv, and writes a cooldown nothing reads",
+            uv.configure_cooldown,
+            'not is_installed("uv")',
+            "False",
+            "Update-time writes a cooldown for a missing uv, which nothing reads",
         )
     )
     def test_writes_nothing_where_uv_is_not_on_the_path(self):
         """Test that Update-time neither asks a missing uv for its settings nor writes a cooldown for it."""
         self.leave_off_the_path("uv")
-        pyproject_toml = self.persist(pyproject("a==1.0"))
+        pyproject_toml = self.configure(pyproject("a==1.0"))
         pyproject_toml.write_text.assert_not_called()
         self.mock_run.assert_not_called()
 
     def test_does_not_rewrite_when_already_current(self):
         """Test that Update-time's own value is not rewritten where it already matches the cooldown."""
-        pyproject_toml = self.persist(pyproject("a==1.0") + _managed(f"{COOLDOWN.default} days"))
+        pyproject_toml = self.configure(pyproject("a==1.0") + _managed(f"{COOLDOWN.default} days"))
         pyproject_toml.write_text.assert_not_called()
 
     @patch_environ({COOLDOWN.name: "14"})
     def test_syncs_own_value_to_the_cooldown(self):
         """Test that Update-time writes its `--cooldown` value over its own, whatever uv's settings say."""
         self.configured_exclude_newer = CONFIGURED_EXCLUDE_NEWER
-        pyproject_toml = self.persist(pyproject("a==1.0") + _managed("7 days"))
+        pyproject_toml = self.configure(pyproject("a==1.0") + _managed("7 days"))
         self.assertIn('exclude-newer = "14 days"', pyproject_toml.write_text.call_args.args[0])
 
-
-class ConfigureCooldownTest(unittest.TestCase):
-    """Unit tests for orchestrating the cooldown persistence across a run's projects (workspace routing mocked)."""
-
-    @patch("update_time.package_managers.uv.uv._persist_exclude_newer")
-    @patch("update_time.package_managers.uv.uv._workspace_root")
-    def test_writes_once_per_workspace_root(self, workspace_root: Mock, persist: Mock):
-        """Test that members sharing a workspace root yield a single write to that root."""
-        root = Path("/ws/pyproject.toml")
-        workspace_root.return_value = root  # Every member resolves to the same root.
-        members = [Path("/ws/packages/a/pyproject.toml"), Path("/ws/packages/b/pyproject.toml"), root]
-        configure_cooldown([PyprojectToml(member) for member in members])
-        persist.assert_called_once_with(root)
-
-    @patch("update_time.package_managers.uv.uv._persist_exclude_newer")
-    @patch("update_time.package_managers.uv.uv._workspace_root")
-    def test_persists_each_distinct_root(self, workspace_root: Mock, persist: Mock):
-        """Test that standalone projects (each its own root) are all persisted."""
-        workspace_root.side_effect = lambda pyproject_toml: pyproject_toml
-        first, second = Path("/a/pyproject.toml"), Path("/b/pyproject.toml")
-        configure_cooldown([PyprojectToml(first), PyprojectToml(second)])
-        self.assertEqual(persist.call_args_list, [call(first), call(second)])
-
-    @patch("update_time.package_managers.uv.uv._persist_exclude_newer")
     @patch_environ({"UV_EXCLUDE_NEWER": "2024-01-01"})
-    def test_environment_override_writes_nothing(self, persist: Mock):
-        """Test that nothing is persisted when the user sets the UV_EXCLUDE_NEWER environment variable."""
-        configure_cooldown([PyprojectToml(Path("/proj/pyproject.toml"))])
-        persist.assert_not_called()
+    def test_environment_override_writes_nothing(self):
+        """Test that nothing is written, nor uv asked for its settings, when UV_EXCLUDE_NEWER is set."""
+        pyproject_toml = self.configure(pyproject("a==1.0"))
+        pyproject_toml.write_text.assert_not_called()
+        self.mock_run.assert_not_called()
 
 
 class WorkspaceRootTest(unittest.TestCase):

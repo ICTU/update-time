@@ -83,24 +83,15 @@ def manages(pyproject_toml: Path, config: dict) -> bool:
     return False
 
 
-def configure_cooldown(pyproject_tomls: Iterable[PyprojectToml]) -> None:
-    """Persist Update-time's cooldown into the `[tool.uv] exclude-newer` of each involved workspace root.
+def configure_cooldown(pyproject_toml: Path) -> None:
+    """Write `exclude-newer = "<N> days"`, with the managed-by comment, to the workspace root, unless a user set it.
 
     uv's `exclude-newer` is a publish-date cutoff that works as a cooldown (it accepts a relative duration such as
     `7 days`). Passing it only on the command line makes uv bake it into the lockfile and then treat a later `uv
     sync --locked` (without the flag) as stale, so Update-time writes it to config instead: uv reads the same cutoff
-    on every command and the lockfile stays reproducible. The `UV_EXCLUDE_NEWER` environment variable is the user's
-    own global override, so when it is set Update-time adds nothing. uv reads `exclude-newer` from the workspace
-    root, so the setting is written once per root, not into each member manifest.
-    """
-    if os.environ.get("UV_EXCLUDE_NEWER"):
-        return
-    for root in by_workspace(pyproject_tomls):
-        _persist_exclude_newer(root)
-
-
-def _persist_exclude_newer(pyproject_toml: Path) -> None:
-    """Write `exclude-newer = "<N> days"`, with the managed-by comment, to the pyproject.toml, unless a user set it.
+    on every command and the lockfile stays reproducible. uv reads `exclude-newer` from the workspace root, not from a
+    member. The `UV_EXCLUDE_NEWER` environment variable is the user's own global override, so when it is set
+    Update-time adds nothing.
 
     A file whose `tool` or `tool.uv` is not a table gets a warning instead. Without uv on the path, nothing is written,
     and the uv run that follows reports uv missing.
@@ -108,13 +99,12 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
     A value carrying the managed-by comment is kept in sync with the cooldown; a value without the comment is
     the user's own and is left untouched, as is an already-current value carrying it (which is not rewritten).
     """
-    if not is_installed("uv"):
+    if os.environ.get("UV_EXCLUDE_NEWER") or not is_installed("uv"):
         return
     file = PyprojectToml(pyproject_toml)
     existing = file.tool_key("uv", "exclude-newer")
     cooldown = _duration(COOLDOWN.get())
-    uv_lock = Command("uv", "lock")
-    if existing is None and _settings_hold_exclude_newer(uv_lock, pyproject_toml.parent, pyproject_toml, _LOG):
+    if existing is None and settings_hold_exclude_newer(Command("uv", "lock"), pyproject_toml, _LOG):
         return  # An exclude-newer set outside the file, such as in a uv.toml: leave it alone.
     if existing is not None:
         value, comment = existing
@@ -126,6 +116,15 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
         _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
     else:
         _LOG.uv_cooldown_not_set(pyproject_toml)
+
+
+def settings_hold_exclude_newer(command: Command, file: Path, log: Logger) -> bool:
+    """Return whether uv's settings for the command, run in the file's directory, hold an `exclude-newer`.
+
+    The settings include an `exclude-newer` in the file itself. Without uv on the path, uv is not asked, and its
+    settings hold none.
+    """
+    return is_installed("uv") and _settings_hold_exclude_newer(command, file.parent, file, log)
 
 
 def _duration(days: int) -> str:

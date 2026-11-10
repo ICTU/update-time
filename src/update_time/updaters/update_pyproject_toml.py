@@ -15,11 +15,10 @@ _LOG = get_logger("pyproject.toml")
 
 
 def update_pyproject_tomls() -> None:
-    """Find the pyproject.toml files, check their pins, and update the pins and the uv.lock of each that uv manages.
+    """Find the pyproject.toml files, check their pins, and update the pins, and any uv.lock, of each that uv manages.
 
-    uv runs only for a pyproject.toml that uv manages and that declares a dependency for it to resolve, since `uv lock`
-    writes a uv.lock beside any pyproject.toml it runs for. Where uv cannot lock a workspace's new pins, each
-    pyproject.toml the run rewrote gets back the pins it held before.
+    uv runs only for a pyproject.toml that uv manages and that declares a dependency for it to resolve. Where uv cannot
+    lock a workspace's new pins, each pyproject.toml the run rewrote gets back the pins it held before.
     """
     pyproject_tomls: list[PyprojectToml] = []
     projects_for_uv: list[PyprojectToml] = []
@@ -44,10 +43,6 @@ def update_pyproject_tomls() -> None:
             else:
                 unmanaged_projects.append(pyproject_toml)
                 marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.UNMANAGED_FILE_POLICY)
-    # Persist the cooldown into config before running uv, so `uv lock` reads it and the lockfile it produces stays
-    # reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`). Then update each workspace, so the
-    # files get the text they hold now back where uv cannot lock.
-    uv.configure_cooldown(projects_for_uv)
     policies = update_workspaces(projects_for_uv, _LOG)
     policies.update(dict.fromkeys(unmanaged_projects, marker_policy.UNMANAGED_FILE_POLICY))
     warn_about_pins(pyproject_tomls, _LOG, policies)

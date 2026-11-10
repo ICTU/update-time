@@ -12,7 +12,13 @@ from update_time.io.process import is_installed, run
 from update_time.lock_files.uv_lock import RecordedVersions, UvLock
 from update_time.package_managers.moved_versions import log_moved_versions, log_new_version
 from update_time.package_managers.uv import marker_policy
-from update_time.package_managers.uv.uv import EXCLUDE_NEWER_OPTION, by_workspace, pypi_served
+from update_time.package_managers.uv.uv import (
+    EXCLUDE_NEWER_OPTION,
+    by_workspace,
+    configure_cooldown,
+    pypi_served,
+    settings_hold_exclude_newer,
+)
 from update_time.primitives.command import Command
 
 if TYPE_CHECKING:
@@ -131,42 +137,32 @@ class _LockTarget:
     command: Command
     uv_lock: UvLock
     cooldown_options: tuple[str, ...]
-    keeps_a_new_lock: bool
     uv_lock_text: str | None
 
     @classmethod
     def workspace(cls, root: Path, log: Logger) -> Self | None:
-        """Return the uv workspace of the root pyproject.toml as what uv locks, or None where its lock is unreadable."""
-        directory = root.parent
-        return cls._read(
-            Command(*_UV_LOCK, "--directory", str(directory)),
-            UvLock.beside(root),
-            cooldown_options=(),
-            keeps_a_new_lock=True,
-            log=log,
-        )
+        """Return the uv workspace of the root pyproject.toml as what uv locks, or None where its lock is unreadable.
+
+        uv reads the cooldown of a workspace with a lock from its root's config. One without gets it as a cutoff, as a
+        script does.
+        """
+        command = Command(*_UV_LOCK, "--directory", str(root.parent))
+        if (target := cls._read(command, UvLock.beside(root), log=log)) is None:
+            return None
+        return target if target.keeps_the_lock else _with_cutoff(target, root, log)
 
     @classmethod
     def script(cls, path: Path, log: Logger) -> Self | None:
-        """Return the script as what uv locks, with the cooldown as a cutoff, or None where its lock is unreadable."""
-        return cls._read(
-            Command(*_UV_LOCK, "--script", str(path)),
-            UvLock(path.with_name(f"{path.name}.lock")),
-            cooldown_options=(EXCLUDE_NEWER_OPTION, cooldown_cutoff(COOLDOWN.get())),
-            keeps_a_new_lock=False,
-            log=log,
-        )
+        """Return the script as what uv locks, with the cooldown as a cutoff, or None where its lock is unreadable.
+
+        Where uv's settings for the script hold an `exclude-newer` already, uv reads that one instead.
+        """
+        uv_lock = UvLock(path.with_name(f"{path.name}.lock"))
+        target = cls._read(Command(*_UV_LOCK, "--script", str(path)), uv_lock, log=log)
+        return None if target is None else _with_cutoff(target, path, log)
 
     @classmethod
-    def _read(
-        cls,
-        command: Command,
-        uv_lock: UvLock,
-        *,
-        cooldown_options: tuple[str, ...],
-        keeps_a_new_lock: bool,
-        log: Logger,
-    ) -> Self | None:
+    def _read(cls, command: Command, uv_lock: UvLock, *, log: Logger) -> Self | None:
         """Return what uv locks, with the text its lock holds, or None where the lock is unreadable.
 
         An unreadable lock is logged at error.
@@ -176,12 +172,12 @@ class _LockTarget:
         except (OSError, UnicodeDecodeError) as error:
             log.lock_not_read(uv_lock.path, error)
             return None
-        return cls(command, uv_lock, cooldown_options, keeps_a_new_lock, uv_lock_text)
+        return cls(command, uv_lock, (), uv_lock_text)
 
     @property
     def keeps_the_lock(self) -> bool:
-        """Return whether the run leaves a lock: the one there was before the run, or a new one it keeps."""
-        return self.uv_lock_text is not None or self.keeps_a_new_lock
+        """Return whether the run keeps a lock: the one there was before the run."""
+        return self.uv_lock_text is not None
 
     def lock(self, files: Iterable[PythonDependencyToml], log: Logger, *options: str) -> bool:
         """Lock with the uv options, and return whether uv locked.
@@ -194,6 +190,13 @@ class _LockTarget:
         for file in files:
             log.uv_dependencies_not_updated(file.path, str(_UV_LOCK))
         return False
+
+
+def _with_cutoff[TargetT: _LockTarget](target: TargetT, file: Path, log: Logger) -> TargetT:
+    """Return what uv locks with the cooldown as a cutoff, unless uv's settings hold an `exclude-newer` already."""
+    if settings_hold_exclude_newer(target.command, file, log):
+        return target
+    return replace(target, cooldown_options=(EXCLUDE_NEWER_OPTION, cooldown_cutoff(COOLDOWN.get())))
 
 
 @dataclass(frozen=True)
@@ -264,7 +267,7 @@ class _LockUpdate:
     def update(self) -> None:
         """Update the exact pins to the versions uv locks and report the new versions, or give the files back.
 
-        The reports read the versions the lock records, so the run removes a new lock it does not keep after them.
+        The reports read the versions the lock records, so the run removes a lock it created after them.
         """
         if self.before.target.keeps_the_lock:
             self.before.log.path(self.before.target.uv_lock.path)
@@ -405,7 +408,8 @@ def update_workspaces(
 ) -> dict[PythonDependencyToml, ManagerPolicy[Declaration]]:
     """Update the uv workspaces of the projects, and return the policy each project's markers are judged by.
 
-    Each workspace is read before uv runs for any of them. A workspace with an unreadable lock is left as it is.
+    Each workspace is read, and gets its cooldown, before uv locks any of them. A workspace with an unreadable lock is
+    left as it is.
     """
     return _update([_read_workspace(root, members, log) for root, members in by_workspace(pyproject_tomls).items()])
 
@@ -432,10 +436,13 @@ def _update(snapshots: Iterable[_LockSnapshot | None]) -> dict[PythonDependencyT
 def _read_workspace(root: Path, pyproject_tomls: Iterable[PyprojectToml], log: Logger) -> _LockSnapshot | None:
     """Return the uv workspace with the root pyproject.toml, each member named by its directory relative to the root.
 
-    Return None where the workspace's lock is unreadable.
+    A workspace with a lock gets the cooldown in its root's config before its files are read. Return None where the
+    workspace's lock is unreadable.
     """
     if (target := _LockTarget.workspace(root, log)) is None:
         return None
+    if target.keeps_the_lock:
+        configure_cooldown(root)
     project_directories: dict[PythonDependencyToml, str | None] = {
         pyproject_toml: pyproject_toml.path.parent.relative_to(root.parent).as_posix()
         for pyproject_toml in pyproject_tomls

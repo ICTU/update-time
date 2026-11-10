@@ -12,8 +12,9 @@ if TYPE_CHECKING:
 # The comment Update-time writes beside the exclude-newer it manages in a pyproject.toml.
 MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to set exclude-newer yourself"
 
-# How `uv --show-settings` prints an `exclude-newer` that is set.
+# How `uv --show-settings` prints an `exclude-newer` that is set, and one that is not.
 CONFIGURED_EXCLUDE_NEWER = "Some(Absolute(2024-06-01T22:00:00Z))"
+UNSET_EXCLUDE_NEWER = "None"
 
 # Answers to `uv --show-settings` that do not say whether uv's settings hold an `exclude-newer`.
 UNREADABLE_SETTINGS = {
@@ -28,7 +29,7 @@ class UvSettingsTestCase(ExecutablesOnPathTestCase):
     def setUp(self) -> None:
         """Stub out subprocess.run, so a test does not start a process."""
         super().setUp()
-        self.configured_exclude_newer = "None"
+        self.configured_exclude_newer = UNSET_EXCLUDE_NEWER
         self.settings_answer: object = None
         self.mock_run = self.enterContext(patch("subprocess.run", side_effect=self.run_tool))
 
@@ -42,4 +43,9 @@ class UvSettingsTestCase(ExecutablesOnPathTestCase):
             raise self.settings_answer
         if self.settings_answer is not None:
             return self.settings_answer
-        return Mock(stdout=f"        exclude_newer: ExcludeNewer {{\n            global: {exclude_newer},\n", stderr="")
+        return uv_settings_answer(exclude_newer)
+
+
+def uv_settings_answer(exclude_newer: str) -> Mock:
+    """Return what `uv --show-settings` answers about the `exclude-newer`, spelled as uv prints it."""
+    return Mock(stdout=f"        exclude_newer: ExcludeNewer {{\n            global: {exclude_newer},\n", stderr="")

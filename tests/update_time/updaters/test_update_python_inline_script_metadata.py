@@ -8,6 +8,7 @@ from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope
 from update_time.package_managers.uv import lock, marker_policy
 from update_time.package_managers.uv import uv as uv_module
+from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.updaters import update_python_inline_script_metadata
 
@@ -15,6 +16,7 @@ from tests.helpers import FakeFiles, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import SCAN_ROOT, message_of, published_version, uv_path_source
 from tests.update_time.manifests.helpers import script
+from tests.update_time.package_managers.helpers import CONFIGURED_EXCLUDE_NEWER
 from tests.update_time.updaters.helpers import (
     LOCK_FAILS,
     NO_SOLUTION,
@@ -71,10 +73,10 @@ class ScriptLockTest(_ScriptLockTestCase):
             "the run reports checking a lock it removes again, which the user never sees",
         ),
         Mutation(
-            lock._LockTarget.script,
+            lock._with_cutoff,
             "cooldown_cutoff(COOLDOWN.get())",
             "cooldown_cutoff(0)",
-            "uv locks a script without the cooldown `--cooldown` sets",
+            "uv locks a script, or a workspace without a lock, without the cooldown `--cooldown` sets",
         ),
     )
     def test_a_script_without_a_lock_takes_the_locked_versions_and_is_left_without_a_lock(
@@ -112,6 +114,25 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assertEqual(files_at_the_last_lock[_SCRIPT], script("package==1.1"))
         self.assertEqual(["--upgrade" in command for command in uv_locks(run)], [False, True, False])
         self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [True, True, False])
+
+    @kills(
+        Mutation(
+            lock._with_cutoff,
+            "settings_hold_exclude_newer(target.command,",
+            "settings_hold_exclude_newer(_UV_LOCK,",
+            "Update-time asks uv's settings for the directory, leaving out the script's own exclude-newer",
+        )
+    )
+    def test_a_script_locks_without_a_cutoff_where_uvs_settings_for_the_script_hold_an_exclude_newer(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that uv locks the script with the exclude-newer its settings hold, rather than with a cutoff."""
+        self.configured_exclude_newer = CONFIGURED_EXCLUDE_NEWER
+        left = self.files_after_update(run, get, glob, {_SCRIPT: script("package==1.0")}, _script_lock("1.1"))
+        self.assertEqual(left[_SCRIPT], script("package==1.1"))
+        self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [False, False])
+        settings = Command("uv", "lock", "--script", str(_SCRIPT), "--show-settings")
+        self.assertIn(settings, [executed.args[0] for executed in run.call_args_list])
 
     def test_a_dependency_locked_at_several_versions_is_pinned_and_reported_at_the_lowest(
         self, run: Mock, get: Mock, glob: Mock
