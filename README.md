@@ -544,7 +544,7 @@ A marker wins over the command-line option that sets the same thing, whatever th
 
 An `ignore[update]` wins over any directive beside it that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched.
 
-Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says. It holds nothing back either on a `requirements.txt` requirement that does not pin an exact version, on a `pom.xml` declaration whose version Maven does not update, or in a pom whose versions plugin configuration names rules of its own. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. On a dependency without an exact pin, in a `pyproject.toml` or a script that has a lock, an `ignore[update]` keeps the version uv locks for the file as written. It holds nothing back on a direct URL, on a build requirement, on a pin with an environment marker, in a `pyproject.toml` that uv does not manage, in a `pyproject.toml` or a script without a lock, or where the lock does not record exactly one version (see [Python dependencies](#markers)).
+Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says, and Update-time leaves a `package.json` whose project does not have a lock file as it is. It holds nothing back either on a `requirements.txt` requirement that does not pin an exact version, on a `pom.xml` declaration whose version Maven does not update, or in a pom whose versions plugin configuration names rules of its own. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. On a dependency without an exact pin, in a `pyproject.toml` or a script that has a lock, an `ignore[update]` keeps the version uv locks for the file as written. It holds nothing back on a direct URL, on a build requirement, on a pin with an environment marker, in a `pyproject.toml` that uv does not manage, in a `pyproject.toml` or a script without a lock, or where the lock does not record exactly one version (see [Python dependencies](#markers)).
 
 ### Silencing a warning
 
@@ -876,7 +876,7 @@ WARNING Redundant update-time directive set[vulnerability-level=high] for django
 A cooldown holds nothing back in these cases, so Update-time reports the `cooldown` scope as redundant there:
 
 - uv, pip-compile, npm, or pnpm applies the cooldown. They take one per run rather than per dependency, except uv when it recompiles a requirements file (see [Cooldown](#-cooldown)).
-- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are.
+- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, and those of a `package.json` whose project does not have a lock file.
 - The source does not report a publication date. That holds for an image on a registry other than Docker Hub, and for an artefact Maven Central does not serve.
 - A pom's versions plugin configuration names rules of its own, which Maven follows instead of the cooldown (see [Maven dependencies](#markers-2)).
 - Update-time does not update the reference. That holds for a `requirements.txt` requirement that does not pin an exact version, unless it sits in the source of a file Update-time recompiles. It holds for a GitHub Action or pre-commit hook that names a commit SHA. A short SHA that a version tag names is the exception: Update-time pins it as that version, and from the next run on the cooldown governs its updates. Not updated either are a `pom.xml` declaration whose version Maven does not update, an image the file does not pull, and a reference through a variable or a template that Update-time cannot substitute.
@@ -887,6 +887,7 @@ Update-time reports the cases above as:
 WARNING Redundant update-time directive set[cooldown=30] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure a cooldown against
 WARNING Redundant update-time directive set[cooldown=30] for humanize in pyproject.toml:12: the package manager applies the cooldown per run rather than per dependency
 WARNING Redundant update-time directive set[cooldown=30] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are
+WARNING Redundant update-time directive set[cooldown=30] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are
 WARNING Redundant update-time directive set[cooldown=30] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update
 WARNING Redundant update-time directive set[cooldown=30] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a cooldown holds nothing back
 WARNING Redundant update-time directive set[cooldown=30] for commons-io:commons-io in child/pom.xml:5: this declaration does not hold its version, so Maven does not update that version here
@@ -969,7 +970,7 @@ Update-time also reports every bound as redundant in these cases. In the first f
 - uv does not lock a `pyproject.toml` build requirement, and Update-time leaves its pin as it is. An `ignore[update]` is redundant there as well.
 - A `pyproject.toml` or inline script metadata dependency given as a direct URL names a URL rather than a version. An `ignore[update]` is redundant there as well.
 - Update-time leaves a `pyproject.toml` or inline script metadata pin with an environment marker as it is. An `ignore[update]` is redundant there as well.
-- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are. An `ignore[update]` is redundant there as well.
+- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, and those of a `package.json` whose project does not have a lock file. An `ignore[update]` is redundant there as well.
 - An `ignore[update]` beside the bound holds a `pyproject.toml` or inline script metadata dependency where it is.
 - A GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA does not name a version to bound. In the run that pins such a reference to a version tag, Update-time judges the bound at that version. Update-time never pins a full SHA, so a bound on one is always redundant.
 
@@ -985,6 +986,8 @@ WARNING Redundant update-time directive allow[update<5] for humanize in pyprojec
 WARNING Redundant update-time directive ignore[update] for humanize in pyproject.toml:12: Update-time leaves a pin with an environment marker as it is
 WARNING Redundant update-time directive allow[update<5] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are, so a bound decides nothing
 WARNING Redundant update-time directive ignore[update] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are
+WARNING Redundant update-time directive allow[update<2] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are, so a bound decides nothing
+WARNING Redundant update-time directive ignore[update] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are
 WARNING Redundant update-time directive allow[update<5] for humanize in pyproject.toml:12: this reference's update is held back, so a bound decides nothing
 WARNING Redundant update-time directive allow[update<5] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update
 WARNING Redundant update-time directive allow[update<5] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a bound decides nothing
@@ -1227,13 +1230,22 @@ Update-time reports every warning scope as redundant on a dependency PyPI does n
 
 #### What files are updated?
 
-Update-time looks for `package.json` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` for npm, `pnpm-lock.yaml` for pnpm.
+Update-time looks for `package.json` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm.
 
 Update-time runs npm or pnpm only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`, and npm for the root of an npm workspace, whose `workspaces` field names the members. Both would write a lock file beside any other `package.json`, so Update-time leaves such a file as it is and reports it at `DEBUG`:
 
 ```console
 DEBUG Not running npm for ui/static/package.json: it does not declare dependencies for npm to install
 ```
+
+The project needs a lock file as well. npm and pnpm read it beside the root of the project's workspace, or beside the `package.json` of a project outside a workspace. They ignore a lock file beside a workspace member. Where the project does not have a lock file, npm or pnpm would write one, so Update-time leaves the `package.json` as it is. It still checks the dependencies, and reports the file at `DEBUG`:
+
+```console
+DEBUG Not running npm for web/package.json: it does not have a lock file, and npm would write web/package-lock.json
+DEBUG Not running pnpm for packages/ui/package.json: it does not have a lock file, and pnpm would write pnpm-lock.yaml
+```
+
+To have Update-time update such a project, run `npm install` or `pnpm install` once.
 
 Where npm or pnpm is not on the path, Update-time does not run it. It leaves the `package.json` as it is, still checks its dependencies, and reports the missing package manager at `ERROR`:
 
@@ -1302,6 +1314,8 @@ A `package.json` is strict JSON, so a dependency's marker goes in the file's `up
 ```
 
 A marker steers the checks rather than the update, since npm and pnpm move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
+
+Update-time leaves the dependencies of a project without a lock file as they are (see [What files are updated?](#what-files-are-updated-1)). So in such a project's `package.json`, the warning about an `ignore[update]`, a bound, or a `set[cooldown=…]` says that Update-time leaves the dependencies as they are.
 
 Update-time reports every scope as redundant on a dependency that does not resolve to a registry release, such as a git URL:
 

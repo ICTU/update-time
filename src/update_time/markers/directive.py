@@ -40,6 +40,10 @@ class Reason(StrEnum):
         "Update-time leaves the dependencies of a file uv does not manage as they are, so a bound decides nothing"
     )
     UNMANAGED_FILE_LEFT = "Update-time leaves the dependencies of a file uv does not manage as they are"
+    NO_LOCK_FILE_KEPT = (
+        "Update-time leaves the dependencies of a project without a lock file as they are, so a bound decides nothing"
+    )
+    NO_LOCK_FILE_LEFT = "Update-time leaves the dependencies of a project without a lock file as they are"
     BOUND_ON_A_HELD_BACK_UPDATE = "this reference's update is held back, so a bound decides nothing"
     FOLLOWS_A_BRANCH = (
         "this reference follows a branch or a floating tag rather than a version, so a bound decides nothing"

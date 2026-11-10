@@ -30,7 +30,7 @@ def update_package_jsons() -> None:
     The package manager runs only for a package.json that declares a dependency, or workspaces the manager reads, since
     it writes a lockfile beside any package.json it runs for.
     """
-    supported = []
+    supported: list[node.CheckedPackageJson] = []
     # npm rewrites the ranges of a workspace's members as it updates the root, so the root runs first and logs them:
     for package_json in sorted(glob_for(PACKAGE_JSON), key=lambda path: len(path.parts)):
         _LOG.path(package_json)
@@ -43,18 +43,23 @@ def update_package_jsons() -> None:
             checked_package_json = manager.update_package_json(file)
         else:
             _LOG.no_dependencies(package_json, name, "install")
-            checked_package_json = file
+            checked_package_json = node.CheckedPackageJson(file, node.MARKER_POLICY)
         if checked_package_json is not None:
             supported.append(checked_package_json)
     _warn_about_dependencies(supported)
 
 
-def _warn_about_dependencies(files: list[PackageJson]) -> None:
+def _warn_about_dependencies(checked: list[node.CheckedPackageJson]) -> None:
     """Report the marker of each dependency, and check the dependencies of each package.json."""
-    declarations = [list(file.declarations()) for file in files]
-    check_targets = [report_markers(file_declarations, _LOG, node.MARKER_POLICY) for file_declarations in declarations]
-    warn_about_redundant_directives(declarations, _LOG, node.MARKER_POLICY)
-    _report_undeclared_references(files)
+    declarations = [list(each.package_json.declarations()) for each in checked]
+    policies = [each.policy for each in checked]
+    check_targets = [
+        report_markers(file_declarations, _LOG, policy)
+        for file_declarations, policy in zip(declarations, policies, strict=True)
+    ]
+    for file_declarations, policy in zip(declarations, policies, strict=True):
+        warn_about_redundant_directives([file_declarations], _LOG, policy)
+    _report_undeclared_references([each.package_json for each in checked])
     registry_declarations = [[target for target in targets if target.names_a_release] for targets in check_targets]
     warn_about_delegated_checks(
         registry_declarations, _LOG, project_resolver(npmjs.project), npmjs.deprecation, Ecosystem.NPM
