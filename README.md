@@ -1227,7 +1227,7 @@ Update-time reports every warning scope as redundant on a dependency PyPI does n
 
 Update-time looks for `package.json` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` for npm, `pnpm-lock.yaml` for pnpm.
 
-Update-time runs npm or pnpm only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. Both would write a lock file beside a `package.json` that declares none, so Update-time leaves such a file as it is and reports it at `DEBUG`:
+Update-time runs npm or pnpm only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`, and npm for the root of an npm workspace, whose `workspaces` field names the members. Both would write a lock file beside any other `package.json`, so Update-time leaves such a file as it is and reports it at `DEBUG`:
 
 ```console
 DEBUG Not running npm for ui/static/package.json: it does not declare dependencies for npm to install
