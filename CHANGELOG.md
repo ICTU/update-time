@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Report a pom whose versions plugin configuration overrides an option that Update-time sets or relies on, and report the markers in a pom that names rules of its own as redundant, rather than claiming to hold versions back that Maven then adopts. Closes [#492](https://github.com/ICTU/update-time/issues/492).
 - Report a GitHub Action or pre-commit hook referenced by a version tag alone, which Update-time pins to a newer version, as a new version with its changelog rather than as a pin. Closes [#516](https://github.com/ICTU/update-time/issues/516).
 - Run npm for the root of an npm workspace that does not declare dependencies of its own, so Update-time reports the new versions and rewritten ranges of every member. Closes [#517](https://github.com/ICTU/update-time/issues/517).
+- Treat a `pyproject.toml` whose uv workspace does not have a `uv.lock` as a script without a lock: remove the lock the run creates, and pass the cooldown to uv on the command line rather than writing an `exclude-newer` into the file. Write no `exclude-newer` into a workspace whose `uv.lock` cannot be read either. Leave an `exclude-newer` that uv's settings hold in force for a script too, rather than passing a cutoff that overrides it. Closes [#518](https://github.com/ICTU/update-time/issues/518).
 
 ## 0.0.56 - 2026-11-07
 

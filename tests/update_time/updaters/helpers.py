@@ -12,6 +12,7 @@ from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion
 from tests.helpers import FakeFiles, mock_response
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
 from tests.update_time.helpers import SCAN_ROOT, ExecutablesOnPathTestCase, vulnerability
+from tests.update_time.package_managers.helpers import UNSET_EXCLUDE_NEWER, uv_settings_answer
 from tests.update_time.sources.helpers import (
     PYPI_OLD_UPLOAD,
     github_commits_json,
@@ -22,7 +23,7 @@ from tests.update_time.sources.helpers import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
     from unittest.mock import _patch
 
@@ -179,7 +180,16 @@ def locked_package(package: str, version: str) -> str:
 
 def uv_locks(run: Mock) -> list[Command]:
     """Return the uv lock commands the mock of `subprocess.run` received, in the order of the calls."""
-    return [command for command in _executed_commands(run) if command[:2] == ("uv", "lock")]
+    return [
+        command
+        for command in _executed_commands(run)
+        if command[:2] == ("uv", "lock") and not _asks_for_settings(command)
+    ]
+
+
+def _asks_for_settings(command: Command) -> bool:
+    """Return whether the command asks uv for its settings rather than to lock."""
+    return "--show-settings" in command
 
 
 def _failing_uv_lock(*_arguments: object, **_options: object) -> NoReturn:
@@ -191,12 +201,14 @@ class UvLockTestCase(ExecutablesOnPathTestCase):
     """Base for the tests that run an updater delegating to uv, with uv lock faked.
 
     A subclass names the file the scan discovers, the lock uv writes for it, and the updater. `locks` holds each faked
-    uv lock of the last update: its command, and the files as they were when it ran.
+    uv lock of the last update: its command, and the files as they were when it ran. uv's settings hold the
+    `exclude-newer` that `configured_exclude_newer` spells, none unless a test sets one.
     """
 
     manifest: ClassVar[Path]
     lock_file: ClassVar[Path]
     locks: list[tuple[Command, dict[Path, str]]]
+    configured_exclude_newer = UNSET_EXCLUDE_NEWER
 
     def update(self) -> None:
         """Run the updater."""
@@ -224,7 +236,7 @@ class UvLockTestCase(ExecutablesOnPathTestCase):
         locks_after = iter(lock_after) if isinstance(lock_after, tuple) else repeat(lock_after)
         self.locks = []
 
-        def uv_lock(command: Command, *_arguments: object, **_options: object) -> object:
+        def uv_lock(command: Command) -> object:
             as_written = not any("--upgrade" in locked for locked, _files in self.locks) and "--upgrade" not in command
             self.locks.append((command, dict(fake_files)))
             if as_written:
@@ -236,7 +248,7 @@ class UvLockTestCase(ExecutablesOnPathTestCase):
             fake_files[self.lock_file] = lock
             return DEFAULT
 
-        run.side_effect = uv_lock
+        run.side_effect = self._answering_settings(uv_lock)
         run.return_value = Mock(stdout="", stderr="")
         get.return_value = mock_response(_pypi_metadata_without_changelog())
         glob.return_value = list(discovered) or [self.manifest]
@@ -247,11 +259,21 @@ class UvLockTestCase(ExecutablesOnPathTestCase):
     def updated_with_failing_lock(self, run: Mock, glob: Mock, contents: str) -> FakeFiles:
         """Update the manifest holding the contents, with every uv lock failing, and return the files."""
         files = FakeFiles({self.manifest: contents})
-        run.side_effect = _failing_uv_lock
+        run.side_effect = self._answering_settings(_failing_uv_lock)
         glob.return_value = [self.manifest]
         with files.patched():
             self.update()
         return files
+
+    def _answering_settings(self, uv_lock: Callable[[Command], object]) -> Callable[..., object]:
+        """Return the stub of uv lock, answering a command that asks for uv's settings as those settings do."""
+
+        def stub(command: Command, *_arguments: object, **_options: object) -> object:
+            if _asks_for_settings(command):
+                return uv_settings_answer(self.configured_exclude_newer)
+            return uv_lock(command)
+
+        return stub
 
     def text_locked_with_upgrade(self) -> str:
         """Return the text the manifest held when the last update ran `uv lock --upgrade`."""
