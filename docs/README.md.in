@@ -453,7 +453,7 @@ A `set` directive overrides a command-line option for the reference carrying it.
 | `cooldown=DAYS` | the [cooldown](#setting-a-cooldown-period) | `--cooldown` |
 | `vulnerability-level=LEVEL` | the [risk level](#setting-a-risk-level) to warn from | `--vulnerability-level` |
 
-A marker can set several values in one bracket, as `set[stale-after=90, cooldown=30]` does. A `set` item that Update-time can read sets a value and steers nothing else, so it does not hold an update back. One that it cannot read holds the update back, as every [invalid item](#invalid-markers) does.
+A marker can set several values in one bracket, as `set[stale-after=90, cooldown=30]` does. A `set` item that Update-time can read sets a value and steers nothing else, so it does not hold an update back. One that it cannot read holds the update back, as an [invalid item](#invalid-markers) does.
 
 #### Setting a staleness threshold
 
@@ -857,7 +857,7 @@ A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — i
 @@UNRECOGNISED_ITEM_WARNING@@
 ```
 
-Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. A pom whose versions plugin configuration names rules of its own is the exception, since Maven follows those rules whatever the marker says (see [Maven dependencies](#markers-2)). The checks still run, since Update-time never reads that item as silencing a warning. An unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[yanked, stlae]` still silences the yank warning.
+Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. Where an `ignore[update]` holds nothing back, an unreadable item holds nothing back either (see [Holding a reference back](#holding-a-reference-back)). The warning then leaves out that the reference stays unchanged. A `package.json` dependency is such a case, since npm and pnpm move it within the range the file declares. So is a pom whose versions plugin configuration names rules of its own, since Maven follows those rules whatever the marker says (see [Maven dependencies](#markers-2)). The checks still run, since Update-time never reads that item as silencing a warning. An unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[yanked, stlae]` still silences the yank warning.
 
 A `set` item names a key Update-time knows and a value for it. So Update-time reports `set[stale=90]` as invalid, since `stale` is a scope rather than an option. It reports `set[cooldown]` as invalid too, since that item does not set a value.
 
@@ -1141,7 +1141,7 @@ A `package.json` is strict JSON, so a dependency's marker goes in the file's `up
 }
 ```
 
-A marker steers the checks rather than the update, since npm and pnpm move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
+A marker steers the checks rather than the update, since npm and pnpm move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers). It reports an item it cannot read as [invalid](#invalid-markers), without saying that the reference stays unchanged.
 
 Update-time leaves the dependencies of a project without a lock file as they are, and those of a workspace whose root lies outside the scan root (see [What files are updated?](#what-files-are-updated-1)). So in the `package.json` of either, the warning about an `ignore[update]`, a bound, or a `set[cooldown=…]` says that Update-time leaves the dependencies as they are.
 
@@ -1289,7 +1289,7 @@ Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant 
 
 A marker steers the update only where Maven updates the version (see [What dependencies are updated?](#what-dependencies-are-updated-2)). There, an `ignore[update]` and an item Update-time cannot read each hold back every version of the artefact.
 
-A marker does not steer the update either in a pom whose versions plugin configuration names rules of its own, since Maven follows those rules instead. Update-time reports an `ignore[update]`, a bound, and a `set[cooldown=…]` there as redundant. It reports an item it cannot read as invalid, without saying that the reference stays unchanged:
+A marker does not steer the update either in a pom whose versions plugin configuration names rules of its own, since Maven follows those rules instead. Update-time reports an `ignore[update]`, a bound, and a `set[cooldown=…]` there as redundant. Where a marker does not steer the update, Update-time reports an item it cannot read as invalid, without saying that the reference stays unchanged:
 
 ```console
 @@REDUNDANT_UNDER_RULES_OF_THE_POM_WARNING@@

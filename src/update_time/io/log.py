@@ -831,18 +831,10 @@ class Logger:
         """Warn that a marker carries an invalid bracket item, where the marker cannot hold the update back."""
         return {"bracket_item": item, "dependency": dependency, "location": location}
 
-    def report_marker(
-        self,
-        dependency: str,
-        marker: Marker,
-        location: Location,
-        *,
-        holds_the_update_back: bool,
-        steers_the_update: bool = True,
-    ) -> Marker:
+    def report_marker(self, dependency: str, marker: Marker, location: Location, *, steers_the_update: bool) -> Marker:
         """Report a reference's marker, and return the directives Update-time acts on.
 
-        An invalid item holds the update back only where the marker steers the update at all.
+        An `ignore[update]` and an invalid item hold the update back only where the marker steers the update at all.
         """
         for directive in marker.default_directives:
             self.redundant_directive(Reference(dependency, "", location), directive, Reason.ASKS_FOR_THE_DEFAULT)
@@ -851,7 +843,7 @@ class Logger:
             invalid(dependency, marker.invalid_item, location)
             return marker.effective_directives
         self.recognised_marker(dependency, marker, location)
-        if holds_the_update_back:
+        if steers_the_update and marker.ignores(Scope.UPDATE):
             self.ignored(dependency, marker, location)
         return marker
 

@@ -222,7 +222,7 @@ def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cann
     marker = parse_marker(line) if marker is None else marker
     location = line.location
     dependency = matched_dependency(match, dependency)
-    reported = logger.report_marker(dependency, marker, location, holds_the_update_back=marker.ignores(Scope.UPDATE))
+    reported = logger.report_marker(dependency, marker, location, steers_the_update=True)
     return update_line(match, location, reported)
 
 
