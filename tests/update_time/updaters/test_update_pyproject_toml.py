@@ -13,8 +13,7 @@ from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers.uv import lock, marker_policy, uv
 from update_time.primitives.location import Location
-from update_time.references import delegated
-from update_time.updaters import uv_pins
+from update_time.updaters import update_pyproject_toml, uv_pins
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
@@ -45,6 +44,7 @@ from tests.update_time.updaters.helpers import (
 )
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from update_time.sources.pypi import ReleaseMetadata
@@ -124,6 +124,16 @@ def _root_declaring(spec: str) -> str:
     return f'[project]\nname = "root"\ndependencies = ["{spec}"]\n[tool.uv.workspace]\nmembers = ["member"]\n'
 
 
+def _workspace_above_the_scan(member: str) -> dict[Path, str]:
+    """Return the pyproject.toml of `member`, and of a workspace root that includes it and declares a dependency."""
+    return {PYPROJECT_TOML: _root_declaring("other==1.0"), _MEMBER: member}
+
+
+def _scan_from_the_member() -> AbstractContextManager[Mock]:
+    """Return a patch that makes the directory of `member` the scan root, which leaves the workspace root out."""
+    return patch("pathlib.Path.cwd", return_value=_MEMBER.parent)
+
+
 # A uv.lock before the run that leaves out `package`, since it locks another package.
 _LOCK_WITHOUT_THE_PACKAGE = _uv_lock("1.0", "other")
 
@@ -189,6 +199,13 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     def assert_no_cli_cooldown(self, run: Mock) -> None:
         """Assert that the three uv locks run without an `--exclude-newer` flag, since the cooldown lives in config."""
         self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [False, False, False])
+
+    @staticmethod
+    def assert_uv_not_run(run: Mock, get: Mock, configure_cooldown: Mock) -> None:
+        """Assert that uv did not run, PyPI was not asked, and the cooldown was not configured."""
+        run.assert_not_called()
+        get.assert_not_called()
+        configure_cooldown.assert_not_called()
 
     def test_an_exact_pin_takes_the_version_uv_lock_records(self, run: Mock, get: Mock, glob: Mock):
         """Test that an exact pin moves to the version uv lock records, with the cooldown left to the config."""
@@ -1072,9 +1089,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 mock_pyproject_toml = _discovered_pyproject_toml(glob, contents)
                 with patch("update_time.package_managers.uv.lock.configure_cooldown") as configure_cooldown:
                     update_pyproject_tomls()
-                run.assert_not_called()
-                get.assert_not_called()
-                configure_cooldown.assert_not_called()
+                self.assert_uv_not_run(run, get, configure_cooldown)
                 mock_pyproject_toml.write_text.assert_not_called()
                 self.assert_debug_logged_after_path(
                     mock_pyproject_toml, message_of(Logger.no_dependencies), manager="uv", verb="resolve"
@@ -1114,16 +1129,29 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 run.reset_mock()
                 with patch("update_time.package_managers.uv.lock.configure_cooldown") as configure_cooldown:
                     left = self.files_after_update(run, get, glob, files, _uv_lock("1.1"))
-                run.assert_not_called()
-                get.assert_not_called()
-                configure_cooldown.assert_not_called()
+                self.assert_uv_not_run(run, get, configure_cooldown)
                 self.assertEqual(dict(left), files)
                 self.assert_debug_logged_after_path(PYPROJECT_TOML, message, table="[tool.uv]", **fields)
+
+    def test_uv_not_run_for_a_member_whose_workspace_root_lies_outside_the_scan_root(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that uv does not run, nor get its cooldown, for a member whose workspace root lies outside the scan."""
+        files = _workspace_above_the_scan(pyproject("package==1.0"))
+        with (
+            _scan_from_the_member(),
+            patch("update_time.package_managers.uv.lock.configure_cooldown") as configure_cooldown,
+        ):
+            left = self.files_after_update(run, get, glob, files, _uv_lock("1.1"), discovered=[_MEMBER])
+            message = message_of(Logger.workspace_root_outside_the_scan)
+            self.assert_debug_logged_after_path(_MEMBER, message, manager="uv", root=Location(PYPROJECT_TOML))
+        self.assert_uv_not_run(run, get, configure_cooldown)
+        self.assertEqual(dict(left), files)
 
     @kills(
         Mutation(
             update_pyproject_tomls,
-            "marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.UNMANAGED_FILE_POLICY)",
+            "marker_policy.report_file_markers(pyproject_toml, _LOG, policy)",
             "pass",
             "the markers of a pyproject.toml uv does not manage go unreported",
         )
@@ -1246,33 +1274,15 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
     @kills(
         Mutation(
             marker_policy,
-            "hold_back_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_LEFT,",
-            "hold_back_redundancy=MARKER_POLICY.hold_back_redundancy,",
-            "an `ignore[update]` on a pin in a file uv does not manage reads as holding the update back",
+            "Reason.UNMANAGED_FILE_LEFT, Reason.UNMANAGED_FILE_KEPT",
+            "Reason.UNMANAGED_FILE_KEPT, Reason.UNMANAGED_FILE_LEFT",
+            "a directive steering the update in a file uv does not manage is reported for the other one's reason",
         ),
         Mutation(
-            marker_policy,
-            "bound_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_KEPT,",
-            "bound_redundancy=MARKER_POLICY.bound_redundancy,",
-            "a bound on a pin in a file uv does not manage reads as narrowing the update",
-        ),
-        Mutation(
-            update_pyproject_tomls,
-            "marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.UNMANAGED_FILE_POLICY)",
-            "marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.MARKER_POLICY)",
+            update_pyproject_toml._policy_for_a_file_left_as_it_is,
+            "else marker_policy.UNMANAGED_FILE_POLICY",
+            "else marker_policy.MARKER_POLICY",
             "an `ignore[update]` in a file uv does not manage is logged as holding the update back",
-        ),
-        Mutation(
-            marker_policy,
-            "cooldown_redundancy=Reason.UNMANAGED_FILE_LEFT,",
-            "cooldown_redundancy=Reason.COOLDOWN_PER_RUN,",
-            "a cooldown in a file uv does not manage is reported as one uv applies per run",
-        ),
-        Mutation(
-            delegated._redundant_cooldown_directive,
-            "yield cooldown, reason",
-            "yield cooldown, Reason.COOLDOWN_PER_RUN",
-            "a cooldown is reported as one the package manager applies per run, whatever the policy says",
         ),
     )
     def test_a_directive_steering_the_update_in_a_file_uv_does_not_manage_is_reported(
@@ -1290,6 +1300,31 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 left = self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents}, None)
                 self.assertEqual(dict(left), {PYPROJECT_TOML: contents})
                 self.assert_redundant_directive_logged(reason, "package", Location(PYPROJECT_TOML, 2), directive)
+                self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+
+    @kills(
+        Mutation(
+            marker_policy,
+            "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT",
+            "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT",
+            "a directive steering the update in a member whose root lies outside the scan gets the other one's reason",
+        ),
+    )
+    def test_a_directive_steering_the_update_of_a_member_whose_workspace_root_lies_outside_the_scan_is_reported(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a directive steering the update is reported in a member whose root lies outside the scan."""
+        cases = {
+            "ignore[update]": Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT,
+            "allow[update<2]": Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT,
+            "set[cooldown=30]": Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT,
+        }
+        for directive, reason in cases.items():
+            with self.subTest(directive=directive), _scan_from_the_member():
+                files = _workspace_above_the_scan(pyproject("package==1.0", marker=directive))
+                left = self.files_after_update(run, get, glob, files, None, discovered=[_MEMBER])
+                self.assertEqual(dict(left), files)
+                self.assert_redundant_directive_logged(reason, "package", Location(_MEMBER, 2), directive)
                 self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
 
     @kills(

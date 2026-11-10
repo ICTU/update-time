@@ -46,8 +46,8 @@ def _hold_back_redundancy(declaration: Declaration) -> Reason | None:
 
 # The policy for the markers of a pyproject.toml and of an inline script metadata block, judged without a lock. uv
 # resolves the version an exact pin names, so a pin Update-time leaves as the file writes it stays where it is. A bound
-# narrows the lock. The policies for a run that keeps the lock, for one that removes it, and for a file uv does not
-# manage build on this one.
+# narrows the lock. The policies for a run that keeps the lock, for one that removes it, and for a file Update-time
+# leaves as it is build on this one.
 MARKER_POLICY = ManagerPolicy(
     hold_back_redundancy=_hold_back_redundancy,
     bound_redundancy=lambda declaration: declaration.unnarrowable_reason,
@@ -56,13 +56,15 @@ MARKER_POLICY = ManagerPolicy(
 )
 
 
-# The policy for the markers of a pyproject.toml that uv does not manage. Update-time leaves its dependencies as the
-# file writes them, so an `ignore[update]`, a bound, and a cooldown each decide nothing.
-UNMANAGED_FILE_POLICY = replace(
-    MARKER_POLICY,
-    hold_back_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_LEFT,
-    bound_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_KEPT,
-    cooldown_redundancy=Reason.UNMANAGED_FILE_LEFT,
+# The policy for the markers of a pyproject.toml that uv does not manage.
+UNMANAGED_FILE_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+    Reason.UNMANAGED_FILE_LEFT, Reason.UNMANAGED_FILE_KEPT
+)
+
+
+# The policy for the markers of a pyproject.toml whose uv workspace root lies outside the scan root.
+WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+    Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
 )
 
 

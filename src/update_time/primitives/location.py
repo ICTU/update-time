@@ -30,12 +30,12 @@ class Location:
         return (self.path, self.line_number) == (other.path, other.line_number)
 
     def relative(self) -> Path:
-        """Return the path relative to the working directory, or its absolute self when it sits outside it.
+        """Return the path relative to the working directory, walking up with `..` to a path outside it.
 
-        Most logged paths are files under the scan root (which is the working directory), but some — such as a uv
-        workspace root above the current member — are not, so fall back to the absolute path rather than raising.
+        A path that is relative already stays as it is, and so does one that shares only the root with the working
+        directory.
         """
-        try:
-            return self.path.relative_to(Path.cwd())
-        except ValueError:
-            return self.path
+        cwd = Path.cwd()
+        if self.path.is_absolute() and (cwd == Path(cwd.anchor) or self.path.parts[:2] == cwd.parts[:2]):
+            return self.path.relative_to(cwd, walk_up=True)
+        return self.path

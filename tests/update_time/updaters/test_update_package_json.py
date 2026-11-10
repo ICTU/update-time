@@ -42,6 +42,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
+    from update_time.io.log import LogMessage
+
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
 _PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
 _NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the key is not set
@@ -1253,67 +1255,166 @@ class MissingPackageManagerTest(NoUpdateTestCase):
                 self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
 
 
+# The tests below update a package.json in this member of a workspace, whose root sits in the directory above it.
+_MEMBER = SCAN_ROOT / "ws/a"
+
+
+class _ProjectLeftAsItIsTestCase(_PackageJsonFilesTestCase, NoUpdateTestCase):
+    """Base for the tests of a package.json that npm or pnpm does not update, while its dependency is checked."""
+
+    lock_file_name = "package-lock.json"
+
+    def assert_left_as_it_is(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
+        self,
+        get: Mock,
+        mock_run: Mock,
+        mock_glob: Mock,
+        *,
+        files: dict[Path, str],
+        contents: str,
+        npm_prefix: Path | None,
+        message: LogMessage,
+        **fields: object,
+    ) -> None:
+        """Assert that the run leaves the member's package.json as it is, logs why, and checks its stale dependency.
+
+        npm reports the workspace root as its prefix and runs nothing else. Where the prefix is None, nothing runs.
+        """
+        self.files.replace_all(files)
+        package_json = self.write_package_json(contents, _MEMBER)
+        mock_glob.return_value = [package_json]
+        mock_run.reset_mock()
+        mock_run.side_effect = [] if npm_prefix is None else [Mock(stdout=f"{npm_prefix}\n")]
+        get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
+        update_package_jsons()
+        runs = [] if npm_prefix is None else [call(Command("npm", "prefix"), **_RUN_KWARGS, cwd=_MEMBER)]
+        self.assertEqual(mock_run.call_args_list, runs)
+        self.assert_debug_logged_after_path(package_json, message, **fields)
+        self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
+
+
 @no_vulnerabilities
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 @patch("requests.Session.get")
-class ProjectWithoutALockFileTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
+class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
     """Unit tests for a package.json whose workspace root does not hold a lock file."""
-
-    lock_file_name = "package-lock.json"
 
     def test_npm_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that npm does not update a project whose workspace root does not hold a lock, and the checks run."""
-        member = SCAN_ROOT / "ws/a"
         cases = {
-            "no lock file": ({}, member),
-            "a lock file beside a workspace member alone": (self.lock_file(member), SCAN_ROOT / "ws"),
+            "no lock file": ({}, _MEMBER),
+            "a lock file beside a workspace member alone": (self.lock_file(_MEMBER), _MEMBER.parent),
         }
         for case, (files, workspace_root) in cases.items():
             with self.subTest(case):
-                self.files.replace_all(files)
-                package_json = self.write_package_json(self.clipboard_contents(), member)
-                mock_glob.return_value = [package_json]
-                mock_run.reset_mock()
-                mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout=f"{workspace_root}\n"))
-                get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-                update_package_jsons()
-                mock_run.assert_called_once_with(Command("npm", "prefix"), **_RUN_KWARGS, cwd=member)
-                self.assert_debug_logged_after_path(
-                    package_json,
-                    message_of(Logger.no_lock_file),
+                self.assert_left_as_it_is(
+                    get,
+                    mock_run,
+                    mock_glob,
+                    files=files,
+                    contents=self.clipboard_contents(),
+                    npm_prefix=workspace_root,
+                    message=message_of(Logger.no_lock_file),
                     manager="npm",
                     lock=Location(workspace_root / "package-lock.json"),
                 )
-                self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
 
     def test_pnpm_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that pnpm does not update a project whose workspace root does not hold a lock, and the checks run."""
-        member = SCAN_ROOT / "ws/a"
         cases = {
-            "no lock file": ({}, member),
+            "no lock file": ({}, _MEMBER),
             "a lock file beside a workspace member alone": (
-                {SCAN_ROOT / "ws/pnpm-workspace.yaml": "packages:\n  - a\n", member / "pnpm-lock.yaml": ""},
-                SCAN_ROOT / "ws",
+                {_MEMBER.parent / "pnpm-workspace.yaml": "packages:\n  - a\n", _MEMBER / "pnpm-lock.yaml": ""},
+                _MEMBER.parent,
             ),
         }
         for case, (files, workspace_root) in cases.items():
             with self.subTest(case):
-                self.files.replace_all(files)
-                package_json = self.write_package_json(_PNPM_CLIPBOARD, member)
-                mock_glob.return_value = [package_json]
-                mock_run.reset_mock()
-                mock_run.side_effect = _pnpm_runs(Mock(stdout="[]"), Mock(stdout=""), Mock(stdout="[]"))
-                get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-                update_package_jsons()
-                mock_run.assert_not_called()
-                self.assert_debug_logged_after_path(
-                    package_json,
-                    message_of(Logger.no_lock_file),
+                self.assert_left_as_it_is(
+                    get,
+                    mock_run,
+                    mock_glob,
+                    files=files,
+                    contents=_PNPM_CLIPBOARD,
+                    npm_prefix=None,
+                    message=message_of(Logger.no_lock_file),
                     manager="pnpm",
                     lock=Location(workspace_root / "pnpm-lock.yaml"),
                 )
-                self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
+
+
+@no_vulnerabilities
+@patch_pathlib_path("rglob", cwd=_MEMBER)
+@patch("subprocess.run")
+@patch("requests.Session.get")
+class WorkspaceRootOutsideTheScanTest(_ProjectLeftAsItIsTestCase):
+    """Unit tests for a package.json whose workspace root lies outside the scan root."""
+
+    def test_npm_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
+        """Test that npm does not update a project whose workspace root lies outside the scan, and the checks run."""
+        self.assert_left_as_it_is(
+            get,
+            mock_run,
+            mock_glob,
+            files=self.lock_file(_MEMBER.parent),
+            contents=self.clipboard_contents(),
+            npm_prefix=_MEMBER.parent,
+            message=message_of(Logger.workspace_root_outside_the_scan),
+            manager="npm",
+            root=Location(_MEMBER.parent / "package.json"),
+        )
+
+    @kills(
+        Mutation(
+            node_module._PackageManager._policy_for_a_project_left_as_it_is,
+            "return _WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY",
+            "return MARKER_POLICY",
+            "a marker in a member whose workspace root lies outside the scan is reported as one npm decides",
+        )
+    )
+    def test_a_directive_steering_the_update_is_reported_as_deciding_nothing(
+        self, get: Mock, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that each directive steering the update is reported as redundant, saying why."""
+        workspace_root = _MEMBER.parent
+        cases = {
+            "ignore[update]": Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT,
+            "allow[update<3]": Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT,
+            "set[cooldown=30]": Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT,
+        }
+        for directive, reason in cases.items():
+            with self.subTest(directive=directive):
+                self.files.replace_all(self.lock_file(workspace_root))
+                package_json = self.write_package_json(self.clipboard_contents(directive), _MEMBER)
+                mock_glob.return_value = [package_json]
+                mock_run.side_effect = [Mock(stdout=f"{workspace_root}\n")]
+                get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
+                update_package_jsons()
+                self.assert_redundant_directive_logged(reason, "clipboard", Location(package_json, 4), directive)
+
+    @kills(
+        Mutation(
+            node_module._PackageManager._policy_for_a_project_left_as_it_is,
+            'root = lock_root / (self.workspace_file or "package.json")',
+            'root = lock_root / "package.json"',
+            "the line saying why pnpm does not run names a package.json rather than the workspace file",
+        )
+    )
+    def test_pnpm_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
+        """Test that pnpm does not update a project whose workspace root lies outside the scan, and the checks run."""
+        workspace_file = _MEMBER.parent / "pnpm-workspace.yaml"
+        self.assert_left_as_it_is(
+            get,
+            mock_run,
+            mock_glob,
+            files={workspace_file: "packages:\n  - a\n", _MEMBER.parent / "pnpm-lock.yaml": ""},
+            contents=_PNPM_CLIPBOARD,
+            npm_prefix=None,
+            message=message_of(Logger.workspace_root_outside_the_scan),
+            manager="pnpm",
+            root=Location(workspace_file),
+        )
 
 
 @no_vulnerabilities
@@ -1327,9 +1428,9 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     @kills(
         Mutation(
-            node_module._PackageManager.update_package_json,
-            "return CheckedPackageJson(package_json, _NO_LOCK_FILE_POLICY)",
-            "return CheckedPackageJson(package_json, MARKER_POLICY)",
+            node_module._PackageManager._policy_for_a_project_left_as_it_is,
+            "return _NO_LOCK_FILE_POLICY",
+            "return MARKER_POLICY",
             "a marker in a project without a lock file is reported as redundant, since npm resolves the version",
         )
     )

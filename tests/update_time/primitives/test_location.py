@@ -5,6 +5,9 @@ from pathlib import Path
 
 from update_time.primitives.location import Location
 
+from tests.helpers import patch_pathlib_path
+from tests.mutation import Mutation, kills
+
 
 class LocationTest(unittest.TestCase):
     """Unit tests for rendering a location."""
@@ -17,9 +20,34 @@ class LocationTest(unittest.TestCase):
         """Test that a location without a line renders as the relative path alone, with no trailing colon."""
         self.assertEqual(str(Location(Path.cwd() / "docs" / "requirements.txt")), "docs/requirements.txt")
 
-    def test_relative_falls_back_to_the_absolute_path_outside_the_working_directory(self):
-        """Test that a path that can't be made relative to the working directory is kept as its absolute self."""
-        outside = Path("/elsewhere/pyproject.toml")
-        location = Location(outside, 7)
-        self.assertEqual(location.relative(), outside)
-        self.assertEqual(str(location), "/elsewhere/pyproject.toml:7")
+    @kills(
+        Mutation(
+            Location.relative,
+            "self.path.parts[:2] == cwd.parts[:2]",
+            "True",
+            "a path sharing only the root with the working directory is logged with a `..` for every directory",
+        )
+    )
+    @patch_pathlib_path(cwd=Path("/repository/sub"))
+    def test_relative_keeps_a_path_that_shares_only_the_root_with_the_working_directory(self):
+        """Test that a path that shares only the root with the working directory stays absolute."""
+        self.assertEqual(Location(Path("/elsewhere/pyproject.toml")).relative(), Path("/elsewhere/pyproject.toml"))
+
+    def test_relative_keeps_a_relative_path(self):
+        """Test that a path that is relative already stays as it is."""
+        self.assertEqual(Location(Path("docs/requirements.txt")).relative(), Path("docs/requirements.txt"))
+
+    @kills(
+        Mutation(
+            Location.relative,
+            "self.path.parts[:2] == cwd.parts[:2]",
+            "self.path.is_relative_to(cwd)",
+            "a path above the working directory is logged as its absolute path",
+        )
+    )
+    @patch_pathlib_path(cwd=Path("/repository/sub"))
+    def test_relative_walks_up_to_a_path_outside_the_working_directory(self):
+        """Test that a path above the working directory is made relative to it with `..`."""
+        location = Location(Path("/repository/pyproject.toml"), 7)
+        self.assertEqual(location.relative(), Path("../pyproject.toml"))
+        self.assertEqual(str(location), "../pyproject.toml:7")

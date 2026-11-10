@@ -937,17 +937,6 @@ class LoggerTests(TestCase):
             f"Set uv exclude-newer to '7 days' in {at('pyproject.toml')} to apply the cooldown",
         )
 
-    def test_configured_uv_cooldown_outside_working_directory(self, mock_log: Mock):
-        """Test that a workspace root outside the working directory is logged as its absolute path."""
-        outside = Path("/elsewhere/pyproject.toml")
-        _new_logger().configured_uv_cooldown(outside, "7 days")
-        self.assert_message(
-            mock_log,
-            message_of(Logger.configured_uv_cooldown),
-            logging.INFO,
-            f"Set uv exclude-newer to '7 days' in {at('/elsewhere/pyproject.toml')} to apply the cooldown",
-        )
-
     def test_invalid_file(self, mock_log: Mock):
         """Test that a file that does not parse is warned about, naming the format given rather than its suffix."""
         for file_name, file_format in (("pom.xml", "XML"), ("compose.yml", "YAML")):

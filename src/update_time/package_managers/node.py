@@ -2,7 +2,7 @@
 
 import os
 import posixpath
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -10,6 +10,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import SEMVER
+from update_time.io.filesystem import is_scanned
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS, PackageJson
@@ -135,12 +136,26 @@ class _PackageManager:
         """Return the top-level versions the lock file in the directory records, per project."""
         return self.locked_versions(run(self.list_locked, directory).json)
 
+    def _policy_for_a_project_left_as_it_is(self, path: Path, lock_root: Path) -> ManagerPolicy[Declaration] | None:
+        """Return the policy for the markers of a package.json the manager does not run for, or None where it runs.
+
+        The manager runs only where the scan reaches the lock root and a lock file sits there, since the update would
+        otherwise write one.
+        """
+        if not is_scanned(lock_root):
+            root = lock_root / (self.workspace_file or "package.json")
+            _LOG.workspace_root_outside_the_scan(path, self.name, root)
+            return _WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY
+        if not any((lock_root / name).exists() for name in self.lock_files):
+            _LOG.no_lock_file(path, self.name, lock_root / self.lock_files[0])
+            return _NO_LOCK_FILE_POLICY
+        return None
+
     def update_package_json(self, package_json: PackageJson) -> CheckedPackageJson | None:
         """Update the package.json and its lockfile using this package manager, and log what it moved and rewrote.
 
         The update moves the dependencies of the package.json's project, and those of the workspace members below.
-        Without the package manager on the path, the package.json gets an error and stays as it is. Without a lock file
-        beside the workspace root, it stays as it is too, since the update would write one.
+        Without the package manager on the path, the package.json gets an error and stays as it is.
         """
         path = package_json.path
         if not is_installed(executable := self.update.executable):
@@ -149,9 +164,8 @@ class _PackageManager:
         directory = path.parent
         workspace_root = self._workspace_root(directory)
         lock_root = self._lock_root(directory, workspace_root)
-        if not any((lock_root / name).exists() for name in self.lock_files):
-            _LOG.no_lock_file(path, self.name, lock_root / self.lock_files[0])
-            return CheckedPackageJson(package_json, _NO_LOCK_FILE_POLICY)
+        if (policy := self._policy_for_a_project_left_as_it_is(path, lock_root)) is not None:
+            return CheckedPackageJson(package_json, policy)
         project = PurePosixPath(os.path.relpath(directory.resolve(), workspace_root.resolve()))
         cooldown = self._cooldown_options(workspace_root)
         listed_before = self._locked_in(directory)
@@ -315,13 +329,14 @@ MARKER_POLICY = ManagerPolicy(
     unchecked_scopes=_unchecked_scopes,
 )
 
-# The policy for the markers of a package.json whose project does not have a lock file. Update-time leaves its
-# dependencies as the file declares them, so an `ignore[update]`, a bound, and a cooldown each decide nothing.
-_NO_LOCK_FILE_POLICY = replace(
-    MARKER_POLICY,
-    hold_back_redundancy=lambda _declaration: Reason.NO_LOCK_FILE_LEFT,
-    bound_redundancy=lambda _declaration: Reason.NO_LOCK_FILE_KEPT,
-    cooldown_redundancy=Reason.NO_LOCK_FILE_LEFT,
+# The policy for the markers of a package.json whose project does not have a lock file.
+_NO_LOCK_FILE_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+    Reason.NO_LOCK_FILE_LEFT, Reason.NO_LOCK_FILE_KEPT
+)
+
+# The policy for the markers of a package.json whose workspace root lies outside the scan root.
+_WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+    Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
 )
 
 

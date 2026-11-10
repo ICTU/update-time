@@ -1097,6 +1097,13 @@ class Logger:
         """Log that uv does not run for a pyproject.toml whose workspace root tells uv not to manage it."""
         return self._file_fields(path, table="[tool.uv]", root=Location(root))
 
+    @_debug(
+        "Not running %(manager)s for %(location)s: its %(manager)s workspace root %(root)s lies outside the scan root"
+    )
+    def workspace_root_outside_the_scan(self, path: Path, manager: str, root: Path) -> dict[str, object]:
+        """Log that the package manager does not run for a file whose workspace root lies outside the scan root."""
+        return self._file_fields(path, manager=manager, root=Location(root))
+
     @_warning("Skipping %(location)s: it is not valid %(format)s")
     def invalid_file(self, path: Path, file_format: str) -> dict[str, object]:
         """Warn that a file does not parse."""
