@@ -544,7 +544,7 @@ A marker wins over the command-line option that sets the same thing, whatever th
 
 An `ignore[update]` wins over any directive beside it that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched.
 
-Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says, and Update-time leaves a `package.json` whose project does not have a lock file as it is. It holds nothing back either on a `requirements.txt` requirement that does not pin an exact version, on a `pom.xml` declaration whose version Maven does not update, or in a pom whose versions plugin configuration names rules of its own. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. On a dependency without an exact pin, in a `pyproject.toml` or a script that has a lock, an `ignore[update]` keeps the version uv locks for the file as written. It holds nothing back on a direct URL, on a build requirement, on a pin with an environment marker, in a `pyproject.toml` that uv does not manage, in a `pyproject.toml` or a script without a lock, or where the lock does not record exactly one version (see [Python dependencies](#markers)).
+Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says, and Update-time leaves a `package.json` as it is where its project does not have a lock file, or where its workspace root lies outside the scan root. An `ignore[update]` holds nothing back either on a `requirements.txt` requirement that does not pin an exact version, on a `pom.xml` declaration whose version Maven does not update, or in a pom whose versions plugin configuration names rules of its own. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. On a dependency without an exact pin, in a `pyproject.toml` or a script that has a lock, an `ignore[update]` keeps the version uv locks for the file as written. It holds nothing back on a direct URL, on a build requirement, or on a pin with an environment marker. It holds nothing back either in a `pyproject.toml` that uv does not manage or whose workspace root lies outside the scan root, in a `pyproject.toml` or a script without a lock, or where the lock does not record exactly one version (see [Python dependencies](#markers)).
 
 ### Silencing a warning
 
@@ -876,7 +876,7 @@ WARNING Redundant update-time directive set[vulnerability-level=high] for django
 A cooldown holds nothing back in these cases, so Update-time reports the `cooldown` scope as redundant there:
 
 - uv, pip-compile, npm, or pnpm applies the cooldown. They take one per run rather than per dependency, except uv when it recompiles a requirements file (see [Cooldown](#-cooldown)).
-- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, and those of a `package.json` whose project does not have a lock file.
+- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, those of a `package.json` whose project does not have a lock file, and those of a workspace whose root lies outside the scan root.
 - The source does not report a publication date. That holds for an image on a registry other than Docker Hub, and for an artefact Maven Central does not serve.
 - A pom's versions plugin configuration names rules of its own, which Maven follows instead of the cooldown (see [Maven dependencies](#markers-2)).
 - Update-time does not update the reference. That holds for a `requirements.txt` requirement that does not pin an exact version, unless it sits in the source of a file Update-time recompiles. It holds for a GitHub Action or pre-commit hook that names a commit SHA. A short SHA that a version tag names is the exception: Update-time pins it as that version, and from the next run on the cooldown governs its updates. Not updated either are a `pom.xml` declaration whose version Maven does not update, an image the file does not pull, and a reference through a variable or a template that Update-time cannot substitute.
@@ -888,6 +888,7 @@ WARNING Redundant update-time directive set[cooldown=30] for ghcr.io/astral-sh/u
 WARNING Redundant update-time directive set[cooldown=30] for humanize in pyproject.toml:12: the package manager applies the cooldown per run rather than per dependency
 WARNING Redundant update-time directive set[cooldown=30] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are
 WARNING Redundant update-time directive set[cooldown=30] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are
+WARNING Redundant update-time directive set[cooldown=30] for humanize in app/pyproject.toml:5: Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are
 WARNING Redundant update-time directive set[cooldown=30] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update
 WARNING Redundant update-time directive set[cooldown=30] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a cooldown holds nothing back
 WARNING Redundant update-time directive set[cooldown=30] for commons-io:commons-io in child/pom.xml:5: this declaration does not hold its version, so Maven does not update that version here
@@ -970,7 +971,7 @@ Update-time also reports every bound as redundant in these cases. In the first f
 - uv does not lock a `pyproject.toml` build requirement, and Update-time leaves its pin as it is. An `ignore[update]` is redundant there as well.
 - A `pyproject.toml` or inline script metadata dependency given as a direct URL names a URL rather than a version. An `ignore[update]` is redundant there as well.
 - Update-time leaves a `pyproject.toml` or inline script metadata pin with an environment marker as it is. An `ignore[update]` is redundant there as well.
-- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, and those of a `package.json` whose project does not have a lock file. An `ignore[update]` is redundant there as well.
+- Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, those of a `package.json` whose project does not have a lock file, and those of a workspace whose root lies outside the scan root. An `ignore[update]` is redundant there as well.
 - An `ignore[update]` beside the bound holds a `pyproject.toml` or inline script metadata dependency where it is.
 - A GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA does not name a version to bound. In the run that pins such a reference to a version tag, Update-time judges the bound at that version. Update-time never pins a full SHA, so a bound on one is always redundant.
 
@@ -988,6 +989,8 @@ WARNING Redundant update-time directive allow[update<5] for humanize in legacy/p
 WARNING Redundant update-time directive ignore[update] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are
 WARNING Redundant update-time directive allow[update<2] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are, so a bound decides nothing
 WARNING Redundant update-time directive ignore[update] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are
+WARNING Redundant update-time directive allow[update<5] for humanize in app/pyproject.toml:5: Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a bound decides nothing
+WARNING Redundant update-time directive ignore[update] for humanize in app/pyproject.toml:5: Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are
 WARNING Redundant update-time directive allow[update<5] for humanize in pyproject.toml:12: this reference's update is held back, so a bound decides nothing
 WARNING Redundant update-time directive allow[update<5] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update
 WARNING Redundant update-time directive allow[update<5] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a bound decides nothing
@@ -1079,14 +1082,15 @@ ERROR Could not recompile docs/requirements.txt: uv pip compile failed
 ERROR Could not recompile docs/requirements.txt: uv is not on the path
 ```
 
-Update-time runs uv only for a `pyproject.toml` that uv manages and that declares dependencies for uv to resolve. Update-time takes a `pyproject.toml` to be managed by uv where it has a `uv.lock` beside it or a `[tool.uv]` table. So is every member of a uv workspace, since the workspace root has a `[tool.uv.workspace]` table. Where the `[tool.uv]` table of the workspace root, or of a project outside a workspace, sets `managed = false`, uv refuses to lock the project. Update-time then takes the project to be unmanaged as well. A `pyproject.toml` declares dependencies under `[project]`, in an extra, in a dependency group, or in uv's legacy `[tool.uv] dev-dependencies`. A project that lists `dependencies` or `optional-dependencies` as `dynamic`, leaving them to its build backend, declares them as well.
+Update-time runs uv only for a `pyproject.toml` that uv manages, that declares dependencies for uv to resolve, and whose uv workspace root lies within the scan root. Update-time takes a `pyproject.toml` to be managed by uv where it has a `uv.lock` beside it or a `[tool.uv]` table. So is every member of a uv workspace, since the workspace root has a `[tool.uv.workspace]` table. Where the `[tool.uv]` table of the workspace root, or of a project outside a workspace, sets `managed = false`, uv refuses to lock the project. Update-time then takes the project to be unmanaged as well. A `pyproject.toml` declares dependencies under `[project]`, in an extra, in a dependency group, or in uv's legacy `[tool.uv] dev-dependencies`. A project that lists `dependencies` or `optional-dependencies` as `dynamic`, leaving them to its build backend, declares them as well.
 
-Update-time leaves every other `pyproject.toml` as it is, such as one that only configures tools, or one whose project pins its dependencies with pip-tools. Such a project does not use uv, or does not declare anything for uv to resolve. Update-time reports such a file at `DEBUG`:
+Update-time leaves every other `pyproject.toml` as it is, such as one that only configures tools, or one whose project pins its dependencies with pip-tools. Such a project does not use uv, or does not declare anything for uv to resolve. uv locks a workspace as a whole, in a `uv.lock` beside its root. So Update-time does not run uv for a member whose workspace root lies outside the scan root, as when the scan starts in that member. Update-time reports such a file at `DEBUG`:
 
 ```console
 DEBUG Not running uv for pyproject.toml: it does not declare dependencies for uv to resolve
 DEBUG Not running uv for legacy/pyproject.toml: it does not have a [tool.uv] table, and legacy/uv.lock does not exist
 DEBUG Not running uv for vendored/pyproject.toml: the [tool.uv] table of vendored/pyproject.toml sets managed = false
+DEBUG Not running uv for pyproject.toml: its uv workspace root ../pyproject.toml lies outside the scan root
 ```
 
 To have Update-time update a project that uses uv but has neither a `uv.lock` nor a `[tool.uv]` table, run `uv lock` once. Update-time still checks the dependencies and the build requirements of a file it leaves as it is, and reports their markers.
@@ -1222,7 +1226,7 @@ In the source of a file Update-time recompiles, a marker steers the recompile as
 
 pip-compile takes one cooldown for the whole file, so Update-time reports a `set[cooldown=…]` as [redundant](#the-cooldown-scope) on a requirement in its sources that does not pin an exact version.
 
-Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are. So it reports an `ignore[update]`, a bound, and a `set[cooldown=…]` in such a file as [redundant](#redundant-markers).
+Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, and those of one whose uv workspace root lies outside the scan root. So it reports an `ignore[update]`, a bound, and a `set[cooldown=…]` in such a file as [redundant](#redundant-markers).
 
 Update-time reports every warning scope as redundant on a dependency PyPI does not serve a release for: one pointing at a URL or a git repository, or one uv resolves through a `[tool.uv] sources` entry.
 
@@ -1246,6 +1250,13 @@ DEBUG Not running pnpm for packages/ui/package.json: it does not have a lock fil
 ```
 
 To have Update-time update such a project, run `npm install` or `pnpm install` once.
+
+Update-time also leaves a `package.json` as it is where the root of its workspace lies outside the scan root, as when the scan starts in a member of the workspace. npm and pnpm would write the lock file beside that root, outside the scan. Update-time still checks the dependencies, and reports the file at `DEBUG`:
+
+```console
+DEBUG Not running npm for package.json: its npm workspace root ../package.json lies outside the scan root
+DEBUG Not running pnpm for package.json: its pnpm workspace root ../pnpm-workspace.yaml lies outside the scan root
+```
 
 Where npm or pnpm is not on the path, Update-time does not run it. It leaves the `package.json` as it is, still checks its dependencies, and reports the missing package manager at `ERROR`:
 
@@ -1315,7 +1326,7 @@ A `package.json` is strict JSON, so a dependency's marker goes in the file's `up
 
 A marker steers the checks rather than the update, since npm and pnpm move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
 
-Update-time leaves the dependencies of a project without a lock file as they are (see [What files are updated?](#what-files-are-updated-1)). So in such a project's `package.json`, the warning about an `ignore[update]`, a bound, or a `set[cooldown=…]` says that Update-time leaves the dependencies as they are.
+Update-time leaves the dependencies of a project without a lock file as they are, and those of a workspace whose root lies outside the scan root (see [What files are updated?](#what-files-are-updated-1)). So in the `package.json` of either, the warning about an `ignore[update]`, a bound, or a `set[cooldown=…]` says that Update-time leaves the dependencies as they are.
 
 Update-time reports every scope as redundant on a dependency that does not resolve to a registry release, such as a git URL:
 

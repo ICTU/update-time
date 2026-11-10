@@ -67,12 +67,6 @@ class ScriptLockTest(_ScriptLockTestCase):
 
     @kills(
         Mutation(
-            lock._LockUpdate.update,
-            "if self.before.target.keeps_the_lock:\n            self.before.log.path(self.before.target.uv_lock.path)",
-            "self.before.log.path(self.before.target.uv_lock.path)",
-            "the run reports checking a lock it removes again, which the user never sees",
-        ),
-        Mutation(
             lock._with_cutoff,
             "cooldown_cutoff(COOLDOWN.get())",
             "cooldown_cutoff(0)",

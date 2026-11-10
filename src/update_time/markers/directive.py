@@ -44,6 +44,13 @@ class Reason(StrEnum):
         "Update-time leaves the dependencies of a project without a lock file as they are, so a bound decides nothing"
     )
     NO_LOCK_FILE_LEFT = "Update-time leaves the dependencies of a project without a lock file as they are"
+    WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT = (
+        "Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a "
+        "bound decides nothing"
+    )
+    WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT = (
+        "Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are"
+    )
     BOUND_ON_A_HELD_BACK_UPDATE = "this reference's update is held back, so a bound decides nothing"
     FOLLOWS_A_BRANCH = (
         "this reference follows a branch or a floating tag rather than a version, so a bound decides nothing"

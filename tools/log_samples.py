@@ -26,7 +26,7 @@ from update_time.domain.dependency import (
     Release,
     Yank,
 )
-from update_time.domain.reference import DriftedPin, RefKind
+from update_time.domain.reference import DriftedPin, Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
@@ -213,6 +213,7 @@ def _redundant_for_the_dependency_type(
     managed = reference("humanize", Location(Path("pyproject.toml"), 12))
     unmanaged = reference("humanize", Location(Path("legacy/pyproject.toml"), 4))
     unlocked = reference("left-pad", Location(Path("web/package.json"), 4))
+    member = reference("humanize", Location(Path("app/pyproject.toml"), 5))
     loose = reference("humanize", requirements)
     commit = reference("actions/checkout", workflow)
     branch = reference("actions/setup-python", Location(Path(".github/workflows/ci.yml"), 18))
@@ -221,6 +222,7 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(managed, "set[cooldown=30]", Reason.COOLDOWN_PER_RUN)
     log.redundant_directive(unmanaged, "set[cooldown=30]", Reason.UNMANAGED_FILE_LEFT)
     log.redundant_directive(unlocked, "set[cooldown=30]", Reason.NO_LOCK_FILE_LEFT)
+    log.redundant_directive(member, "set[cooldown=30]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT)
     log.redundant_directive(loose, "set[cooldown=30]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "set[cooldown=30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
     log.redundant_directive(held_elsewhere, "set[cooldown=30]", Reason.VERSION_HELD_ELSEWHERE)
@@ -229,17 +231,7 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(variable, "set[cooldown=30]", never_updated)
     cooldowns = capture.take()
 
-    log.redundant_directive(loose, "allow[hash-drift]", Reason.NO_HASH_PIN)
-    clipboard = reference("clipboard", Location(Path("docs/conf.py"), 4))
-    log.redundant_directive(clipboard, "allow[hash-drift]", Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED)
-    built = reference("acme/api", Location(Path("docker-compose.yml"), 4))
-    log.redundant_directive(
-        built,
-        "allow[hash-drift]",
-        ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.DIGEST_NEVER_CHECKED),
-    )
-    log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
-    drift = capture.take()
+    drift = _redundant_hash_drift_opt_ins(log, capture, loose, commit)
 
     script = reference("humanize", Location(Path("tool.py"), 4))
     log.redundant_directive(script, "allow[update<5]", Reason.BOUND_DECIDES_NOTHING)
@@ -255,6 +247,8 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(unmanaged, "ignore[update]", Reason.UNMANAGED_FILE_LEFT)
     log.redundant_directive(unlocked, "allow[update<2]", Reason.NO_LOCK_FILE_KEPT)
     log.redundant_directive(unlocked, "ignore[update]", Reason.NO_LOCK_FILE_LEFT)
+    log.redundant_directive(member, "allow[update<5]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT)
+    log.redundant_directive(member, "ignore[update]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT)
     log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_ON_A_HELD_BACK_UPDATE)
     log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "allow[update<5]", Reason.PINS_A_COMMIT)
@@ -271,6 +265,21 @@ def _redundant_for_the_dependency_type(
         "@@REDUNDANT_BOUND_WARNINGS@@": bounds,
         "@@REDUNDANT_UNANCHORED_WARNINGS@@": capture.take(),
     }
+
+
+def _redundant_hash_drift_opt_ins(log: Logger, capture: _Capture, loose: Reference, commit: Reference) -> str:
+    """Log a sample per redundant drift opt-in, and return the lines."""
+    log.redundant_directive(loose, "allow[hash-drift]", Reason.NO_HASH_PIN)
+    clipboard = reference("clipboard", Location(Path("docs/conf.py"), 4))
+    log.redundant_directive(clipboard, "allow[hash-drift]", Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED)
+    built = reference("acme/api", Location(Path("docker-compose.yml"), 4))
+    log.redundant_directive(
+        built,
+        "allow[hash-drift]",
+        ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.DIGEST_NEVER_CHECKED),
+    )
+    log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
+    return capture.take()
 
 
 def _invalid_items(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
@@ -502,6 +511,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
         **_package_jsons_without_a_lock_file(log, capture),
+        **_workspace_roots_outside_the_scan(log, capture),
         **_package_managers_not_on_path(log, capture),
         **_not_a_uv_project(log, capture),
         **_range_rewrites(log, capture),
@@ -569,6 +579,18 @@ def _package_jsons_without_a_lock_file(log: Logger, capture: _Capture) -> dict[s
     log.no_lock_file(Path("web/package.json"), "npm", Path("web/package-lock.json"))
     log.no_lock_file(Path("packages/ui/package.json"), "pnpm", Path("pnpm-lock.yaml"))
     return {"@@NO_NODE_LOCK_FILE@@": capture.take()}
+
+
+def _workspace_roots_outside_the_scan(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that uv, npm, and pnpm do not run for a member whose workspace root lies outside the scan root."""
+    log.workspace_root_outside_the_scan(Path("pyproject.toml"), "uv", Path("../pyproject.toml"))
+    pyproject_toml = capture.take()
+    log.workspace_root_outside_the_scan(Path("package.json"), "npm", Path("../package.json"))
+    log.workspace_root_outside_the_scan(Path("package.json"), "pnpm", Path("../pnpm-workspace.yaml"))
+    return {
+        "@@UV_WORKSPACE_ROOT_OUTSIDE_THE_SCAN@@": pyproject_toml,
+        "@@NODE_WORKSPACE_ROOT_OUTSIDE_THE_SCAN@@": capture.take(),
+    }
 
 
 def _package_managers_not_on_path(log: Logger, capture: _Capture) -> dict[str, str]:

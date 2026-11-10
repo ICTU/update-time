@@ -36,6 +36,17 @@ class ManagerPolicy[ReferenceT: SteeredReference]:
         """Return every warning scope, each left unchecked for the reason."""
         return {directive.scope: reason for directive in WARNING_DIRECTIVES}
 
+    def policy_for_files_left_as_they_are(
+        self, hold_back_reason: Reason, bound_reason: Reason
+    ) -> ManagerPolicy[ReferenceT]:
+        """Return the policy for a file whose dependencies Update-time leaves as they are."""
+        return replace(
+            self,
+            hold_back_redundancy=lambda _reference: hold_back_reason,
+            bound_redundancy=lambda _reference: bound_reason,
+            cooldown_redundancy=hold_back_reason,
+        )
+
     def keeps_the_version(self, reference: ReferenceT) -> bool:
         """Return whether the reference's marker carries an `ignore[update]` that keeps its version where it is."""
         return reference.marker.ignores(Scope.UPDATE) and self.hold_back_redundancy(reference) is None

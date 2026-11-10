@@ -13,6 +13,7 @@ from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.formats import toml
+from update_time.io.filesystem import is_scanned
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files.uv_lock import UvLock
@@ -63,6 +64,15 @@ def other_manager(pyproject_toml: Path, config: dict) -> str | None:
         if (pyproject_toml.parent / lockfile).exists():
             return manager
     return None
+
+
+def workspace_root_is_scanned(pyproject_toml: Path) -> bool:
+    """Return whether the scan reaches the root of the project's uv workspace, and log why not where it does not."""
+    root = _workspace_root(pyproject_toml)
+    if is_scanned(root):
+        return True
+    _LOG.workspace_root_outside_the_scan(pyproject_toml, "uv", root)
+    return False
 
 
 def manages(pyproject_toml: Path, config: dict) -> bool:
