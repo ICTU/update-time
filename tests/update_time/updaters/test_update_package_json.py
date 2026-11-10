@@ -1619,4 +1619,4 @@ class MarkerTest(NoUpdateTestCase):
         package_json = self.run_on_marker(get, mock_run, glob, "ignore[update]", "2.0.11")
         marker = Marker(ignored_scopes=Scope.UPDATE)
         self.assert_recognised_marker_logged("clipboard", Location(package_json, 4), marker)
-        self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+        self.assert_no_ignored_logged()

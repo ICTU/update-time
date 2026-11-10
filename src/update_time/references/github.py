@@ -80,9 +80,14 @@ def _names_a_short_sha(reference: Reference) -> bool:
     return sha is None or sha.startswith(ref)
 
 
+def _names_a_full_sha(reference: Reference) -> bool:
+    """Return whether the reference names a commit by its full SHA alone, without a comment naming a version or ref."""
+    return re.fullmatch(COMMIT_SHA, reference.current_version) is not None
+
+
 def _commit_sha(reference: Reference) -> _CommitSha:
     """Return how the reference names a commit."""
-    if re.fullmatch(COMMIT_SHA, reference.current_version):
+    if _names_a_full_sha(reference):
         return _CommitSha.FULL
     if _names_a_short_sha(reference):
         return _CommitSha.SHORT
@@ -173,6 +178,7 @@ class _PinResolver:
         self._report_what_the_marker_decides(reference, names_a_commit=names_a_commit)
         pin = None if commit_sha is _CommitSha.FULL else self._ref_pin(reference, commit_sha)
         self._report_redundant_directives(reference, pin, names_a_commit=names_a_commit)
+        self._warn_if_the_hold_back_is_redundant(reference, commit_sha)
         if pin is not None and commit_sha is _CommitSha.SHORT and not pin.tag_name:
             return replace(pin, version="")  # The full SHA names the commit, so the pin does not need a comment
         return pin
@@ -223,6 +229,11 @@ class _PinResolver:
             vulnerable := marker.directive_for(Scope.VULNERABLE)
         ):
             log.redundant_directive(reference, vulnerable, Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY)
+
+    def _warn_if_the_hold_back_is_redundant(self, reference: Reference, commit_sha: _CommitSha) -> None:
+        """Warn about an `ignore[update]` on a bare full commit SHA, which Update-time never updates."""
+        if commit_sha is _CommitSha.FULL and (hold_back := self.marker.hold_back_directive):
+            self.log.redundant_directive(reference, hold_back, Reason.NO_UPDATE_FOR_A_COMMIT)
 
     def _ref_pin(self, reference: Reference, commit_sha: _CommitSha) -> DependencyVersion | None:
         """Return the ref's commit, named by a version tag or by the ref, or None to leave the reference as it is."""
@@ -313,6 +324,11 @@ class PinUpdater:
     def _source(self) -> NewVersionGetter:
         """Return the getter this kind of reference resolves through."""
         return _get_latest_action_version if self.checks_vulnerabilities else get_latest_version
+
+    @staticmethod
+    def steers_the_update(match: re.Match[str], location: Location) -> bool:
+        """Return whether a marker steers the reference's update, as it does unless it names a bare commit SHA."""
+        return not _names_a_full_sha(github_reference(match, location, ""))
 
     def update_line(self, match: re.Match[str], location: Location, marker: Marker, dependency: str = "") -> str:
         """Return the line with the reference (re)pinned, or the line as it is when the reference stays put."""

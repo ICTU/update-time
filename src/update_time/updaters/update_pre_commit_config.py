@@ -35,7 +35,9 @@ def _updated_lines(lines: list[Line]) -> list[str]:
         elif (rev_match := REV_REFERENCE.search(line.text)) and repository is not None:
             dependency = str(repository)
             update_line = partial(_REV.update_line, dependency=dependency)
-            result.append(apply_marker(line, rev_match, update_line, _LOG, dependency))
+            result.append(
+                apply_marker(line, rev_match, update_line, _LOG, dependency, steers_the_update=_REV.steers_the_update)
+            )
         else:
             result.append(line.text)
     return result

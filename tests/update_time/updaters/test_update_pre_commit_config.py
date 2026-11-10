@@ -19,6 +19,7 @@ from update_time.markers.directive import Reason
 from update_time.primitives import digest
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
+from update_time.updaters import update_pre_commit_config
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
 from tests.helpers import mock_path
@@ -45,7 +46,7 @@ def config(rev_block: str) -> str:
 
 
 @no_other_version_at_the_tag
-@patch("update_time.references.github.get_latest_version")
+@patch("update_time.references.github.get_latest_version", autospec=True)
 @patch("pathlib.Path.glob")
 class UpdatePreCommitConfigsTest(LoggingTestCase):
     """Unit tests for the update pre-commit configs function."""
@@ -290,6 +291,27 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assertEqual(github_requests("commits"), [])
         self.assertEqual(len(github_requests("releases")), 1)
         self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_pre_commit_config._updated_lines,
+            "dependency, steers_the_update=_REV.steers_the_update)",
+            "dependency)",
+            "an `ignore[update]` on a rev pinned to a bare commit SHA is logged as holding the update back",
+        )
+    )
+    @patch_github(
+        releases=[github_release_json("v4.5.0", published_at=FRESH_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
+    )
+    def test_an_ignore_update_on_a_bare_commit_sha_is_reported(self, mock_glob: Mock, _mock_get_latest_version: Mock):
+        """Test that a bare commit SHA is left as it is, its `ignore[update]` redundant, and holding nothing back."""
+        config_file = mock_path(config(f"rev: {OLD_SHA}  # update-time: ignore[update]\n"))
+        mock_glob.return_value = [config_file]
+        update_pre_commit_configs()
+        config_file.write_text.assert_not_called()
+        location = Location(config_file, 3)
+        self.assert_redundant_directive_logged(Reason.NO_UPDATE_FOR_A_COMMIT, self.HOOK, location, "ignore[update]")
+        self.assert_no_ignored_logged()
 
     def test_rev_without_repo_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev appearing before any repo (so no repository is in scope) is left untouched."""

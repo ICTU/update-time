@@ -195,7 +195,6 @@ Reproducible builds commonly zero that annotation (`SOURCE_DATE_EPOCH`), so it i
 Return a GitHub contents listing entry for the name, one with no file to fetch when it is a directory.
 Return a message for each dependency type with no section of its own, and each section documenting none.
 Return a message for each internal link that points at an anchor no heading in the document provides.
-Return a mock reference resolver answering with the resolved references, claiming no source capability.
 Return each test the run reported as failing, once, in the order reported.
 Return every `Location(...)` the sample generators build.
 Return every dependency the file declares, each parsed once and located and marked at the line declaring it.

@@ -864,6 +864,8 @@ An `ignore[update]`, a bound, and a `set[cooldown=…]` each steer the update. I
 - A `requirements.txt` requirement does not pin an exact version, and does not sit in the source of a file Update-time recompiles (see [Python dependencies](#markers)).
 - Maven does not update the version of the `pom.xml` dependency or plugin (see [What dependencies are updated?](#what-dependencies-are-updated-2)). Or the pom's versions plugin configuration names rules of its own, which Maven follows instead of the marker (see [Maven dependencies](#markers-2)).
 - Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, those of a `package.json` whose project does not have a lock file, and those of a workspace whose root lies outside the scan root.
+- The file does not pull the image, or the reference goes through a variable or a template that Update-time cannot substitute, so Update-time does not update it (see [Docker images](#what-dependencies-are-updated-5)).
+- A GitHub Action or pre-commit hook names a full commit SHA without a comment, which Update-time never updates (see [GitHub Actions and pre-commit hooks](#pinning-3)).
 
 Update-time reports those cases as:
 
@@ -875,6 +877,8 @@ WARNING Redundant update-time directive ignore[update] for com.google.guava:guav
 WARNING Redundant update-time directive ignore[update] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are
 WARNING Redundant update-time directive set[cooldown=30] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are
 WARNING Redundant update-time directive allow[update<5] for humanize in app/pyproject.toml:5: Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a bound decides nothing
+WARNING Redundant update-time directive allow[update<8] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so it is never updated
+WARNING Redundant update-time directive ignore[update] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so it is never updated
 ```
 
 #### The `cooldown` scope
@@ -883,7 +887,6 @@ Besides where [a marker does not steer the update](#where-a-marker-does-not-stee
 
 - uv, pip-compile, npm, or pnpm applies the cooldown. They take one per run rather than per dependency, except uv when it recompiles a requirements file (see [Cooldown](#-cooldown)).
 - The source does not report a publication date. That holds for an image on a registry other than Docker Hub, and for an artefact Maven Central does not serve.
-- The file does not pull the image, or the reference goes through a variable or a template that Update-time cannot substitute, so Update-time does not update it.
 - A GitHub Action or pre-commit hook names a commit SHA. A short SHA that a version tag names is the exception: Update-time pins it as that version, and from the next run on the cooldown governs its updates.
 
 Update-time reports the cases above as:
@@ -892,7 +895,6 @@ Update-time reports the cases above as:
 WARNING Redundant update-time directive set[cooldown=30] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure a cooldown against
 WARNING Redundant update-time directive set[cooldown=30] for humanize in pyproject.toml:12: the package manager applies the cooldown per run rather than per dependency
 WARNING Redundant update-time directive set[cooldown=30] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a cooldown holds nothing back
-WARNING Redundant update-time directive set[cooldown=30] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so it is never updated
 ```
 
 #### The `floating-pin` scope
@@ -1009,7 +1011,7 @@ A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — i
 WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
 ```
 
-Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. Where an `ignore[update]` holds nothing back, an unreadable item holds nothing back either, and the warning leaves out that the reference stays unchanged. A `package.json` dependency and a pom whose versions plugin configuration names rules of its own are such cases (see [Redundant markers](#redundant-markers)).
+Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. Where an `ignore[update]` holds nothing back, an unreadable item holds nothing back either, and the warning leaves out that the reference stays unchanged. A `package.json` dependency, a pom whose versions plugin configuration names rules of its own, an image Update-time does not look up, and a full commit SHA without a comment are such cases (see [Redundant markers](#redundant-markers)).
 
 An unreadable item holds back what Update-time would write, never what it would tell you. So the checks still run, and every item beside it that Update-time does read applies as written: `ignore[yanked, stlae]` still silences the yank warning.
 

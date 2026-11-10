@@ -731,6 +731,8 @@ An `ignore[update]`, a bound, and a `set[cooldown=…]` each steer the update. I
 - A `requirements.txt` requirement does not pin an exact version, and does not sit in the source of a file Update-time recompiles (see [Python dependencies](#markers)).
 - Maven does not update the version of the `pom.xml` dependency or plugin (see [What dependencies are updated?](#what-dependencies-are-updated-2)). Or the pom's versions plugin configuration names rules of its own, which Maven follows instead of the marker (see [Maven dependencies](#markers-2)).
 - Update-time leaves the dependencies of a `pyproject.toml` that uv does not manage as they are, those of a `package.json` whose project does not have a lock file, and those of a workspace whose root lies outside the scan root.
+- The file does not pull the image, or the reference goes through a variable or a template that Update-time cannot substitute, so Update-time does not update it (see [Docker images](#what-dependencies-are-updated-5)).
+- A GitHub Action or pre-commit hook names a full commit SHA without a comment, which Update-time never updates (see [GitHub Actions and pre-commit hooks](#pinning-3)).
 
 Update-time reports those cases as:
 
@@ -744,7 +746,6 @@ Besides where [a marker does not steer the update](#where-a-marker-does-not-stee
 
 - uv, pip-compile, npm, or pnpm applies the cooldown. They take one per run rather than per dependency, except uv when it recompiles a requirements file (see [Cooldown](#-cooldown)).
 - The source does not report a publication date. That holds for an image on a registry other than Docker Hub, and for an artefact Maven Central does not serve.
-- The file does not pull the image, or the reference goes through a variable or a template that Update-time cannot substitute, so Update-time does not update it.
 - A GitHub Action or pre-commit hook names a commit SHA. A short SHA that a version tag names is the exception: Update-time pins it as that version, and from the next run on the cooldown governs its updates.
 
 Update-time reports the cases above as:
@@ -856,7 +857,7 @@ A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — i
 @@UNRECOGNISED_ITEM_WARNING@@
 ```
 
-Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. Where an `ignore[update]` holds nothing back, an unreadable item holds nothing back either, and the warning leaves out that the reference stays unchanged. A `package.json` dependency and a pom whose versions plugin configuration names rules of its own are such cases (see [Redundant markers](#redundant-markers)).
+Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. Where an `ignore[update]` holds nothing back, an unreadable item holds nothing back either, and the warning leaves out that the reference stays unchanged. A `package.json` dependency, a pom whose versions plugin configuration names rules of its own, an image Update-time does not look up, and a full commit SHA without a comment are such cases (see [Redundant markers](#redundant-markers)).
 
 An unreadable item holds back what Update-time would write, never what it would tell you. So the checks still run, and every item beside it that Update-time does read applies as written: `ignore[yanked, stlae]` still silences the yank warning.
 

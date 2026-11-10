@@ -57,6 +57,7 @@ class Reason(StrEnum):
     )
     PINS_A_COMMIT = "this reference pins a commit rather than a version, so a bound decides nothing"
     NO_COOLDOWN_FOR_A_COMMIT = "this reference pins a commit rather than a version, so a cooldown holds nothing back"
+    NO_UPDATE_FOR_A_COMMIT = "this reference pins a commit rather than a version, so it is never updated"
     NO_DRIFT_FOR_A_COMMIT = "this reference pins a commit rather than a tag or branch, so it cannot drift"
     NO_HASH_PIN = "this reference does not carry a hash pin that could drift"
     INTEGRITY_MISMATCH_NEVER_ADOPTED = "Update-time never adopts an integrity hash mismatch"

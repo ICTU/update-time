@@ -109,7 +109,7 @@ def _commits_url(ref: str, dependency: str = "actions/checkout") -> str:
 
 
 @no_vulnerabilities
-@patch("update_time.references.github.get_latest_version")
+@patch("update_time.references.github.get_latest_version", autospec=True)
 @no_other_version_at_the_tag
 @patch("pathlib.Path.glob")
 class UpdateGitHubActionsTest(LoggingTestCase):
@@ -1357,6 +1357,26 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 self.assert_redundant_directive_logged(
                     Reason.PINS_A_COMMIT, "actions/checkout", Location(workflow_yml, 1), "allow[update<4]"
                 )
+
+    @kills(
+        Mutation(
+            update_github_actions,
+            "steers_the_update=_ACTION.steers_the_update,\n",
+            "",
+            "an `ignore[update]` on a bare commit SHA is logged as holding the update back",
+        )
+    )
+    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA), listed_commits=github_not_found())
+    def test_an_ignore_update_on_a_bare_commit_sha_is_reported(self, mock_glob: Mock):
+        """Test that a bare commit SHA is left as it is, its `ignore[update]` redundant, and holding nothing back."""
+        workflow_yml = self.scanned_workflow(
+            mock_glob, f"uses: actions/checkout@{OLD_SHA}  # update-time: ignore[update]\n"
+        )
+        workflow_yml.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            Reason.NO_UPDATE_FOR_A_COMMIT, "actions/checkout", Location(workflow_yml, 1), "ignore[update]"
+        )
+        self.assert_no_ignored_logged()
 
     @patch_github(releases=[], tags=[], commit=github_commits_json(full_commit_sha("3e8a870")))
     def test_a_bound_on_a_short_commit_sha_is_reported(self, mock_glob: Mock):

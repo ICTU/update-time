@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import FloatingPin, Unserved
+from update_time.domain.image_lookup import why_image_not_looked_up, why_never_updated
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
 from update_time.io.log import Logger
@@ -57,6 +58,11 @@ class _Rewriter:
     logger: Logger
     dependency: str = ""
 
+    def steers_the_update(self, match: re.Match[str], location: Location) -> bool:
+        """Return whether a marker steers the reference's update, as it does unless the image is never updated."""
+        reference = matched_reference(match, location, self.dependency)
+        return why_never_updated(self.get_new_version, reference.pinned) is None
+
     def update_line(self, match: re.Match[str], location: Location, marker: Marker) -> str:
         """Update the matched reference's line with the new version (and digest) if any, or return it unchanged.
 
@@ -71,7 +77,7 @@ class _Rewriter:
             reference,
             marker,
             Scope.HASH_DRIFT,
-            self._why_drift_is_never_adopted(match, latest),
+            self._why_drift_is_never_adopted(match, reference),
             update_held_back=marker.ignores(Scope.UPDATE),
         )
         if latest is None or self._report_why_the_source_left_it(reference, latest):
@@ -95,13 +101,12 @@ class _Rewriter:
             return True
         return False
 
-    @staticmethod
-    def _why_drift_is_never_adopted(match: re.Match[str], latest: DependencyVersion | None) -> RedundancyReason | None:
+    def _why_drift_is_never_adopted(self, match: re.Match[str], reference: Reference) -> RedundancyReason | None:
         """Return why the reference cannot adopt drift, whatever its marker says, or None where it can."""
         if not _can_hold_a_digest(match):
             return Reason.NO_HASH_PIN
-        if latest is not None and latest.image_not_looked_up is not None:
-            return ImageNotLookedUpReason(latest.image_not_looked_up, Consequence.DIGEST_NEVER_CHECKED)
+        if (image_not_looked_up := why_image_not_looked_up(self.get_new_version, reference.pinned)) is not None:
+            return ImageNotLookedUpReason(image_not_looked_up, Consequence.DIGEST_NEVER_CHECKED)
         return None
 
     def _pin_floating_reference(
@@ -203,6 +208,11 @@ class _Rewriter:
         return rewrite_string(match, replacements)
 
 
+def _steers_every_update(_match: re.Match[str], _location: Location) -> bool:
+    """Return that a marker steers the update of the matched reference, as it does wherever the reference is updated."""
+    return True
+
+
 def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cannot be read from the line
     line: Line,
     match: re.Match[str],
@@ -211,18 +221,20 @@ def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cann
     dependency: str = "",
     *,
     marker: Marker | None = None,
+    steers_the_update: Callable[[re.Match[str], Location], bool] = _steers_every_update,
 ) -> str:
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
     It reads a marker written as a comment, on the reference's own line or above it, and takes one the file names
     elsewhere from the updater that read it, in `marker`. `Logger.report_marker` reports that marker and decides what it
-    holds back. What that settles on reaches `update_line`, so a bound, an `allow` directive, and what the marker
-    gets wrong are still acted on (see `latest_version`).
+    holds back, where `steers_the_update` says the marker steers the update. What that settles on reaches
+    `update_line`, so a bound, an `allow` directive, and what the marker gets wrong are still acted on (see
+    `latest_version`).
     """
     marker = parse_marker(line) if marker is None else marker
     location = line.location
     dependency = matched_dependency(match, dependency)
-    reported = logger.report_marker(dependency, marker, location, steers_the_update=True)
+    reported = logger.report_marker(dependency, marker, location, steers_the_update=steers_the_update(match, location))
     return update_line(match, location, reported)
 
 
@@ -234,15 +246,16 @@ def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file 
     dependency: str = "",
     *,
     reference_marker: ReferenceMarker | None = None,
+    steers_the_update: Callable[[re.Match[str], Location], bool] = _steers_every_update,
 ) -> list[str]:
     """Return the lines with `update_line` applied to each line carrying a reference, honouring any marker.
 
     A line that carries no reference (no `regexp` match) is left untouched — a marker on it is for the line below. A
-    line that does carry one goes to the shared `apply_marker` gate together with `update_line`, which the gate reads
-    the marker for, logs, and either holds back or runs. `dependency` names the reference for a regexp that captures
-    none. `reference_marker` is the marker a file names for a reference of its own, carrying where that reference
-    sits. It limits the pass to that line and that column, so another match, on that line or elsewhere, is left as
-    it is.
+    line that does carry one goes to the shared `apply_marker` gate, which reads and logs its marker. The gate asks
+    `steers_the_update` whether that marker can hold the update back, and runs `update_line`. `dependency` names
+    the reference for a regexp that captures none. `reference_marker` is the marker a file names for a reference of
+    its own, carrying where that reference sits. It limits the pass to that line and that column, so another match,
+    on that line or elsewhere, is left as it is.
     """
     marker = None if reference_marker is None else reference_marker.marker
     # A start position is something only a compiled pattern takes, and `re.compile` hands back one it is given.
@@ -253,7 +266,10 @@ def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file 
         if match is None:
             result.append(line.text)  # No reference to update here; a marker on this line applies to the one below.
             continue
-        result.append(apply_marker(line, match, update_line, logger, dependency, marker=marker))
+        updated = apply_marker(
+            line, match, update_line, logger, dependency, marker=marker, steers_the_update=steers_the_update
+        )
+        result.append(updated)
     return result
 
 
@@ -290,8 +306,16 @@ def update_references_in_lines(
     if not lines:
         return []
     path = lines[0].location.path
-    update_line = _Rewriter(get_new_version, logger, dependency).update_line
+    rewriter = _Rewriter(get_new_version, logger, dependency)
     for regexp in regexps:
-        updated = updated_lines(lines, regexp, update_line, logger, dependency, reference_marker=reference_marker)
+        updated = updated_lines(
+            lines,
+            regexp,
+            rewriter.update_line,
+            logger,
+            dependency,
+            reference_marker=reference_marker,
+            steers_the_update=rewriter.steers_the_update,
+        )
         lines = located_lines(path, updated)
     return [line.text for line in lines]

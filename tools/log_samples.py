@@ -207,13 +207,14 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(unmanaged, "ignore[update]", Reason.UNMANAGED_FILE_LEFT)
     log.redundant_directive(unlocked, "set[cooldown=30]", Reason.NO_LOCK_FILE_LEFT)
     log.redundant_directive(member, "allow[update<5]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT)
+    variable = reference("redis", Location(Path("docker-compose.yml"), 7))
+    never_updated = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, Consequence.NEVER_UPDATED)
+    log.redundant_directive(variable, "allow[update<8]", never_updated)
+    log.redundant_directive(commit, "ignore[update]", Reason.NO_UPDATE_FOR_A_COMMIT)
     not_steered = capture.take()
 
     log.redundant_directive(managed, "set[cooldown=30]", Reason.COOLDOWN_PER_RUN)
     log.redundant_directive(commit, "set[cooldown=30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
-    variable = reference("redis", Location(Path("docker-compose.yml"), 7))
-    never_updated = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, Consequence.NEVER_UPDATED)
-    log.redundant_directive(variable, "set[cooldown=30]", never_updated)
     cooldowns = capture.take()
 
     drift = _redundant_hash_drift_opt_ins(log, capture, loose, commit)

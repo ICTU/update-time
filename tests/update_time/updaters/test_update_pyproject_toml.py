@@ -845,7 +845,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assert_invalid_bracket_item_logged("package", Location(PYPROJECT_TOML, 2), item)
                 # The item is reported as invalid, so the marker is neither echoed back nor obeyed as a hold-back.
                 self.assert_none_logged(message_of(Logger.recognised_marker), "recognised marker")
-                self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+                self.assert_no_ignored_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
         """Test updating a pyproject.toml with changelog."""
@@ -1300,7 +1300,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 left = self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents}, None)
                 self.assertEqual(dict(left), {PYPROJECT_TOML: contents})
                 self.assert_redundant_directive_logged(reason, "package", Location(PYPROJECT_TOML, 2), directive)
-                self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+                self.assert_no_ignored_logged()
 
     @kills(
         Mutation(
@@ -1325,7 +1325,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 left = self.files_after_update(run, get, glob, files, None, discovered=[_MEMBER])
                 self.assertEqual(dict(left), files)
                 self.assert_redundant_directive_logged(reason, "package", Location(_MEMBER, 2), directive)
-                self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+                self.assert_no_ignored_logged()
 
     @kills(
         Mutation(
@@ -1433,7 +1433,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 self.assert_redundant_directive_logged(
                     reason, dependency, Location(PYPROJECT_TOML, line), "ignore[update]"
                 )
-                self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+                self.assert_no_ignored_logged()
 
     @kills(
         Mutation(
@@ -1455,7 +1455,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         )
         message = message_of(Logger.pin_with_environment_marker_left_as_is)
         self.assert_logged(message, dependency="package", location=location)
-        self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+        self.assert_no_ignored_logged()
 
     def test_a_directive_takes_the_version_a_lock_of_the_file_as_written_records(
         self, run: Mock, get: Mock, glob: Mock

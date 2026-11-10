@@ -242,6 +242,43 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
                     directive,
                 )
 
+    def test_a_drift_opt_in_beside_a_hold_back_on_a_built_image_names_the_build(self):
+        """Test that `allow[hash-drift]` beside `ignore[update]` on a built image is redundant because of the build."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.3.0", DIGEST))
+        marker = "# update-time: ignore[update] allow[hash-drift]"
+        mock_manifest = mock_path(f"services:\n  api:\n    build: .\n    image: acme/api:1.2.3  {marker}\n")
+        self.run_compose_updater(mock_manifest)
+        mock_manifest.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.DIGEST_NEVER_CHECKED),
+            "acme/api",
+            Location(mock_manifest, 4),
+            "allow[hash-drift]",
+            among_others=True,
+        )
+
+    @kills(
+        Mutation(
+            references_resolve._warn_about_redundant_update_directives,
+            "if never_updated is None:\n        log.warn_if_redundant_bound(reference, marker)\n        return",
+            "log.warn_if_redundant_bound(reference, marker)\n    if never_updated is None:\n        return",
+            "a bound on an image never looked up is reported twice, once as never having an effect",
+        )
+    )
+    def test_a_bound_on_a_built_image_is_redundant_once_because_of_the_build(self):
+        """Test that a bound on a built image is reported once, naming the build, rather than judged at its version."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.3.0", DIGEST))
+        marker = "# update-time: allow[update>=1]"
+        mock_manifest = mock_path(f"services:\n  api:\n    build: .\n    image: acme/api:1.2.3  {marker}\n")
+        self.run_compose_updater(mock_manifest)
+        mock_manifest.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.NEVER_UPDATED),
+            "acme/api",
+            Location(mock_manifest, 4),
+            "allow[update>=1]",
+        )
+
     def test_helm_chart_that_does_not_parse_is_updated(self):
         """Test that a Helm chart whose YAML does not parse is updated, a Go-templated chart being no valid YAML."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))

@@ -558,7 +558,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     def assert_reported_as_held_elsewhere(self, location: Location, marker: Marker, directive: str) -> None:
         """Assert that guava's marker was recognised and reported as redundant, not as holding the update back."""
         self.assert_recognised_marker_logged(GUAVA, location, marker)
-        self.assert_none_logged(message_of(Logger.ignored), "update held back")
+        self.assert_no_ignored_logged()
         self.assert_redundant_directive_logged(Reason.VERSION_HELD_ELSEWHERE, GUAVA, location, directive)
 
     @contextlib.contextmanager
@@ -668,7 +668,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                 pom = self.find_marked_pom(mock_run, mock_glob, directives)
                 update_pom_xmls()
                 self.assert_recognised_marker_logged(GUAVA, Location(pom, 6), marker)
-                self.assert_none_logged(message_of(Logger.ignored), "update held back")
+                self.assert_no_ignored_logged()
 
     def test_a_redundant_bound_on_a_version_maven_updates_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bound that never has an effect or blocks every update is warned about."""
@@ -786,7 +786,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                 update_pom_xmls()
                 location = Location(pom, 9)
                 self.assert_recognised_marker_logged(SUREFIRE, location, Marker(ignored_scopes=Scope.UPDATE))
-                self.assert_none_logged(message_of(Logger.ignored), "update held back")
+                self.assert_no_ignored_logged()
                 self.assert_redundant_directive_logged(reason, SUREFIRE, location, "ignore[update]")
 
     def test_an_unreadable_item_is_warned_about_rather_than_recognised(self, mock_run: Mock, mock_glob: Mock):
