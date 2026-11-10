@@ -91,6 +91,7 @@ class _PackageManager:
     list_locked: Command
     config_get: Command
     prefix: Command | None
+    reads_workspaces_field: bool
     cooldown_config_keys: tuple[str, ...]
     cooldown_unset: str
     cooldown_option: Callable[[int], str]
@@ -243,6 +244,7 @@ _NPM = _PackageManager(
     # Inside a workspace member, `npm prefix` reports the workspace root. `npm config get` refuses to run inside the
     # member, and `npm update` reads the config of the workspace root.
     prefix=Command("npm", "prefix"),
+    reads_workspaces_field=True,  # npm takes the members of a workspace from the root package.json's `workspaces`.
     # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
     # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
     cooldown_config_keys=("min-release-age", "before"),
@@ -258,6 +260,8 @@ _PNPM = _PackageManager(
     list_locked=Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only"),
     config_get=Command("pnpm", "config", "get"),
     prefix=None,  # `pnpm config get` reads the workspace root's config inside a workspace member as well.
+    # pnpm takes the members of a workspace from pnpm-workspace.yaml, and creates that file from a `workspaces` field.
+    reads_workspaces_field=False,
     cooldown_config_keys=("minimumReleaseAge",),
     cooldown_unset="undefined",  # `pnpm config get` reports an unset key as `undefined` (not its built-in default).
     cooldown_option=lambda days: f"--config.minimumReleaseAge={days * _MINUTES_PER_DAY}",

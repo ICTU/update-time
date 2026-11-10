@@ -27,8 +27,8 @@ _LOG = get_logger("package.json")
 def update_package_jsons() -> None:
     """Find all package.json files, update each with its (supported) package manager, and check its dependencies.
 
-    The package manager runs only for a package.json that declares a dependency, since it writes a lockfile beside
-    any package.json it runs for.
+    The package manager runs only for a package.json that declares a dependency, or workspaces the manager reads, since
+    it writes a lockfile beside any package.json it runs for.
     """
     supported = []
     # npm rewrites the ranges of a workspace's members as it updates the root, so the root runs first and logs them:
@@ -39,7 +39,7 @@ def update_package_jsons() -> None:
         if (manager := node.SUPPORTED_MANAGERS.get(name := node.manager_name(file))) is None:
             _LOG.unsupported_package_manager(package_json, name, prose_list(node.SUPPORTED_MANAGERS))
             continue
-        if file.declares_a_dependency():
+        if file.declares_a_dependency() or (manager.reads_workspaces_field and file.declares_workspaces()):
             checked_package_json = manager.update_package_json(file)
         else:
             _LOG.no_dependencies(package_json, name, "install")

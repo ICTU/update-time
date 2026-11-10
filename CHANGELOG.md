@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Report an npm, pnpm, or Maven that is not on the path once per file, as for uv, rather than once per command. Closes [#523](https://github.com/ICTU/update-time/issues/523).
 - Report a pom whose versions plugin configuration overrides an option that Update-time sets or relies on, and report the markers in a pom that names rules of its own as redundant, rather than claiming to hold versions back that Maven then adopts. Closes [#492](https://github.com/ICTU/update-time/issues/492).
 - Report a GitHub Action or pre-commit hook referenced by a version tag alone, which Update-time pins to a newer version, as a new version with its changelog rather than as a pin. Closes [#516](https://github.com/ICTU/update-time/issues/516).
+- Run npm for the root of an npm workspace that does not declare dependencies of its own, so Update-time reports the new versions and rewritten ranges of every member. Closes [#517](https://github.com/ICTU/update-time/issues/517).
 
 ## 0.0.56 - 2026-11-07
 

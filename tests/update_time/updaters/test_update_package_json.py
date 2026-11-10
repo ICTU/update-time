@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.io.log import Logger
+from update_time.manifests import package_json as package_json_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import node as node_module
@@ -106,9 +107,12 @@ _MEMBERS = {"unscoped": ("a", "packages/a"), "scoped": ("@scope/b", "packages/b"
 
 
 # A workspace root's package.json, declaring its members under `packages/` and a dependency of its own.
-_WORKSPACE_ROOT_CONTENTS = (
+_WORKSPACE_ROOT_WITH_A_DEPENDENCY = (
     '{\n  "workspaces": ["packages/*"],\n  "dependencies": {\n    "is-number": "^7.0.0"\n  }\n}\n'
 )
+
+# A workspace root's package.json that declares its members under `packages/`, but does not declare a dependency.
+_WORKSPACE_ROOT_WITHOUT_DEPENDENCIES = '{\n  "workspaces": ["packages/*"]\n}\n'
 
 
 def _member_contents(name: str) -> str:
@@ -681,29 +685,49 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3)
                 )
 
+    @kills(
+        Mutation(
+            update_package_jsons,
+            "file.declares_a_dependency() or (manager.reads_workspaces_field and file.declares_workspaces())",
+            "file.declares_a_dependency()",
+            "npm does not run for a workspace root without dependencies, so the members' new versions go unreported",
+        )
+    )
     @_publishing_version_1_1
-    def test_new_version_of_a_workspace_member_dependency_the_root_updated_is_logged_at_the_member(
+    def test_new_version_of_each_member_dependency_the_root_updated_is_logged_at_the_member(
         self, mock_run: Mock, mock_glob: Mock
     ):
-        """Test that the new version of a member's dependency that npm moved when updating the root is logged."""
-        root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
-        for case, (name, directory) in _MEMBERS.items():
+        """Test that the new version of each member's dependency that npm moved when updating the root is logged."""
+        roots = {
+            "root with dependencies": _WORKSPACE_ROOT_WITH_A_DEPENDENCY,
+            "root without dependencies": _WORKSPACE_ROOT_WITHOUT_DEPENDENCIES,
+        }
+        for case, contents in roots.items():
             with self.subTest(case):
-                member = self.write_package_json(_member_contents(name), SCAN_ROOT / directory)
-                mock_glob.return_value = [root, member]
-                before = _npm_workspace_lock(_npm_member(name, directory, package="1.0"))
-                after = _npm_workspace_lock(_npm_member(name, directory, package="1.1"))
-                mock_run.side_effect = [
-                    *_npm_runs(before, Mock(stdout=""), after),
-                    *_npm_runs(after, Mock(stdout=""), after),
+                root = self.write_package_json(contents)
+                members = [
+                    self.write_package_json(_member_contents(name), SCAN_ROOT / directory)
+                    for name, directory in _MEMBERS.values()
                 ]
+                mock_glob.return_value = [root, *members]
+                before = _npm_workspace_lock(*(_npm_member(*member, package="1.0") for member in _MEMBERS.values()))
+                after = _npm_workspace_lock(*(_npm_member(*member, package="1.1") for member in _MEMBERS.values()))
+                unmoved = [run for _member in members for run in _npm_runs(after, Mock(stdout=""), after)]
+                mock_run.side_effect = [*_npm_runs(before, Mock(stdout=""), after), *unmoved]
                 update_package_jsons()
                 published = published_version("1.1", _PUBLICATION_TIME)
-                self.assert_new_version_logged("package", published, Location(member, 4))
+                new_version = message_of(Logger.new_version)
+                reports = [
+                    self.records_of(new_version, dependency="package", version=published, location=Location(member, 4))
+                    for member in members
+                ]
+                self.assertEqual([len(member_reports) for member_reports in reports], [1, 1])
+                self.assertEqual(len(self.new_version_records()), len(members))
+                self.assert_none_logged(message_of(Logger.no_dependencies), "skipped package manager")
 
     def test_workspace_root_is_updated_before_its_members(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm updates a workspace root before its members, whichever the glob finds first."""
-        root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
+        root = self.write_package_json(_WORKSPACE_ROOT_WITH_A_DEPENDENCY)
         member = self.write_package_json(_member_contents("a"), SCAN_ROOT / "packages/a")
         mock_glob.return_value = [member, root]
         mock_run.side_effect = [*_npm_runs(*_npm_no_update()), *_npm_runs(*_npm_no_update())]
@@ -717,7 +741,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self, mock_run: Mock, mock_glob: Mock
     ):
         """Test that a member's range npm rewrote when updating the root is logged at the member's package.json."""
-        root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
+        root = self.write_package_json(_WORKSPACE_ROOT_WITH_A_DEPENDENCY)
         name, directory = _MEMBERS["unscoped"]
         original = _member_contents(name)
         member = self.write_package_json(original, SCAN_ROOT / directory)
@@ -753,7 +777,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     Mock(stdout=""),
                     _npm_workspace_lock(_npm_member("a", "packages/a", package="1.1")),
                 )
-                self.files.replace_all({root: _WORKSPACE_ROOT_CONTENTS, **member_files})
+                self.files.replace_all({root: _WORKSPACE_ROOT_WITH_A_DEPENDENCY, **member_files})
                 update_package_jsons()
                 self.assert_unreadable_package_json_warned(member, error)
                 published = published_version("1.1", _PUBLICATION_TIME)
@@ -761,7 +785,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     def test_unmoved_versions_of_workspace_members_not_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that members without dependencies, new to the lock, or with an unreadable package.json log nothing."""
-        mock_glob.return_value = [self.write_package_json(_WORKSPACE_ROOT_CONTENTS)]
+        mock_glob.return_value = [self.write_package_json(_WORKSPACE_ROOT_WITH_A_DEPENDENCY)]
         without_dependencies = _npm_member("a", "packages/a")
         unreadable = _npm_member("c", "packages/c", package="1.0")
         new = _npm_member("d", "packages/d", package="1.1")
@@ -944,8 +968,22 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
 class SkipPackageJsonWithoutDependenciesTest(ExecutablesOnPathTestCase):
     """Unit tests for a package.json that declares nothing for its package manager to update."""
 
+    @kills(
+        Mutation(
+            update_package_jsons,
+            "(manager.reads_workspaces_field and file.declares_workspaces())",
+            "file.declares_workspaces()",
+            "pnpm runs for a package.json declaring workspaces, and creates a pnpm-workspace.yaml from them",
+        ),
+        Mutation(
+            package_json_module.PackageJson.declares_workspaces,
+            'bool(self.contents.get("workspaces"))',
+            '"workspaces" in self.contents',
+            "npm runs for a package.json declaring an empty list of workspaces, and writes a lock beside it",
+        ),
+    )
     def test_package_manager_not_run(self, mock_run: Mock, mock_glob: Mock):
-        """Test that npm and pnpm, both off the path, are skipped for a package.json declaring nothing, saying why."""
+        """Test that npm and pnpm, both off the path, skip a package.json declaring nothing they install, saying why."""
         self.leave_off_the_path("npm", "pnpm")
         cases = {
             "fields other than dependencies": (
@@ -953,7 +991,12 @@ class SkipPackageJsonWithoutDependenciesTest(ExecutablesOnPathTestCase):
                 "npm",
             ),
             "empty sections": ('{"dependencies": {}, "devDependencies": {}}', "npm"),
+            "empty workspaces": ('{"workspaces": []}', "npm"),
             "a pnpm-managed file": ('{"packageManager": "pnpm@9.15.0"}', "pnpm"),
+            "a pnpm-managed file declaring workspaces": (
+                '{"packageManager": "pnpm@9.15.0", "workspaces": ["a"]}',
+                "pnpm",
+            ),
         }
         mock_run.return_value = Mock(stdout="", stderr="")
         for case, (contents, manager) in cases.items():

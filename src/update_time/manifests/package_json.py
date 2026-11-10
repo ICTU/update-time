@@ -124,6 +124,10 @@ class PackageJson(json_format.JsonFile):
         """Return whether the package.json declares a dependency for npm and pnpm to install."""
         return any(self.contents.get(section) for section in _INSTALLED_SECTIONS)
 
+    def declares_workspaces(self) -> bool:
+        """Return whether the package.json declares the members of a workspace."""
+        return bool(self.contents.get("workspaces"))
+
     def declarations(self) -> Iterator[Declaration]:
         """Yield a declaration for each entry of the dependency sections, at the exact version it pins if any.
 
