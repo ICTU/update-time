@@ -1080,6 +1080,13 @@ class Logger:
         """Log that the package manager does not run for a file that declares nothing for it to install or resolve."""
         return self._file_fields(path, manager=manager, verb=verb)
 
+    @_debug(
+        "Not running %(manager)s for %(location)s: it does not have a lock file, and %(manager)s would write %(lock)s"
+    )
+    def no_lock_file(self, path: Path, manager: str, lock: Path) -> dict[str, object]:
+        """Log that the package manager does not run for a file without a lock, since it would write one."""
+        return self._file_fields(path, manager=manager, lock=Location(lock))
+
     @_debug("Not running uv for %(location)s: it does not have a %(table)s table, and %(lock)s does not exist")
     def not_a_uv_project(self, path: Path, lock: Path) -> dict[str, object]:
         """Log that uv does not run for a pyproject.toml that uv does not manage."""

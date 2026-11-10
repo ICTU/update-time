@@ -2,7 +2,7 @@
 
 import os
 import posixpath
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -91,6 +91,8 @@ class _PackageManager:
     list_locked: Command
     config_get: Command
     prefix: Command | None
+    lock_files: tuple[str, ...]
+    workspace_file: str | None
     reads_workspaces_field: bool
     cooldown_config_keys: tuple[str, ...]
     cooldown_unset: str
@@ -98,13 +100,24 @@ class _PackageManager:
     locked_versions: Callable[[dict | list], dict[PurePosixPath, dict[DependencyName, VersionString]]]
 
     def _workspace_root(self, directory: Path) -> Path:
-        """Return the root of the workspace the project in the directory belongs to, or else the directory itself.
+        """Return the workspace root the manager reports for the project in the directory, or else the directory itself.
 
         The manager reads its config in the workspace root, and its list command reports projects relative to it.
         """
         if self.prefix is not None and (reported := run(self.prefix, cwd=directory).stdout.strip()):
             return Path(reported)
         return directory
+
+    def _lock_root(self, directory: Path, workspace_root: Path) -> Path:
+        """Return the root of the workspace whose lock file locks the project in the directory.
+
+        npm reports that root. pnpm marks it with its workspace file instead, and locks a project outside a workspace in
+        the project's own directory.
+        """
+        if self.workspace_file is None:
+            return workspace_root
+        roots = (ancestor for ancestor in (directory, *directory.parents) if (ancestor / self.workspace_file).exists())
+        return next(roots, directory)
 
     def _cooldown_options(self, directory: Path) -> list[str]:
         """Return the option that applies Update-time's cooldown, or nothing if the project configures its own.
@@ -122,18 +135,23 @@ class _PackageManager:
         """Return the top-level versions the lock file in the directory records, per project."""
         return self.locked_versions(run(self.list_locked, directory).json)
 
-    def update_package_json(self, package_json: PackageJson) -> PackageJson | None:
+    def update_package_json(self, package_json: PackageJson) -> CheckedPackageJson | None:
         """Update the package.json and its lockfile using this package manager, and log what it moved and rewrote.
 
         The update moves the dependencies of the package.json's project, and those of the workspace members below.
-        Without the package manager on the path, the package.json gets an error and stays as it is.
+        Without the package manager on the path, the package.json gets an error and stays as it is. Without a lock file
+        beside the workspace root, it stays as it is too, since the update would write one.
         """
         path = package_json.path
         if not is_installed(executable := self.update.executable):
             _LOG.package_manager_not_on_path(path, executable)
-            return package_json
+            return CheckedPackageJson(package_json, MARKER_POLICY)
         directory = path.parent
         workspace_root = self._workspace_root(directory)
+        lock_root = self._lock_root(directory, workspace_root)
+        if not any((lock_root / name).exists() for name in self.lock_files):
+            _LOG.no_lock_file(path, self.name, lock_root / self.lock_files[0])
+            return CheckedPackageJson(package_json, _NO_LOCK_FILE_POLICY)
         project = PurePosixPath(os.path.relpath(directory.resolve(), workspace_root.resolve()))
         cooldown = self._cooldown_options(workspace_root)
         listed_before = self._locked_in(directory)
@@ -149,7 +167,8 @@ class _PackageManager:
         for update in updates:
             update.log_moved_versions(self.name)
             update.log_range_rewrites(self.name)
-        return updates[0].after  # The package.json of the project in the directory, as the update left it
+        after = updates[0].after  # The package.json of the project in the directory, as the update left it
+        return None if after is None else CheckedPackageJson(after, MARKER_POLICY)
 
 
 def _is_below(listed: PurePosixPath, project: PurePosixPath) -> bool:
@@ -244,6 +263,8 @@ _NPM = _PackageManager(
     # Inside a workspace member, `npm prefix` reports the workspace root. `npm config get` refuses to run inside the
     # member, and `npm update` reads the config of the workspace root.
     prefix=Command("npm", "prefix"),
+    lock_files=("package-lock.json", "npm-shrinkwrap.json"),  # The first is the one npm writes where neither exists.
+    workspace_file=None,
     reads_workspaces_field=True,  # npm takes the members of a workspace from the root package.json's `workspaces`.
     # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
     # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
@@ -260,6 +281,8 @@ _PNPM = _PackageManager(
     list_locked=Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only"),
     config_get=Command("pnpm", "config", "get"),
     prefix=None,  # `pnpm config get` reads the workspace root's config inside a workspace member as well.
+    lock_files=("pnpm-lock.yaml",),
+    workspace_file="pnpm-workspace.yaml",
     # pnpm takes the members of a workspace from pnpm-workspace.yaml, and creates that file from a `workspaces` field.
     reads_workspaces_field=False,
     cooldown_config_keys=("minimumReleaseAge",),
@@ -291,6 +314,23 @@ MARKER_POLICY = ManagerPolicy(
     cooldown_redundancy=Reason.COOLDOWN_PER_RUN,
     unchecked_scopes=_unchecked_scopes,
 )
+
+# The policy for the markers of a package.json whose project does not have a lock file. Update-time leaves its
+# dependencies as the file declares them, so an `ignore[update]`, a bound, and a cooldown each decide nothing.
+_NO_LOCK_FILE_POLICY = replace(
+    MARKER_POLICY,
+    hold_back_redundancy=lambda _declaration: Reason.NO_LOCK_FILE_LEFT,
+    bound_redundancy=lambda _declaration: Reason.NO_LOCK_FILE_KEPT,
+    cooldown_redundancy=Reason.NO_LOCK_FILE_LEFT,
+)
+
+
+@dataclass(frozen=True)
+class CheckedPackageJson:
+    """A package.json to check, as its package manager left it, with the policy its markers are judged by."""
+
+    package_json: PackageJson
+    policy: ManagerPolicy[Declaration]
 
 
 def manager_name(package_json: PackageJson) -> str:
