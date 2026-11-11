@@ -236,7 +236,8 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.requests.assert_not_called()
         reason = ImageNotLookedUp.ARGUMENT_SHARED_WITH_ANOTHER_FROM_LINE
         self.assert_image_not_looked_up_logged("python", "3.14", Location(mock_dockerfile, 2), reason)
-        self.assert_ignored_logged("python", Location(mock_dockerfile, 4))
+        self.assert_ignored_logged("python", Location(mock_dockerfile, 4), among_others=True)
+        self.assert_no_warnings_logged()
         self.assert_no_new_version_logged()
 
     @kills(

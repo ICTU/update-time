@@ -117,7 +117,6 @@ An external command, as the sequence of words a shell would run.
 An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
 An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both.
 An unpinned reference has no pinned digest to drift from.
-An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
 Assert that a floating tag pinned to no version was reported, with its reason, among the other records.
 Assert that a repository GitHub declares archived was warned about, GitHub publishing no reason.
 Assert that of the two constants a module assigns, only the one the reader leaves alone is reported.
@@ -196,7 +195,6 @@ Reproducible builds commonly zero that annotation (`SOURCE_DATE_EPOCH`), so it i
 Return a GitHub contents listing entry for the name, one with no file to fetch when it is a directory.
 Return a message for each dependency type with no section of its own, and each section documenting none.
 Return a message for each internal link that points at an anchor no heading in the document provides.
-Return a mock reference resolver answering with the resolved references, claiming no source capability.
 Return each test the run reported as failing, once, in the order reported.
 Return every `Location(...)` the sample generators build.
 Return every dependency the file declares, each parsed once and located and marked at the line declaring it.
@@ -385,7 +383,6 @@ The Node engine version in the `package.json`: the `node` entry its `engines` se
 The OCI protocol exposes no publish date.
 The `# update-time:` marker language: what a marker says, and what each directive it carries steers.
 The `++` and the `[^"]*` match each pair without giving characters back.
-The `DEBUG` line then names the image alone, since the reference has no tag to name.
 The `changelog` directory answers a text naming no version, rather than raising, so a request for it fails the assertion below rather than the whole test.
 The `cvss` package ships no type information, scores a v3 vector as a `Decimal` where it scores a v4 one as a float, and types the score as optional because construction sets it after initialising it to None.
 The `item` is the text its creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.

@@ -18,8 +18,9 @@ from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageN
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
+from update_time.markers.marker import Marker
 from update_time.primitives.location import Location
-from update_time.references import rewrite
+from update_time.references import resolve, rewrite
 from update_time.sources import docker_hub, oci
 
 from tests.helpers import mock_path, mock_response
@@ -714,12 +715,31 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         }
         self.assert_left_alone_as_through_a_variable(cases, self.run_updater)
 
-    def test_stale_and_cooldown_markers_on_a_reference_through_a_variable_are_redundant_because_of_it(self) -> None:
-        """Test that a `stale` or `cooldown` marker on a reference through a variable is reported as redundant."""
+    @kills(
+        Mutation(
+            resolve._warn_about_redundant_update_directives,
+            "(marker.hold_back_directive, marker.version_bound_directive)",
+            "(marker.version_bound_directive,)",
+            "an `ignore[update]` on an image never looked up is not reported, though it holds nothing back",
+        ),
+        Mutation(
+            resolve.latest_version,
+            "held_back = marker.ignores(Scope.UPDATE) and never_updated is None",
+            "held_back = marker.ignores(Scope.UPDATE)",
+            "an `ignore[update]` on an image never looked up hides why the image is left as it is",
+        ),
+    )
+    def test_markers_on_a_reference_through_a_variable_are_redundant_because_of_it(self) -> None:
+        """Test that a staleness threshold, cooldown, bound, or `ignore[update]` on the reference is redundant.
+
+        None of them holds anything back: the reference is reported as left alone, as it is without a marker.
+        """
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         cases = {
             "set[stale-after=90]": Consequence.STALENESS_NEVER_CHECKED,
             "set[cooldown=30]": Consequence.NEVER_UPDATED,
+            "allow[update<5]": Consequence.NEVER_UPDATED,
+            "ignore[update]": Consequence.NEVER_UPDATED,
         }
         for directive, consequence in cases.items():
             with self.subTest(directive=directive):
@@ -728,6 +748,28 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
                 mock_file.write_text.assert_not_called()
                 reason = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, consequence)
                 self.assert_redundant_directive_logged(reason, "app", Location(mock_file, 2), directive)
+                self.assert_no_ignored_logged()
+                through_a_variable = ImageNotLookedUp.THROUGH_A_VARIABLE
+                self.assert_image_not_looked_up_logged("app", "${TAG}", Location(mock_file, 2), through_a_variable)
+
+    @kills(
+        Mutation(
+            Marker.hold_back_directive,
+            'return "" if self.invalid_item is not None else self.scope_directive(Scope.UPDATE)',
+            "return self.scope_directive(Scope.UPDATE)",
+            "an unreadable item adds an `ignore[update]`, which is reported as redundant though nobody wrote it",
+        )
+    )
+    def test_an_unreadable_item_on_a_reference_through_a_variable_holds_nothing_back(self) -> None:
+        """Test that an unreadable item on the reference is its only warning, which leaves out that it stays unchanged.
+
+        Nobody wrote the `ignore[update]` that the item adds, so Update-time does not report it as redundant.
+        """
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
+        mock_file = mock_path(self.marker_line("ignore[stlae]") + self.reference("app:${TAG}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assert_invalid_bracket_item_logged("app", Location(mock_file, 2), "stlae", holding_back=False)
 
     def test_reference_through_syntax_not_read_as_a_variable_is_left_alone(self) -> None:
         """Test that a tag ending in syntax Update-time does not read as a variable, `$(VARIANT)`, is not queried."""

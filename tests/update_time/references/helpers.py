@@ -27,16 +27,27 @@ def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGette
     return lambda *_args, **_kwargs: DependencyVersion(version=version, sha=sha)
 
 
-def mock_project_getter() -> Mock:
-    """Return a mock project getter that does not claim a source capability, as an unregistered getter does not.
+def _mock_callable(answer: object) -> Mock:
+    """Return a mock callable answering with the answer, which records nothing a function does not.
 
     A bare `Mock` grows any attribute it is asked for, so it would claim every capability a caller reads off a
-    getter (see `primitives.capability`). Specifying it against a callable keeps it callable and lets those reads
-    answer as they do for a source that registers nothing, which the resolver below is specified for too.
+    getter (see `primitives.capability`), and say why it does not look an image up (see `domain.image_lookup`).
+    Specifying it against a callable keeps it callable and lets those reads answer as they do for a function that
+    records nothing.
     """
-    return Mock(spec=Callable, return_value=Project())
+    return Mock(spec=Callable, return_value=answer)
+
+
+def mock_new_version_getter(release: DependencyVersion) -> Mock:
+    """Return a mock new-version-getter answering with the release (see `_mock_callable`)."""
+    return _mock_callable(release)
+
+
+def mock_project_getter() -> Mock:
+    """Return a mock project getter answering with an empty project (see `_mock_callable`)."""
+    return _mock_callable(Project())
 
 
 def mock_reference_resolver(*resolved: ResolvedReference) -> Mock:
-    """Return a mock reference resolver answering with the resolved references, claiming no source capability."""
-    return Mock(spec=Callable, return_value=list(resolved))
+    """Return a mock reference resolver answering with the resolved references (see `_mock_callable`)."""
+    return _mock_callable(list(resolved))

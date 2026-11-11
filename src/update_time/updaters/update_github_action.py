@@ -45,7 +45,13 @@ def update_github_actions() -> None:
 
     The vulnerability check runs on the lines the rewrite produced, so it checks the version the run settled on.
     """
-    pin_the_references = partial(updated_lines, regexp=ACTION_REFERENCE, update_line=_ACTION.update_line, logger=_LOG)
+    pin_the_references = partial(
+        updated_lines,
+        regexp=ACTION_REFERENCE,
+        update_line=_ACTION.update_line,
+        logger=_LOG,
+        steers_the_update=_ACTION.steers_the_update,
+    )
     for yaml_file in glob_for(GITHUB_WORKFLOWS):
         lines = rewrite_file(yaml_file, pin_the_references, _LOG)
         warn_about_vulnerable_dependencies([_versioned_actions(lines)], Ecosystem.GITHUB_ACTIONS, _LOG)

@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Leave a `package.json` whose project does not have a lock file as it is, rather than letting npm or pnpm write one, and still check its dependencies. Report the markers that steer its update as redundant because Update-time leaves it as it is, rather than because npm or pnpm resolves the version. Closes [#524](https://github.com/ICTU/update-time/issues/524).
 - Leave a `pyproject.toml` or `package.json` whose workspace root lies outside the scan root as it is, rather than writing files outside the scan, and still check its dependencies. Report the markers that steer its update as redundant because Update-time leaves it as it is. Log a path above the scan root relative to it, such as `../pyproject.toml`. Closes [#527](https://github.com/ICTU/update-time/issues/527).
 - Warn about an item Update-time cannot read without saying that it leaves the reference unchanged where an `ignore[update]` holds nothing back, such as on a `package.json` dependency. Closes [#530](https://github.com/ICTU/update-time/issues/530).
+- Report an `ignore[update]` and a bound on an image Update-time does not look up, such as one a Compose file builds, and an `ignore[update]` on a GitHub Action or pre-commit hook pinned to a bare commit SHA, as redundant, rather than logging that the marker holds the update back. Warn about an item Update-time cannot read on such a reference without saying that it leaves the reference unchanged.
 
 ## 0.0.56 - 2026-11-07
 

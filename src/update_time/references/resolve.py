@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.archival import reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.dependency import DependencyName, DependencyVersion
-from update_time.domain.image_lookup import why_image_not_looked_up
+from update_time.domain.image_lookup import why_image_not_looked_up, why_never_updated
 from update_time.domain.staleness import STALE_AFTER, release_judged_alike, stale_release, staleness_is_checked
 from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import DIRECTIVES, Consequence, ImageNotLookedUpReason, Reason
@@ -22,7 +22,7 @@ from update_time.markers.reference import SteeredResolvedReference
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
-    from update_time.domain.dependency import ProjectGetter
+    from update_time.domain.dependency import ImageNotLookedUp, ProjectGetter
     from update_time.domain.reference import Reference
     from update_time.io.log import Logger
     from update_time.markers.directive import RedundancyReason
@@ -39,6 +39,18 @@ def report_directives_the_source_cannot_apply(
             get_new_version, reference.pinned
         ):
             log.redundant_directive(reference, written, directive.reason_given(image_not_looked_up))
+
+
+def _warn_about_redundant_update_directives(
+    reference: Reference, never_updated: ImageNotLookedUp | None, marker: Marker, log: Logger
+) -> None:
+    """Warn about the marker's bound and `ignore[update]` where they decide nothing, as on an image never updated."""
+    if never_updated is None:
+        log.warn_if_redundant_bound(reference, marker)
+        return
+    reason = ImageNotLookedUpReason(never_updated, Consequence.NEVER_UPDATED)
+    for directive in filter(None, (marker.hold_back_directive, marker.version_bound_directive)):
+        log.redundant_directive(reference, directive, reason)
 
 
 def _why_the_pin_never_floats(latest: DependencyVersion) -> RedundancyReason | None:
@@ -70,7 +82,8 @@ def latest_version(
     log: Logger,
 ) -> DependencyVersion | None:
     """Return the latest version to update the reference to, or None when the marker holds the update back."""
-    log.warn_if_redundant_bound(reference, marker)
+    never_updated = why_never_updated(get_new_version, reference.pinned)
+    _warn_about_redundant_update_directives(reference, never_updated, marker, log)
     report_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
     version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
     days = cooldown_days(marker)
@@ -81,7 +94,8 @@ def latest_version(
     report_project(resolved, log)
     log.report_yank(resolved, marker)
     _warn_if_the_floating_pin_is_redundant(marker, reference, log, latest)
-    return None if marker.ignores(Scope.UPDATE) else latest
+    held_back = marker.ignores(Scope.UPDATE) and never_updated is None
+    return None if held_back else latest
 
 
 def project_is_checked(source: object, dependency: DependencyName, marker: Marker) -> bool:

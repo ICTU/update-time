@@ -191,6 +191,15 @@ class Marker:
         return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
 
     @property
+    def hold_back_directive(self) -> str:
+        """Return the `ignore[update]` written in the marker, or nothing where none is or an item is unreadable.
+
+        An unreadable item adds an `ignore[update]` to the directives Update-time acts on (see `effective_directives`),
+        so there a written one cannot be told from the one the item adds.
+        """
+        return "" if self.invalid_item is not None else self.scope_directive(Scope.UPDATE)
+
+    @property
     def bound_directive(self) -> str:
         """Return the directive bounding the update, as the language spells it, or nothing when the marker sets none.
 

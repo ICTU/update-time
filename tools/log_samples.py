@@ -94,11 +94,6 @@ def _redundant_directives(
     log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high", "low")
     redundant_vulnerable_level = capture.take()
 
-    log.redundant_directive(
-        reference("python", dockerfile), "set[vulnerability-level=none]", Reason.NO_VULNERABILITY_REPORTS
-    )
-    redundant_vulnerable_source = capture.take()
-
     log.redundant_directive(reference("python", dockerfile), "ignore[yanked]", Reason.NO_YANK_CONCEPT)
     redundant_yank_scope = capture.take()
 
@@ -106,9 +101,6 @@ def _redundant_directives(
         reference("humanize", requirements), "ignore[yanked]", Reason.NO_VERSION_TO_CHECK_FOR_A_YANK
     )
     redundant_yank_without_a_version = capture.take()
-
-    log.redundant_directive(reference("python", dockerfile), "ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL)
-    redundant_archived_scope = capture.take()
 
     commons_lang = reference("org.apache.commons:commons-lang3", Location(Path("pom.xml"), 12))
     log.redundant_directive(commons_lang, "ignore[archived]", Reason.NO_GITHUB_REPOSITORY)
@@ -122,16 +114,6 @@ def _redundant_directives(
         reference("humanize", requirements),
         "set[vulnerability-level=none]",
         Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
-    )
-    log.redundant_directive(
-        reference("nl.example:internal-lib", Location(Path("pom.xml"), 12)),
-        "set[vulnerability-level=none]",
-        Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
-    )
-    log.redundant_directive(
-        reference("actions/checkout", Location(Path(".github/workflows/ci.yml"), 17)),
-        "set[vulnerability-level=none]",
-        Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
     )
     redundant_vulnerable_without_a_version = capture.take()
 
@@ -172,10 +154,8 @@ def _redundant_directives(
     return {
         "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
         "@@REDUNDANT_VULNERABLE_LEVEL_WARNING@@": redundant_vulnerable_level,
-        "@@REDUNDANT_VULNERABLE_SOURCE_WARNING@@": redundant_vulnerable_source,
         "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
-        "@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@": redundant_archived_scope,
         "@@REDUNDANT_ARCHIVED_WITHOUT_A_GITHUB_REPOSITORY_WARNING@@": redundant_archived_without_a_github_repository,
         "@@REDUNDANT_UNSERVED_MAVEN_ARTEFACT_WARNING@@": redundant_unserved_maven_artefact,
         "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNINGS@@": redundant_vulnerable_without_a_version,
@@ -219,47 +199,42 @@ def _redundant_for_the_dependency_type(
     branch = reference("actions/setup-python", Location(Path(".github/workflows/ci.yml"), 18))
     held_elsewhere = reference("commons-io:commons-io", Location(Path("child/pom.xml"), 5))
     plugin = reference("org.apache.maven.plugins:maven-surefire-plugin", Location(Path("pom.xml"), 30))
-    log.redundant_directive(managed, "set[cooldown=30]", Reason.COOLDOWN_PER_RUN)
-    log.redundant_directive(unmanaged, "set[cooldown=30]", Reason.UNMANAGED_FILE_LEFT)
-    log.redundant_directive(unlocked, "set[cooldown=30]", Reason.NO_LOCK_FILE_LEFT)
-    log.redundant_directive(member, "set[cooldown=30]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT)
-    log.redundant_directive(loose, "set[cooldown=30]", Reason.NO_VERSION_TO_UPDATE)
-    log.redundant_directive(commit, "set[cooldown=30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
+    under_rules = reference("com.google.guava:guava", Location(Path("pom.xml"), 6))
+    log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(held_elsewhere, "set[cooldown=30]", Reason.VERSION_HELD_ELSEWHERE)
+    log.redundant_directive(plugin, "allow[update<4]", Reason.PLUGIN_NOT_UPDATED)
+    log.redundant_directive(under_rules, "ignore[update]", Reason.RULES_OF_THE_POM)
+    log.redundant_directive(unmanaged, "ignore[update]", Reason.UNMANAGED_FILE_LEFT)
+    log.redundant_directive(unlocked, "set[cooldown=30]", Reason.NO_LOCK_FILE_LEFT)
+    log.redundant_directive(member, "allow[update<5]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT)
     variable = reference("redis", Location(Path("docker-compose.yml"), 7))
     never_updated = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, Consequence.NEVER_UPDATED)
-    log.redundant_directive(variable, "set[cooldown=30]", never_updated)
+    log.redundant_directive(variable, "allow[update<8]", never_updated)
+    log.redundant_directive(commit, "ignore[update]", Reason.NO_UPDATE_FOR_A_COMMIT)
+    not_steered = capture.take()
+
+    log.redundant_directive(managed, "set[cooldown=30]", Reason.COOLDOWN_PER_RUN)
+    log.redundant_directive(commit, "set[cooldown=30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
     cooldowns = capture.take()
 
     drift = _redundant_hash_drift_opt_ins(log, capture, loose, commit)
 
     script = reference("humanize", Location(Path("tool.py"), 4))
     log.redundant_directive(script, "allow[update<5]", Reason.BOUND_DECIDES_NOTHING)
-    log.redundant_directive(script, "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION)
     build_requirement = reference("hatchling", Location(Path("pyproject.toml"), 3))
     log.redundant_directive(build_requirement, "allow[update<2]", Reason.BUILD_REQUIREMENT_NOT_LOCKED)
-    log.redundant_directive(build_requirement, "ignore[update]", Reason.BUILD_REQUIREMENT_KEPT)
     url = reference("internal-lib", Location(Path("pyproject.toml"), 9))
     log.redundant_directive(url, "allow[update<2]", Reason.URL_RATHER_THAN_VERSION)
     log.redundant_directive(managed, "allow[update<5]", Reason.ENVIRONMENT_MARKER_PIN_KEPT)
-    log.redundant_directive(managed, "ignore[update]", Reason.ENVIRONMENT_MARKER_PIN_LEFT)
-    log.redundant_directive(unmanaged, "allow[update<5]", Reason.UNMANAGED_FILE_KEPT)
-    log.redundant_directive(unmanaged, "ignore[update]", Reason.UNMANAGED_FILE_LEFT)
-    log.redundant_directive(unlocked, "allow[update<2]", Reason.NO_LOCK_FILE_KEPT)
-    log.redundant_directive(unlocked, "ignore[update]", Reason.NO_LOCK_FILE_LEFT)
-    log.redundant_directive(member, "allow[update<5]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT)
-    log.redundant_directive(member, "ignore[update]", Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT)
     log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_ON_A_HELD_BACK_UPDATE)
-    log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "allow[update<5]", Reason.PINS_A_COMMIT)
     log.redundant_directive(branch, "allow[update<6]", Reason.FOLLOWS_A_BRANCH)
-    log.redundant_directive(held_elsewhere, "ignore[major-update]", Reason.VERSION_HELD_ELSEWHERE)
-    log.redundant_directive(plugin, "allow[update<4]", Reason.PLUGIN_NOT_UPDATED)
     bounds = capture.take()
 
     log.redundant_directive(managed, "ignore[major-update]", Reason.NO_LOCKED_VERSION)
     log.redundant_directive(managed, "ignore[update]", Reason.SEVERAL_LOCKED_VERSIONS)
     return {
+        "@@REDUNDANT_UPDATE_DIRECTIVE_WARNINGS@@": not_steered,
         "@@REDUNDANT_COOLDOWN_WARNINGS@@": cooldowns,
         "@@REDUNDANT_HASH_DRIFT_WARNINGS@@": drift,
         "@@REDUNDANT_BOUND_WARNINGS@@": bounds,
@@ -311,27 +286,14 @@ def _unreadable_reactors(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log a sample per error about a reactor Maven cannot read, paired with the block's placeholder."""
     log.unreadable_reactor_since_update(Path(), Path("dubbo-dependencies-bom/pom.xml"), 50)
     log.unreadable_reactor_as_found(Path(), 118)
-    with_a_cause = capture.take()
-
-    log.unreadable_reactor(Path(), 50)
-    without_a_cause = capture.take()
-
     log.unparsable_reactor(Path(), Path("sub/pom.xml"), 118)
-    return {
-        "@@UNREADABLE_REACTORS@@": with_a_cause,
-        "@@UNREADABLE_REACTOR_WITHOUT_A_CAUSE@@": without_a_cause,
-        "@@UNPARSABLE_REACTOR@@": capture.take(),
-    }
+    return {"@@UNREADABLE_REACTORS@@": capture.take()}
 
 
 def _references_left_alone(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
-    """Log a reference of each kind left alone: whose image is not looked up, or whose repository is not served."""
+    """Log references left alone: some whose image is not looked up, and one whose repository is not served."""
     compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
     log.image_not_looked_up(compose, ImageNotLookedUp.BUILT_IMAGE)
-    machine = reference("ubuntu-2204", Location(Path(".circleci/config.yml"), 4), "2024.01.1")
-    log.image_not_looked_up(machine, ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE)
-    log.image_not_looked_up(reference("scratch", Location(Path("Dockerfile"), 1)), ImageNotLookedUp.EMPTY_BASE_IMAGE)
-    log.image_not_looked_up(reference("deps", dockerfile), ImageNotLookedUp.BUILD_STAGE)
     variable = reference("redis", Location(Path("docker-compose.yml"), 7), "7.2-${VARIANT}")
     log.image_not_looked_up(variable, ImageNotLookedUp.THROUGH_A_VARIABLE)
     log.image_not_looked_up(reference("python", dockerfile, "3.14"), ImageNotLookedUp.VERSION_ACROSS_LINES)
@@ -353,21 +315,12 @@ def _build_argument_samples(log: Logger, capture: _Capture, dockerfile: Location
 
 
 def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
-    """Log one floating tag for each reason Update-time leaves it unpinned, and return the lines they render as."""
+    """Log a floating tag left unpinned without a version tag, and one left unpinned without a manifest."""
     compose = Location(Path("docker-compose.yml"), 7)
     log.unpinned_floating_tag(
         reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
     )
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "nightly"), DependencyVersion("nightly"), FloatingPin.NOT_LISTED
-    )
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "canary"), DependencyVersion("canary"), FloatingPin.NOT_AMONG_EXAMINED
-    )
     ghcr = Location(Path("Dockerfile"), 1)
-    log.unpinned_floating_tag(
-        reference("ghcr.io/acme/api", ghcr, "latest"), DependencyVersion("latest"), FloatingPin.NO_VERSION_TAG_EXAMINED
-    )
     log.unpinned_floating_tag(
         reference("ghcr.io/acme/api", ghcr, "edge"), DependencyVersion("edge"), FloatingPin.NO_MANIFEST
     )
@@ -500,7 +453,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
         "@@PINNED_INTEGRITY_HASH@@": pinned_integrity_hash,
         **maven_runs,
-        **_property_moved_for_other_artefacts(log, capture),
         **_versions_plugin_overridden(log, capture),
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
@@ -688,24 +640,15 @@ def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
 
 
 def _versions_plugin_overridden(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a pom's versions plugin configuration wins over Update-time, and markers that then steer nothing."""
+    """Log that a pom's versions plugin configuration wins over Update-time, and an unreadable item it then reports."""
     pom = Path("pom.xml")
     log.option_overridden_by_the_pom(pom, "rulesUri", OverrideConsequence.RULES, "org.example:parent:1.0", 12)
     overridden = capture.take()
-    guava = "com.google.guava:guava"
-    log.redundant_directive(reference(guava, Location(pom, 6)), "ignore[update]", Reason.RULES_OF_THE_POM)
-    log.invalid_bracket_item_holding_nothing_back(guava, "stlae", Location(pom, 9))
+    log.invalid_bracket_item_holding_nothing_back("com.google.guava:guava", "stlae", Location(pom, 9))
     return {
         "@@OPTION_OVERRIDDEN_BY_THE_POM@@": overridden,
-        "@@REDUNDANT_UNDER_RULES_OF_THE_POM_WARNING@@": capture.take(),
+        "@@INVALID_ITEM_UNDER_RULES_OF_THE_POM_WARNING@@": capture.take(),
     }
-
-
-def _property_moved_for_other_artefacts(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log the warning about an unserved artefact whose property Maven moved, and pair the line."""
-    mistaken = reference("org.glassfish.jersey:jersey-client", Location(Path("pom.xml"), 206))
-    log.new_version_not_reported(mistaken, "jersey.version", "3.1.12")
-    return {"@@PROPERTY_MOVED_FOR_OTHER_ARTEFACTS@@": capture.take()}
 
 
 def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:

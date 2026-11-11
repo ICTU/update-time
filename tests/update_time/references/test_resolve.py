@@ -27,7 +27,12 @@ from tests.update_time.helpers import (
     resolved_reference,
     staleness_disabled,
 )
-from tests.update_time.references.helpers import mock_logger, mock_project_getter, new_version_getter
+from tests.update_time.references.helpers import (
+    mock_logger,
+    mock_new_version_getter,
+    mock_project_getter,
+    new_version_getter,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -129,26 +134,26 @@ class LatestVersionTest(unittest.TestCase):
 
     def test_passes_the_version_bound_to_the_getter(self):
         """Test that the marker's version bound reaches the getter, so the source only picks admitted versions."""
-        get_new_version = Mock(return_value=DependencyVersion(version="3.14.1"))
+        get_new_version = mock_new_version_getter(DependencyVersion(version="3.14.1"))
         self.latest_version(Marker(version_bound=bound(Verb.ALLOW, "update<3.15")), get_new_version)
         self.assert_resolved(get_new_version, bound(Verb.ALLOW, "update<3.15"))
 
     def test_ignore_update_passes_a_block_all_bound_to_the_getter(self):
         """Test that a held-back update asks the source to keep the current version rather than resolve an update."""
-        get_new_version = Mock(return_value=DependencyVersion(version="3.14"))
+        get_new_version = mock_new_version_getter(DependencyVersion(version="3.14"))
         self.latest_version(Marker(ignored_scopes=Scope.UPDATE), get_new_version)
         self.assert_resolved(get_new_version, BLOCK_ALL_UPDATES)
 
     @patch_environ({COOLDOWN.name: "30"})
     def test_passes_the_configured_cooldown_to_the_getter(self):
         """Test that the cooldown the run was configured with reaches the getter, rather than the built-in default."""
-        get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
+        get_new_version = mock_new_version_getter(DependencyVersion(version="3.15"))
         self.latest_version(get_new_version=get_new_version)
         self.assert_resolved(get_new_version, cooldown=30)
 
     def test_the_markers_cooldown_is_passed_to_the_getter(self):
         """Test that a reference carrying its own cooldown is resolved with that one, not the global one."""
-        get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
+        get_new_version = mock_new_version_getter(DependencyVersion(version="3.15"))
         self.latest_version(COOLDOWN_30, get_new_version)
         self.assert_resolved(get_new_version, cooldown=30)
 
@@ -246,14 +251,14 @@ class LatestVersionTest(unittest.TestCase):
             with self.subTest(floating=floating):
                 self.log.reset_mock()  # Judge each outcome on the calls of its own run.
                 release = DependencyVersion(version="3.15", floating=floating)
-                self.assertEqual(self.latest_version(marker, Mock(return_value=release)), release)
+                self.assertEqual(self.latest_version(marker, mock_new_version_getter(release)), release)
                 self.log.redundant_directive.assert_not_called()
 
     def test_warns_about_a_floating_pin_directive_on_a_held_back_reference(self):
         """Test that `allow[floating-pin]` on a floating tag `ignore[update]` holds back is reported as redundant."""
         floating = DependencyVersion(version="3.14.7", sha=DIGEST, floating=FloatingPin.RESOLVED)
         marker = Marker(ignored_scopes=Scope.UPDATE, allowed_scopes=Scope.FLOATING_PIN)
-        self.assertIsNone(self.latest_version(marker, Mock(return_value=floating)))
+        self.assertIsNone(self.latest_version(marker, mock_new_version_getter(floating)))
         self.log.redundant_directive.assert_called_once_with(
             self.reference(), "allow[floating-pin]", Reason.NEVER_PINNED
         )

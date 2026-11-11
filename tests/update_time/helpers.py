@@ -669,6 +669,10 @@ class LoggingTestCase(CacheClearingTestCase):
         assert_logged = self.assert_logged_among_others if among_others else self._assert_last_logged
         assert_logged(message_of(Logger.ignored), dependency=dependency, location=location, directive=directive)
 
+    def assert_no_ignored_logged(self) -> None:
+        """Assert that no update was reported as held back by a marker, whatever else was logged at that level."""
+        self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+
     def assert_held_back_by_cooldown_logged(
         self, dependency: str, version: str, location: Location, *, days: int = COOLDOWN.default, directive: str = ""
     ) -> None:
