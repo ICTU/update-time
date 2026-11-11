@@ -1,6 +1,7 @@
 """Markdown facts shared by the tools that generate the README and check it."""
 
 import re
+import unicodedata
 from typing import TYPE_CHECKING
 
 from update_time.formats import markdown as markdown_format
@@ -41,8 +42,14 @@ def headings(markdown: str, min_level: int = 1, max_level: int = 6) -> list[tupl
 def anchor(heading: str) -> str:
     """Return the anchor GitHub gives the heading.
 
-    The heading is lower-cased, everything that is not a word character, a space, or a hyphen is dropped, and the
-    remaining spaces become hyphens. An emoji is dropped but the space after it is not, which is why the anchor of
-    a chapter whose heading starts with one begins with a hyphen.
+    The heading is lower-cased, everything that is not a word character, a combining mark, a space, or a hyphen is
+    dropped, and the remaining spaces become hyphens. An emoji is dropped but the space after it is not, which is why
+    the anchor of a chapter whose heading starts with one begins with a hyphen. Some emoji, such as ⚠️, are followed by
+    the combining mark U+FE0F, so the anchor of `⚠️ Warnings` begins with U+FE0F.
     """
-    return "#" + re.sub(r"[^\w\s-]", "", heading).lower().replace(" ", "-")
+    return "#" + re.sub(r"[^\w\s-]", _combining_mark, heading).lower().replace(" ", "-")
+
+
+def _combining_mark(match: re.Match[str]) -> str:
+    """Return the matched character where it is a combining mark, and the empty string otherwise."""
+    return match[0] if unicodedata.category(match[0]).startswith("M") else ""

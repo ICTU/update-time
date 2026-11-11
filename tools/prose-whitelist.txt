@@ -8,7 +8,6 @@ A URL the mapping doesn't cover raises a KeyError, so a request the test did not
 A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it.
 A `*.py` file without such a block stays untouched and never invokes uv.
 A `node` version another section declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the engine's marker.
-A `repo: local` or `repo: meta` entry has no `rev:`, so Update-time leaves it untouched, as it leaves a repository hosted outside GitHub untouched.
 A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
 A `start` that opens no object yields nothing, so a section declared as anything but an object holds no entry.
 A backticked run holding anything else — a `path:line`, an `# update-time: ignore` marker — is skipped here, and the twin check would skip it in any case, since no name the code binds has that shape.
@@ -113,7 +112,6 @@ An empty string signals the caller to leave the reference unchanged.
 An endpoint of the registry a test can make unavailable, so the code under test meets that failure.
 An engine the file declares but whose entry cannot be found is reported rather than passed over, since the file's two readings disagree.
 An external command, as the sequence of words a shell would run.
-An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
 An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both.
 An unpinned reference has no pinned digest to drift from.
 Assert that a floating tag pinned to no version was reported, with its reason, among the other records.
@@ -128,7 +126,6 @@ Check each requirement that pins no exact version.
 Converting is what the bands, which are floats, compare against; an unset score would band as no level.
 Coverage stays at 100%, and `just test` enforces it, so you need no separate coverage command.
 Create PyPI release metadata without project URLs, so the test needs no changelog response mocked.
-Declare the URL as such a tuple to have it pinned.
 Don't say "Updating …" when checking whether there are any updates because there may well be no updates.
 Drop a test from the list only once every test on it passes, or when I tell you to drop it.
 Drop parentheses that are no aside: those without word content, and word-attached ones like `(re)writes`.
@@ -224,7 +221,6 @@ Run every script with `just py`, which puts the package on the path, or with `uv
 Run the updater over no files, and return the mocks standing in for its two passes.
 Running this again finds nothing left to scrub, so the patch it then starts changes nothing, and needs no guard of the kind the refusal above has.
 So a marker above the `dependencies = [` line steers nothing, since that line declares no dependency.
-So an unreadable field drops every directive it carries, where an unreadable bracket item leaves the items beside it standing.
 So does an answer that carries no token, which Docker Hub's schema allows, since it makes the token an optional field.
 Some work changes no behaviour, so no test drives it.
 Such a cooldown excludes every release anyway, so clamping keeps the meaning.
@@ -475,7 +471,6 @@ The two ways a version bound can be redundant for the current version (see `Vers
 The upload after it names no version, and the file without an upload time names no date.
 The versions no goal may adopt.
 The volta pin is steered by no marker.
-The warning names where the marker would sit rather than the value that is wrong.
 The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about another check answer it with an index that lists no version and no distribution file to read a yank from.
 These have no registry to query and are now recognised and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.
 These warnings are informational, so they change no file and do not affect the exit status.
