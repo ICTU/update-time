@@ -725,16 +725,15 @@ class LoggerTests(TestCase):
                     f"{at('requirements.txt:9')}: the {subject} is not archived",
                 )
 
-    def test_invalid_specifier(self, mock_log: Mock):
-        """Test that an unparsable version bound specifier is warned about at warning level."""
+    def test_an_invalid_item_is_warned_about_naming_the_item(self, mock_log: Mock):
+        """Test that an item the marker language cannot read is warned about at warning level, naming it alone."""
         location = create_location("Dockerfile", 2)
         _new_logger().invalid_bracket_item("python", "@@@", location)
         self.assert_message(
             mock_log,
             message_of(Logger.invalid_bracket_item),
             logging.WARNING,
-            f"Invalid '@@@' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}; "
-            "leaving the reference unchanged",
+            f"Invalid '@@@' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}",
         )
 
     def test_warn_if_redundant_bound(self, mock_log: Mock):

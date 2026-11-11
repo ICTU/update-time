@@ -106,12 +106,14 @@ class Marker:
     `set[stale-after=90]` sets a staleness threshold in days, `set[cooldown=30]` sets a cooldown in days, and
     `set[vulnerability-level=high]` sets the risk level to warn from.
     `invalid_item` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
-    or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
+    or an unrecognised item in a comma list — so the caller can warn about it; None otherwise.
     `default_directives` are the directives that ask for what Update-time does without them, such as
     `ignore[hash-drift]` or a bare `allow[update]`, as the language spells them; left out of comparisons, so a marker
     asking for the default compares equal to one that does not.
     `raw` is the marker's whole directive text exactly as it appears in the file, so the reference's marker can be
     echoed to the user verbatim.
+    `spelling` is the marker as the file spells it where that is more than its directive text, such as the JSON of a
+    package.json's `update-time` field; empty otherwise.
     """
 
     ignored_scopes: Scope = _NO_SCOPE
@@ -124,10 +126,11 @@ class Marker:
     invalid_item: str | None = None
     default_directives: tuple[str, ...] = field(compare=False, default=())
     raw: str = field(compare=False, default="")
+    spelling: str = field(compare=False, default="")
 
     def __str__(self) -> str:
-        """Render the marker as its verbatim directive text, exactly as the user spelled it."""
-        return self.raw
+        """Render the marker as the file spells it (see `spelling`)."""
+        return self.spelling or self.raw
 
     def directive_for(self, scope: Scope) -> str:
         """Return the directive the marker carries for this scope, as the language spells it, or nothing for none.
@@ -153,18 +156,6 @@ class Marker:
         """
         return scope in self.ignored_scopes
 
-    @property
-    def effective_directives(self) -> Marker:
-        """Return the directives Update-time acts on, with an `ignore[update]` added where an item is unreadable."""
-        if self.invalid_item is None:
-            return self
-        return replace(self, ignored_scopes=self.ignored_scopes | Scope.UPDATE)
-
-    @property
-    def holds_the_update_back(self) -> bool:
-        """Return whether the marker ignores the update, or carries an item that may have meant to."""
-        return self.effective_directives.ignores(Scope.UPDATE)
-
     def update_specifier(self, current_version: VersionString) -> str | None:
         """Return the specifier keeping an update within the marker's bound, or None where the marker holds it back.
 
@@ -172,7 +163,7 @@ class Marker:
         So does a bound that a specifier cannot carry.
         """
         bound = self.version_bound
-        if self.holds_the_update_back or not bound.keeps(Version(current_version), current_version):
+        if self.ignores(Scope.UPDATE) or not bound.keeps(Version(current_version), current_version):
             return None
         return bound.specifier_in_allow_form(current_version)
 
@@ -189,15 +180,6 @@ class Marker:
         `ignore[update]` beside it leaves it named, so a caller judging the two apart can name each.
         """
         return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
-
-    @property
-    def hold_back_directive(self) -> str:
-        """Return the `ignore[update]` written in the marker, or nothing where none is or an item is unreadable.
-
-        An unreadable item adds an `ignore[update]` to the directives Update-time acts on (see `effective_directives`),
-        so there a written one cannot be told from the one the item adds.
-        """
-        return "" if self.invalid_item is not None else self.scope_directive(Scope.UPDATE)
 
     @property
     def bound_directive(self) -> str:
@@ -262,7 +244,8 @@ class Marker:
         wins. The `raw` texts and the directives asking for the default concatenate in order, this marker's first. A
         default `Marker()` leaves every field unset, so it is the identity: merging it with any marker returns that
         marker's values. This lets markers fold at every level — each item into a bracket's marker, each directive into
-        a text's, and the inline and comment-above texts into the line's.
+        a text's, and the inline and comment-above texts into the line's. The result leaves `spelling` out, since a
+        marker is spelled only once it is whole.
         """
         return Marker(
             ignored_scopes=self.ignored_scopes | other.ignored_scopes,

@@ -1186,11 +1186,12 @@ class StaleDependencyTest(NoUpdateTestCase):
 
     @patch("requests.Session.get")
     def test_stale_dependency_a_marker_silences_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
-        """Test that a `set[stale-after=0]` marker is reported as recognised, and silences the staleness warning."""
+        """Test that a `set[stale-after=0]` marker is recognised, quoted as the field, and silences the warning."""
         contents = self.clipboard_contents(marker="set[stale-after=0]")
         package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
         self.assert_no_warnings_logged()
         self.assert_recognised_marker_logged("clipboard", Location(package_json, 4), Marker(stale=Threshold(value=0)))
+        self.assert_recognised_marker_spelled('{"dependencies": {"clipboard": "set[stale-after=0]"}}')
 
     @patch("requests.Session.get")
     def test_recent_dependency_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
@@ -1510,6 +1511,14 @@ class MarkerTest(NoUpdateTestCase):
                     Reason.NO_NPM_RELEASE, "clipboard", Location(package_json, 4), directive
                 )
 
+    @kills(
+        Mutation(
+            update_package_json_module._report_undeclared_reference,
+            "steers_the_update=False",
+            "steers_the_update=True",
+            "an `ignore[update]` on an undeclared dependency is said to hold the update back",
+        )
+    )
     def test_a_marker_naming_an_entry_its_section_does_not_declare_is_reported(
         self, get: Mock, mock_run: Mock, glob: Mock
     ):
@@ -1518,12 +1527,15 @@ class MarkerTest(NoUpdateTestCase):
         for case, (name, directive, marker) in {
             "undeclared": ("lodash", "set[stale-after=0]", stale),
             "declared in another section": ("is-number", "set[stale-after=0]", stale),
+            "an ignore[update] holding nothing back": ("lodash", "ignore[update]", Marker(ignored_scopes=Scope.UPDATE)),
         }.items():
             with self.subTest(case=case):
                 package_json = self.run_on_undeclared_markers(get, mock_run, glob, f'"{name}": "{directive}"')
                 location = Location(package_json, 5)
                 self.assert_redundant_directive_logged(Reason.UNDECLARED_DEPENDENCY, name, location, directive)
                 self.assert_recognised_marker_logged(name, location, marker)
+                self.assert_recognised_marker_spelled(f'{{"dependencies": {{"{name}": "{directive}"}}}}')
+                self.assert_no_ignored_logged()
 
     @kills(
         Mutation(
@@ -1552,12 +1564,6 @@ class MarkerTest(NoUpdateTestCase):
             "if marker.raw:",
             "an unreadable item on an undeclared dependency is reported as redundant as well as invalid",
         ),
-        Mutation(
-            update_package_json_module._report_undeclared_reference,
-            "steers_the_update=False",
-            "steers_the_update=True",
-            "an unreadable item on an undeclared dependency is said to leave the reference unchanged",
-        ),
     )
     def test_an_undeclared_marker_that_cannot_be_read_is_reported_as_invalid(
         self, get: Mock, mock_run: Mock, glob: Mock
@@ -1569,8 +1575,16 @@ class MarkerTest(NoUpdateTestCase):
         }.items():
             with self.subTest(case=case):
                 package_json = self.run_on_undeclared_markers(get, mock_run, glob, f'"lodash": {value}')
-                self.assert_invalid_bracket_item_logged("lodash", Location(package_json, 5), item, holding_back=False)
+                self.assert_invalid_bracket_item_logged("lodash", Location(package_json, 5), item)
 
+    @kills(
+        Mutation(
+            package_json_module._marker,
+            "if marker.raw else marker",
+            "if _MARKER_FIELD in contents else marker",
+            "the Recognised line names a reference whose value in the field does not hold a directive",
+        )
+    )
     def test_an_undeclared_marker_without_a_directive_is_not_reported(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that an undeclared dependency's marker without a directive is left unreported."""
         for case, value in {"empty": '""', "bare text": '"pinned on purpose"'}.items():
@@ -1580,6 +1594,7 @@ class MarkerTest(NoUpdateTestCase):
                 self.assert_redundant_directive_logged(
                     Reason.UNDECLARED_DEPENDENCY, "left-pad", Location(package_json, 5), "set[stale-after=0]"
                 )
+                self.assert_none_logged(message_of(Logger.recognised_marker), "recognised marker", dependency="lodash")
 
     def test_a_field_of_the_wrong_shape_is_reported_as_invalid_and_the_check_still_runs(
         self, get: Mock, mock_run: Mock, glob: Mock
@@ -1594,7 +1609,7 @@ class MarkerTest(NoUpdateTestCase):
                 package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
                 location = Location(package_json, 4)
                 self.assert_invalid_bracket_item_logged(
-                    "clipboard", location, "update-time.dependencies.clipboard", among_others=True, holding_back=False
+                    "clipboard", location, "update-time.dependencies.clipboard", among_others=True
                 )
                 self.assert_stale_dependency_logged("clipboard", "2.0.11", location, among_others=True)
                 self.assertEqual(len(self.records(WARNING)), 2)

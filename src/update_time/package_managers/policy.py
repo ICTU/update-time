@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
     from update_time.io.log import Logger
     from update_time.markers.directive import Reason
-    from update_time.markers.marker import Marker
 
 
 @dataclass(frozen=True)
@@ -58,18 +57,12 @@ class ManagerPolicy[ReferenceT: SteeredReference]:
 
 def report_markers[ReferenceT: SteeredReference](
     references: Iterable[ReferenceT], log: Logger, policy: ManagerPolicy[ReferenceT]
-) -> list[ReferenceT]:
-    """Report each reference's marker, and return the references, each with the directives Update-time acts on."""
-    return [replace(reference, marker=_report_reference_marker(reference, log, policy)) for reference in references]
-
-
-def _report_reference_marker[ReferenceT: SteeredReference](
-    reference: ReferenceT, log: Logger, policy: ManagerPolicy[ReferenceT]
-) -> Marker:
-    """Report the reference's marker, and return the directives Update-time acts on."""
-    return log.report_marker(
-        reference.dependency,
-        reference.marker,
-        reference.location,
-        steers_the_update=policy.steers_the_update(reference),
-    )
+) -> None:
+    """Report each reference's marker."""
+    for reference in references:
+        log.report_marker(
+            reference.dependency,
+            reference.marker,
+            reference.location,
+            steers_the_update=policy.steers_the_update(reference),
+        )

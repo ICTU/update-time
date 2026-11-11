@@ -160,20 +160,24 @@ class ParseMarkerScopeTest(unittest.TestCase):
                         marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[{item}]"))
                         self.assertEqual(marker, Marker(invalid_item=item))
 
-    def test_unrecognised_scope_is_reported_as_invalid(self):
-        """Test that a typo'd scope is reported as an invalid item rather than read as a directive."""
-        marker = parse_marker(_line("humanize==4.15.0  # update-time: ignore[updaet]"))
-        self.assertEqual(marker, Marker(invalid_item="updaet"))
-
-    def test_unterminated_bracket_is_reported_as_invalid(self):
-        """Test that a bracket left unclosed is reported as an invalid item, the item keeping its `[`."""
-        marker = parse_marker(_line("humanize==4.15.0  # update-time: ignore[update<4"))
-        self.assertEqual(marker, Marker(invalid_item="[update<4"))
-
-    def test_an_unreadable_bound_is_reported_without_its_update_prefix(self):
-        """Test that an unreadable bound is reported as the specifier it holds."""
-        marker = parse_marker(_line("humanize==4.15.0  # update-time: allow[update<<3.13]"))
-        self.assertEqual(marker, Marker(invalid_item="<<3.13"))
+    def test_an_unreadable_item_is_reported_as_invalid(self):
+        """Test that an item the language cannot read is reported as an invalid item, and the items beside it apply."""
+        cases = {
+            "a scope typo": ("ignore[updaet]", Marker(invalid_item="updaet")),
+            "a level-name typo": ("ignore[mega-update]", Marker(invalid_item="mega-update")),
+            "a plural typo of `patch-update`": ("allow[patch-updates]", Marker(invalid_item="patch-updates")),
+            "a bracket with nothing in it": ("ignore[]", Marker(invalid_item="")),
+            "a bracket left unclosed, keeping its `[`": ("ignore[update<4", Marker(invalid_item="[update<4")),
+            "a bound, without its `update` prefix": ("allow[update<<3.13]", Marker(invalid_item="<<3.13")),
+            "an item in a comma list": (
+                "allow[drift, update<3.13]",
+                Marker(version_bound=bound(Verb.ALLOW, "update<3.13"), invalid_item="drift"),
+            ),
+        }
+        for case, (directive, expected) in cases.items():
+            with self.subTest(case=case):
+                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {directive}"))
+                self.assertEqual(marker, expected)
 
 
 class ParseMarkerAdvisoryTest(unittest.TestCase):

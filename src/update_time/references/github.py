@@ -232,7 +232,7 @@ class _PinResolver:
 
     def _warn_if_the_hold_back_is_redundant(self, reference: Reference, commit_sha: _CommitSha) -> None:
         """Warn about an `ignore[update]` on a bare full commit SHA, which Update-time never updates."""
-        if commit_sha is _CommitSha.FULL and (hold_back := self.marker.hold_back_directive):
+        if commit_sha is _CommitSha.FULL and (hold_back := self.marker.scope_directive(Scope.UPDATE)):
             self.log.redundant_directive(reference, hold_back, Reason.NO_UPDATE_FOR_A_COMMIT)
 
     def _ref_pin(self, reference: Reference, commit_sha: _CommitSha) -> DependencyVersion | None:

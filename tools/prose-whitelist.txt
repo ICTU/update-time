@@ -29,7 +29,6 @@ A dependency name is bracketed in it, because a name has no fixed shape a patter
 A dependency's name and versions, and what a source resolves for one.
 A dictionary that declares no hash gains one there, which pins a URL that was loading whatever the CDN served; a URL declared without a dictionary at all has nowhere to hold a hash, so it is reported rather than pinned.
 A directory the repository does not serve is unremarkable, so only a failure to list the root is reported.
-A field of the wrong shape holds no marker to quote:.
 A file location needs no entry: it reuses Rich's built-in `repr.filename`.
 A file names no marker by leaving any of the three out.
 A file with no upload time is passed over, and so is one whose name holds no version, such as the `.egg` and `.exe` files PyPI stopped accepting.

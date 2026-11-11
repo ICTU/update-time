@@ -226,16 +226,15 @@ def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cann
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
     It reads a marker written as a comment, on the reference's own line or above it, and takes one the file names
-    elsewhere from the updater that read it, in `marker`. `Logger.report_marker` reports that marker and decides what it
-    holds back, where `steers_the_update` says the marker steers the update. What that settles on reaches
-    `update_line`, so a bound, an `allow` directive, and what the marker gets wrong are still acted on (see
-    `latest_version`).
+    elsewhere from the updater that read it, in `marker`. `Logger.report_marker` reports that marker, and
+    `steers_the_update` says whether the marker steers the update. `update_line` receives the marker as read, so
+    `latest_version` acts on its bound, its `allow` directives, and what it gets wrong.
     """
     marker = parse_marker(line) if marker is None else marker
     location = line.location
     dependency = matched_dependency(match, dependency)
-    reported = logger.report_marker(dependency, marker, location, steers_the_update=steers_the_update(match, location))
-    return update_line(match, location, reported)
+    logger.report_marker(dependency, marker, location, steers_the_update=steers_the_update(match, location))
+    return update_line(match, location, marker)
 
 
 def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file cannot be read from the line

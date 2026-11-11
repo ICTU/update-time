@@ -369,13 +369,12 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
                 self.assert_new_version_logged("python", docker_hub_version(updated), Location(version_file, 1))
                 self.assert_no_warnings_logged()
 
-    def test_marker_invalid_specifier(self, mock_glob: Mock):
-        """Test that an unparsable marker specifier is warned about and leaves the entry unchanged."""
+    def test_an_invalid_specifier_is_warned_about_and_the_entry_updates(self, mock_glob: Mock):
+        """Test that an unparsable marker specifier is warned about, and the entry updates as usual."""
         version_file = self.update_version_file(mock_glob, "# update-time: allow[update<<3.13]\n3.12.6\n")
-        version_file.write_text.assert_not_called()
+        version_file.write_text.assert_called_once_with("# update-time: allow[update<<3.13]\n3.13.2\n")
         # The marker sits on line 1 and the entry it governs on line 2; the warning points at the entry's line.
         self.assert_invalid_bracket_item_logged("python", Location(version_file, 2), "<<3.13")
-        self.assert_no_new_version_logged()
 
     def test_the_cooldown_scope_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `cooldown` marker on an entry is not reported as redundant."""

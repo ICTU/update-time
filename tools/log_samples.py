@@ -640,15 +640,11 @@ def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
 
 
 def _versions_plugin_overridden(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a pom's versions plugin configuration wins over Update-time, and an unreadable item it then reports."""
-    pom = Path("pom.xml")
-    log.option_overridden_by_the_pom(pom, "rulesUri", OverrideConsequence.RULES, "org.example:parent:1.0", 12)
-    overridden = capture.take()
-    log.invalid_bracket_item_holding_nothing_back("com.google.guava:guava", "stlae", Location(pom, 9))
-    return {
-        "@@OPTION_OVERRIDDEN_BY_THE_POM@@": overridden,
-        "@@INVALID_ITEM_UNDER_RULES_OF_THE_POM_WARNING@@": capture.take(),
-    }
+    """Log that a pom's versions plugin configuration wins over Update-time."""
+    log.option_overridden_by_the_pom(
+        Path("pom.xml"), "rulesUri", OverrideConsequence.RULES, "org.example:parent:1.0", 12
+    )
+    return {"@@OPTION_OVERRIDDEN_BY_THE_POM@@": capture.take()}
 
 
 def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:

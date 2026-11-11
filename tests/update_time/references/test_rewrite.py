@@ -426,34 +426,38 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assert_marker_reaches_the_staleness_check(Marker(stale=Threshold(value=0)))
         self.logger.drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
-    def assert_invalid_bracket_item(self, directive: str, bracket_item: str) -> None:
-        """Assert that the bracket item is logged as invalid, leaving the reference unchanged but still checked."""
-        self.logger.reset_mock()
-        get_new_version = mock_new_version_getter(DependencyVersion(version="3.12.1"))
-        lines = [f"image: python:3.12.1  # update-time: {directive}"]
-        self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)  # left unchanged, not updated
-        get_new_version.assert_called_once()
-        self.logger.invalid_bracket_item.assert_called_once_with("python", bracket_item, Location(self.path, 1))
-        self.logger.ignored.assert_not_called()  # reported as invalid, not held back as `ignore[update]`
-        self.logger.recognised_marker.assert_not_called()
+    def assert_invalid_bracket_item(self, lines: list[str], bracket_item: str, line: int = 1) -> None:
+        """Assert that the bracket item is warned about, and that the reference on the line updates as usual."""
+        get_new_version = mock_new_version_getter(DependencyVersion(version="3.12.9"))
+        new_lines = self.rewrite(lines, IMAGE_REGEXP, get_new_version)
+        self.assertEqual(new_lines, [each.replace("python:3.12", "python:3.12.9") for each in lines])
+        self.logger.invalid_bracket_item.assert_called_once_with("python", bracket_item, Location(self.path, line))
+        self.logger.ignored.assert_not_called()
 
-    def test_unrecognised_item_warns_and_leaves_reference_unchanged(self):
-        """Test that a single unrecognised bracket item warns and leaves the reference unchanged, under either verb."""
-        items = {
-            "ignore[updaet]": "updaet",  # a scope typo
-            "ignore[mega-update]": "mega-update",  # a level-name typo
-            "allow[patch-updates]": "patch-updates",  # a plural typo of `patch-update`
-            "ignore[]": "",  # a bracket with nothing in it to recognise
-        }
-        for directive, item in items.items():
-            with self.subTest(directive=directive):
-                self.assert_invalid_bracket_item(directive, item)
+    def test_an_unreadable_item_warns_and_the_reference_updates(self):
+        """Test that an item the language cannot read is warned about, and the reference updates."""
+        self.assert_invalid_bracket_item(["image: python:3.12  # update-time: ignore[updaet]"], "updaet")
 
-    def test_unterminated_bracket_warns_and_leaves_reference_unchanged(self):
-        """Test that a bracket left unclosed warns under either verb, reporting the unclosed bracket."""
-        for directive in ("ignore[update<4", "allow[update<4"):
-            with self.subTest(directive=directive):
-                self.assert_invalid_bracket_item(directive, "[update<4")
+    def test_a_marker_with_an_unreadable_item_is_recognised_as_written(self):
+        """Test that a marker holding an unreadable item is reported as recognised, spelled as the file spells it."""
+        self.rewrite(
+            ["image: python:3.12  # update-time: ignore[yanked, stlae]"], IMAGE_REGEXP, new_version_getter("3.12")
+        )
+        marker = Marker(ignored_scopes=Scope.YANKED, invalid_item="stlae")
+        self.logger.recognised_marker.assert_called_once_with("python", marker, Location(self.path, 1))
+        self.assertEqual(str(self.logger.recognised_marker.call_args.args[1]), "ignore[yanked, stlae]")
+
+    def test_an_ignore_update_beside_an_unreadable_item_holds_the_update_back_and_says_so(self):
+        """Test that an `ignore[update]` sharing a bracket with an unreadable item holds the update back as written."""
+        lines = ["image: python:3.12  # update-time: ignore[update, stlae]"]
+        self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, new_version_getter("3.12.9")), lines)
+        self.logger.invalid_bracket_item.assert_called_once_with("python", "stlae", Location(self.path, 1))
+        marker = Marker(ignored_scopes=Scope.UPDATE, invalid_item="stlae")
+        self.logger.ignored.assert_called_once_with("python", marker, Location(self.path, 1))
+
+    def test_an_unreadable_item_above_the_line_is_reported_for_the_reference_below(self):
+        """Test that an unreadable item in a comment above the reference is reported for the reference below."""
+        self.assert_invalid_bracket_item(["# update-time: allow[update@@@]", "image: python:3.12"], "@@@", line=2)
 
     def test_comma_separated_items_combine_in_one_bracket(self):
         """Test that a bracket combines comma-separated items: `ignore[archived, update>=3.13]` bounds and silences."""
@@ -481,13 +485,6 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assert_resolved(get_new_version, "python:3.12", bound(Verb.IGNORE, "update>=3.13,<3.15"))
         compound = Marker(ignored_scopes=Scope.ARCHIVED, version_bound=bound(Verb.IGNORE, "update>=3.13,<3.15"))
         self.assert_marker_reaches_the_staleness_check(compound)
-
-    def test_unrecognised_item_in_comma_list_is_logged(self):
-        """Test that an unrecognised item in a comma list warns and leaves the reference unchanged."""
-        get_new_version = new_version_getter("3.12")
-        lines = ["image: python:3.12  # update-time: allow[drift, update<3.13]"]
-        self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
-        self.logger.invalid_bracket_item.assert_called_once_with("python", "drift", Location(self.path, 1))
 
     def test_repeated_marker_prefixes_still_combine(self):
         """Test that the older form of combining directives, repeating the `# update-time:` prefix, still works."""
@@ -538,28 +535,6 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = mock_new_version_getter(resolved)
         lines = ["image: python:latest  # update-time: ignore[update] allow[floating-pin]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
-
-    def test_invalid_specifier_is_logged_and_leaves_reference_unchanged(self):
-        """Test that an unparsable specifier is logged and the reference left unchanged."""
-        get_new_version = new_version_getter("3.12")
-        lines = ["image: python:3.12  # update-time: allow[update@@@]"]
-        self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
-        self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 1))
-
-    def test_invalid_specifier_above_line_is_logged_and_leaves_reference_unchanged(self):
-        """Test that an unparsable specifier in a comment above the reference is reported for the reference below."""
-        get_new_version = new_version_getter("3.12")
-        lines = ["# update-time: allow[update@@@]", "image: python:3.12"]
-        self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
-        self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 2))
-
-    def test_invalid_ignore_specifier_is_warned_about_rather_than_held_back_silently(self):
-        """Test that a malformed `ignore` bound is warned about while the reference is left unchanged."""
-        get_new_version = new_version_getter("3.12")
-        lines = ["image: python:3.12  # update-time: ignore[update@@@]"]
-        self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
-        self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 1))
-        self.logger.ignored.assert_not_called()  # reported as invalid, not held back as `ignore[update]`
 
 
 class MarkerForwardingTest(unittest.TestCase):

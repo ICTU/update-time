@@ -16,6 +16,7 @@ from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import Reason
+from update_time.markers.marker import Scope
 from update_time.package_managers.maven.plugins import VERSIONS_ARTEFACT, VERSIONS_PLUGIN
 from update_time.package_managers.maven.version_range import maven_range
 from update_time.primitives.iterables import unique
@@ -230,7 +231,7 @@ def range_held_back(declaration: pom_xml_manifest.Declaration) -> str | None:
     The range is empty where the marker does not hold any version back. Where the rule set cannot express a bound,
     the marker holds every version back, so Maven never crosses the bound.
     """
-    if declaration.marker.holds_the_update_back:
+    if declaration.marker.ignores(Scope.UPDATE):
         return None
     bound = declaration.marker.version_bound
     return "" if bound == NO_BOUND else maven_range(bound, declaration.current_version)

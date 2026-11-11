@@ -579,7 +579,7 @@ A `set` directive overrides a command-line option for the reference carrying it,
 | `cooldown=DAYS` | the [cooldown](#setting-a-cooldown-period) | `--cooldown` |
 | `vulnerability-level=LEVEL` | the [risk level](#setting-a-risk-level) to warn from | `--vulnerability-level` |
 
-A marker can set several values in one bracket, as `set[stale-after=90, cooldown=30]` does. A `set` item that Update-time can read sets a value and steers nothing else, so it does not hold an update back. One that it cannot read holds the update back, as an [invalid item](#invalid-markers) does.
+A marker can set several values in one bracket, as `set[stale-after=90, cooldown=30]` does. Update-time drops a `set` item it cannot read, as it drops every [invalid item](#invalid-markers).
 
 #### Setting a staleness threshold
 
@@ -776,7 +776,7 @@ Run with `--log-level DEBUG` to confirm a marker is recognised. Update-time repo
 DEBUG Recognised update-time marker ignore[yanked] for humanize in docs/requirements.txt:12
 ```
 
-That line says the marker was read and understood. No `Recognised` line at all means the marker was not read. The prefix and the verbs are case-sensitive, and a field marker is read by name. So a typo in any of them leaves the reference updated as usual. Update-time logs a typo inside the brackets at `WARNING` as an invalid item instead (see [Invalid markers](#invalid-markers)).
+That line says the marker was read. It quotes the marker as the file writes it, and in a `package.json` it quotes the whole `update-time` field as JSON. A `Recognised` line without an `Invalid` warning beside it says the marker was understood as well. No `Recognised` line at all means the marker was not read. The prefix and the verbs are case-sensitive, and a field marker is read by name. So a typo in any of them leaves the reference updated as usual. A typo inside the brackets does too, and Update-time warns about it at `WARNING` as an invalid item (see [Invalid markers](#invalid-markers)).
 
 ### Seeing what a marker did
 
@@ -786,7 +786,7 @@ Run with `--log-level DEBUG` to see what a marker held back or silenced. Update-
 DEBUG Ignoring the yank warning for humanize in docs/requirements.txt:12 (update-time: ignore[yanked])
 ```
 
-A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A line about the update appears whenever the marker holds the update back, whether or not a newer version was available. An item Update-time cannot read gets an [invalid](#invalid-markers) warning instead. A bound produces a line only on a `pom.xml` dependency or plugin whose version Maven updates. That line names the versions the bound holds back:
+A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A line about the update appears whenever the marker holds the update back, whether or not a newer version was available. An item Update-time cannot read does nothing, so it gets an [invalid](#invalid-markers) warning rather than a line. A bound produces a line only on a `pom.xml` dependency or plugin whose version Maven updates. That line names the versions the bound holds back:
 
 ```console
 DEBUG Holding back the versions [34,) of com.google.guava:guava in pom.xml:12 (update-time: ignore[update>=34])
@@ -1008,12 +1008,12 @@ WARNING Redundant update-time directive allow[update] for humanize in docs/requi
 A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
 
 ```console
-WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
+WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2
 ```
 
-Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. Where an `ignore[update]` holds nothing back, an unreadable item holds nothing back either, and the warning leaves out that the reference stays unchanged. A `package.json` dependency, a pom whose versions plugin configuration names rules of its own, an image Update-time does not look up, and a full commit SHA without a comment are such cases (see [Redundant markers](#redundant-markers)).
+Update-time drops an item it cannot read, rather than guess what the item was meant to do. So a reference marked `ignore[stlae]` updates as usual, and its checks run as usual. An item meant to hold the update back lets the update through when Update-time cannot read it, as an unclosed `ignore[update<4` and a malformed `allow[update<<3.13]` do. Such an update shows up in the diff, and the warning about the item shows up in the log. So review both before you merge (see [Workflow](#workflow)).
 
-An unreadable item holds back what Update-time would write, never what it would tell you. So the checks still run, and every item beside it that Update-time does read applies as written: `ignore[yanked, stlae]` still silences the yank warning.
+Every item beside an unreadable one applies as written. So `ignore[yanked, stlae]` still silences the yank warning, and `ignore[update, stlae]` still holds the update back.
 
 A `set` item names a key Update-time knows and a value for it. So Update-time reports `set[stale=90]` as invalid, since `stale` is a scope rather than an option. It reports `set[cooldown]` as invalid too, since that item does not set a value.
 
@@ -1021,10 +1021,10 @@ A day count must be a whole number of days. So Update-time reports `set[stale-af
 
 A risk level must be one of `low`, `moderate`, `high`, `critical`, and `none`, spelled in lower case. So Update-time reports `set[vulnerability-level=hgih]` as invalid. An advisory is named by `ignore` alone, so `allow[vulnerable=GHSA-…]` is invalid as well. So is a second advisory written without a `vulnerable=` of its own, as in `ignore[vulnerable=GHSA-…,CVE-…]`.
 
-Update-time reports an `update-time` field it cannot read as an invalid item too. It reads a field whole rather than item by item. So an unreadable field drops every directive it carries, where an unreadable bracket item leaves the items beside it standing. The warning names where the marker would sit rather than the value that is wrong. A field of the wrong shape holds no marker to quote:
+Update-time reports an `update-time` field it cannot read as an invalid item too. It reads a field whole rather than item by item. So an unreadable field drops every directive it carries, where an unreadable bracket item leaves the items beside it standing. The warning names where the marker would sit rather than the value that is wrong. A field of the wrong shape does not hold a directive to quote:
 
 ```console
-WARNING Invalid 'update-time.engines.node' in the update-time marker for node in package.json:3; leaving the reference unchanged
+WARNING Invalid 'update-time.engines.node' in the update-time marker for node in package.json:3
 ```
 
 ## 📖 Details per dependency type
@@ -1308,7 +1308,7 @@ A dependency's marker goes in the `package.json`'s `update-time` field (see [Whe
 }
 ```
 
-A marker steers the checks rather than the update, since npm and pnpm move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers). It reports an item it cannot read as [invalid](#invalid-markers), without saying that the reference stays unchanged.
+A marker steers the checks rather than the update, since npm and pnpm move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
 
 Update-time reports every scope as redundant on a dependency that does not resolve to a registry release, such as a git URL:
 
@@ -1316,7 +1316,7 @@ Update-time reports every scope as redundant on a dependency that does not resol
 WARNING Redundant update-time directive set[stale-after=0] for bats in package.json:4: the npm registry does not serve a release for this dependency
 ```
 
-A marker naming a dependency that its section does not declare decides nothing, and Update-time reports it as redundant:
+A marker naming a dependency that its section does not declare decides nothing, and Update-time reports it as redundant. Where such a marker holds an item Update-time cannot read, Update-time warns about that item alone:
 
 ```console
 WARNING Redundant update-time directive set[stale-after=0] for lodash in package.json:9: this dependency is not declared in the section the update-time field names it under
@@ -1448,13 +1448,7 @@ Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant 
 WARNING Redundant update-time directive set[cooldown=30] for nl.example:internal-lib in pom.xml:12: Maven Central does not serve this dependency
 ```
 
-A marker steers the update only where Maven updates the version (see [What dependencies are updated?](#what-dependencies-are-updated-2)). There, an `ignore[update]` and an item Update-time cannot read each hold back every version of the artefact.
-
-A marker does not steer the update either in a pom whose versions plugin configuration names rules of its own, since Maven follows those rules instead. Where a marker does not steer the update, Update-time reports an item it cannot read as invalid, without saying that the reference stays unchanged:
-
-```console
-WARNING Invalid 'stlae' in the update-time marker for com.google.guava:guava in pom.xml:9
-```
+A marker steers the update only where Maven updates the version (see [What dependencies are updated?](#what-dependencies-are-updated-2)), and only in a pom whose versions plugin configuration does not name rules of its own, since Maven follows those rules instead. There, an `ignore[update]` holds back every version of the artefact.
 
 A bound holds back the versions it drops. Update-time reports those versions at `DEBUG`, as Maven ranges (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound compares the number of a version alone, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
 
