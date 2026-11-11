@@ -1,7 +1,8 @@
 """Read package.json files: their dependency entries, Node engine, package manager, and `update-time` field."""
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Self
 
 from update_time.domain.reference import Reference
@@ -46,14 +47,15 @@ def _marker(contents: dict, section: str, name: DependencyName) -> Marker:
     Node engine, and a reference is named the way the file itself names it. The value is the directive list a
     comment carries behind its `# update-time:` prefix. A file names no marker by leaving any of the three out.
     Whatever a file holds reaches here, so each step down is checked: a level that is not an object, and a value
-    that is not a directive list, are both a shape the language cannot read, and leave the reference as it is
-    rather than ending the run.
+    that is not a directive list, are both a shape the language cannot read, which becomes an invalid item rather
+    than ending the run. The marker is spelled as the JSON of the whole field.
     """
     references = _section_markers(contents, section)
-    if references is None:
-        return _unreadable_field(section, name)
-    directives = references.get(name, "")
-    return parse_directives(directives) if isinstance(directives, str) else _unreadable_field(section, name)
+    directives = references.get(name, "") if references is not None else None
+    if not isinstance(directives, str):
+        return Marker(invalid_item=f"{_MARKER_FIELD}.{section}.{name}", spelling=_field_spelling(contents))
+    marker = parse_directives(directives)
+    return replace(marker, spelling=_field_spelling(contents)) if marker.raw else marker
 
 
 def _section_markers(contents: dict, section: str) -> dict | None:
@@ -66,9 +68,9 @@ def _section_markers(contents: dict, section: str) -> dict | None:
     return references if isinstance(references, dict) else None
 
 
-def _unreadable_field(section: str, name: DependencyName) -> Marker:
-    """Return the marker for a field the language cannot read: an invalid item naming where the marker would sit."""
-    return Marker(invalid_item=f"{_MARKER_FIELD}.{section}.{name}")
+def _field_spelling(contents: dict) -> str:
+    """Return the `update-time` field as JSON, which spells each marker the field names."""
+    return json.dumps(contents[_MARKER_FIELD], ensure_ascii=False)
 
 
 @dataclass(frozen=True, kw_only=True)

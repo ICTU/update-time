@@ -601,7 +601,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     @kills(
         Mutation(
             maven_marker_policy.report_markers,
-            "if held_back is None and not marker.holds_the_update_back:",
+            "if held_back is None and not marker.ignores(Scope.UPDATE):",
             "if held_back is None:",
             "an `ignore[update]` in a pom is reported twice as holding the update back",
         )
@@ -743,20 +743,6 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.VERSION_HELD_ELSEWHERE, GUAVA, Location(pom, 6), "ignore[update]")
 
-    @kills(
-        Mutation(
-            maven_marker_policy.report_markers,
-            "steers_the_update=reason is None",
-            "steers_the_update=not pom_names_rules",
-            "an invalid item on a version Maven does not update is said to leave the reference unchanged",
-        )
-    )
-    def test_an_invalid_item_on_a_parents_property_holds_nothing_back(self, mock_run: Mock, mock_glob: Mock):
-        """Test that an invalid item on a version a parent's property holds is not said to hold the update back."""
-        pom = self.find_pom_versioned_by_a_parent(mock_run, mock_glob, "ignore[stlae]")
-        update_pom_xmls()
-        self.assert_invalid_bracket_item_logged(GUAVA, Location(pom, 6), "stlae", holding_back=False)
-
     def test_a_marker_on_a_dependency_without_a_version_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker steering the update of a version the parent pom manages is redundant here."""
         unversioned = _marked_at_its_element(guava_element(None), "ignore[update]")
@@ -788,13 +774,6 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                 self.assert_recognised_marker_logged(SUREFIRE, location, Marker(ignored_scopes=Scope.UPDATE))
                 self.assert_no_ignored_logged()
                 self.assert_redundant_directive_logged(reason, SUREFIRE, location, "ignore[update]")
-
-    def test_an_unreadable_item_is_warned_about_rather_than_recognised(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker item that does not parse is warned about as invalid, and not reported as recognised."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[stlae]")
-        update_pom_xmls()
-        self.assert_invalid_bracket_item_logged(GUAVA, Location(pom, 6), "stlae")
-        self.assert_none_logged(message_of(Logger.recognised_marker), "recognised marker")
 
     def test_a_marker_silences_the_staleness_warning(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency whose marker sets `stale-after=0` is reported as silenced rather than as stale."""
@@ -1629,12 +1608,10 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.assert_maven_ran(mock_run, rules=_RULES)
 
     def test_a_marker_holding_every_version_back_gets_a_rule_for_every_version(self, mock_run: Mock, mock_glob: Mock):
-        """Test that `ignore[update]`, an unreadable item, or a bound naming a non-release holds every version back."""
+        """Test that `ignore[update]`, or a bound naming a non-release, holds every version back."""
         for directives in (
             "ignore[update]",
             "ignore[update] allow[update<34]",
-            "ignore[stlae]",
-            "set[cooldown=30, stlae]",
             "ignore[update<=34.1rc1]",
             "ignore[update===nightly]",
         ):
@@ -1749,14 +1726,6 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.RULES_OF_THE_POM, GUAVA, Location(pom, 6), "ignore[update>=34]")
         self.assert_none_logged(message_of(Logger.holding_back_range), "range held back")
-
-    def test_an_invalid_item_where_the_pom_names_rules_of_its_own_holds_nothing_back(
-        self, mock_run: Mock, mock_glob: Mock
-    ):
-        """Test that an invalid item on a pom whose versions plugin names rules of its own is not said to hold back."""
-        pom = self.find_pom_naming_rules_of_its_own(mock_run, mock_glob, "ignore[stlae]")
-        update_pom_xmls()
-        self.assert_invalid_bracket_item_logged(GUAVA, Location(pom, 6), "stlae", holding_back=False)
 
     @kills(
         Mutation(

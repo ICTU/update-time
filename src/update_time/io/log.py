@@ -816,36 +816,23 @@ class Logger:
         """Warn that a file declares the dependency but the entry declaring it cannot be found in the file."""
         return self._file_fields(path, dependency=dependency)
 
-    @_warning(
-        "Invalid %(bracket_item)r in the update-time marker for %(dependency)s in %(location)s; "
-        "leaving the reference unchanged"
-    )
+    @_warning("Invalid %(bracket_item)r in the update-time marker for %(dependency)s in %(location)s")
     def invalid_bracket_item(self, dependency: str, item: str, location: Location) -> dict[str, object]:
         """Warn that a marker carries an invalid bracket item."""
         return {"bracket_item": item, "dependency": dependency, "location": location}
 
-    @_warning("Invalid %(bracket_item)r in the update-time marker for %(dependency)s in %(location)s")
-    def invalid_bracket_item_holding_nothing_back(
-        self, dependency: str, item: str, location: Location
-    ) -> dict[str, object]:
-        """Warn that a marker carries an invalid bracket item, where the marker cannot hold the update back."""
-        return {"bracket_item": item, "dependency": dependency, "location": location}
+    def report_marker(self, dependency: str, marker: Marker, location: Location, *, steers_the_update: bool) -> None:
+        """Report a reference's marker.
 
-    def report_marker(self, dependency: str, marker: Marker, location: Location, *, steers_the_update: bool) -> Marker:
-        """Report a reference's marker, and return the directives Update-time acts on.
-
-        An `ignore[update]` and an invalid item hold the update back only where the marker steers the update at all.
+        It logs an `ignore[update]` as holding the update back only where the marker steers the update.
         """
         for directive in marker.default_directives:
             self.redundant_directive(Reference(dependency, "", location), directive, Reason.ASKS_FOR_THE_DEFAULT)
         if marker.invalid_item is not None:
-            invalid = self.invalid_bracket_item if steers_the_update else self.invalid_bracket_item_holding_nothing_back
-            invalid(dependency, marker.invalid_item, location)
-            return marker.effective_directives
+            self.invalid_bracket_item(dependency, marker.invalid_item, location)
         self.recognised_marker(dependency, marker, location)
         if steers_the_update and marker.ignores(Scope.UPDATE):
             self.ignored(dependency, marker, location)
-        return marker
 
     def warn_if_the_opt_in_is_redundant(
         self,
@@ -912,10 +899,10 @@ class Logger:
     def recognised_marker(self, dependency: str, marker: Marker, location: Location) -> dict[str, object] | None:
         """Log that a reference's marker was recognised.
 
-        The marker's directives are echoed verbatim, the `raw` text the user wrote, so a user comparing the log
-        line against their file sees their own marker.
+        The marker is echoed as the file spells it, so a user comparing the log line against their file sees their
+        own marker.
         """
-        if not marker.raw:
+        if not str(marker):
             return None
         return {"directives": marker, "dependency": dependency, "location": location}
 

@@ -405,7 +405,6 @@ class RecompileTest(UvSettingsTestCase):
         cases = {
             "ignore[update]": "flask>=1  # update-time: ignore[update]\n",
             "ignore[update] on a name spelled otherwise": "Flask>=1  # update-time: ignore[update]\n",
-            "an item Update-time cannot read": "flask>=1  # update-time: ignore[stlae]\n",
             "a bound leaving out the pinned version": "flask>=1  # update-time: allow[update<1]\n",
             "a bound dropping a range from the middle": "flask>=1  # update-time: ignore[update>=2,<3]\n",
             "a bound dropping a compatible release": "flask>=1  # update-time: ignore[update~=2.0]\n",

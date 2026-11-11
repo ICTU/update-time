@@ -53,14 +53,15 @@ def _warn_about_dependencies(checked: list[node.CheckedPackageJson]) -> None:
     """Report the marker of each dependency, and check the dependencies of each package.json."""
     declarations = [list(each.package_json.declarations()) for each in checked]
     policies = [each.policy for each in checked]
-    check_targets = [
+    for file_declarations, policy in zip(declarations, policies, strict=True):
         report_markers(file_declarations, _LOG, policy)
-        for file_declarations, policy in zip(declarations, policies, strict=True)
-    ]
     for file_declarations, policy in zip(declarations, policies, strict=True):
         warn_about_redundant_directives([file_declarations], _LOG, policy)
     _report_undeclared_references([each.package_json for each in checked])
-    registry_declarations = [[target for target in targets if target.names_a_release] for targets in check_targets]
+    registry_declarations = [
+        [declaration for declaration in file_declarations if declaration.names_a_release]
+        for file_declarations in declarations
+    ]
     warn_about_delegated_checks(
         registry_declarations, _LOG, project_resolver(npmjs.project), npmjs.deprecation, Ecosystem.NPM
     )
@@ -74,7 +75,7 @@ def _report_undeclared_references(files: list[PackageJson]) -> None:
 
 
 def _report_undeclared_reference(reference: SteeredReference) -> None:
-    """Report the marker of a dependency its section does not declare, and one holding directives as redundant."""
+    """Report the marker of a dependency its section does not declare, and as redundant where it reads every item."""
     marker = reference.marker
     _LOG.report_marker(reference.dependency, marker, reference.location, steers_the_update=False)
     if marker.invalid_item is None and marker.raw:

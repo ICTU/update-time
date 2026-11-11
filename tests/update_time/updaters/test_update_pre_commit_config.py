@@ -1,8 +1,8 @@
 """Unit tests for the pre-commit config update script."""
 
-from unittest.mock import ANY, Mock, call, patch
+from unittest.mock import Mock, call, patch
 
-from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, VersionBound
+from update_time.domain.bound import NO_BOUND, Verb, VersionBound
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
     Archival,
@@ -473,16 +473,6 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_resolved(mock_get_latest_version, "v4.5.0", bound(Verb.IGNORE, "major-update"))
         self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
         self.assert_no_warnings_logged()
-
-    def test_invalid_specifier_leaves_rev_unchanged(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a marker with an unparsable version specifier warns and leaves the rev unchanged."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
-        config_file = mock_path(config("rev: v4.5.0  # update-time: allow[update@@@]\n"))
-        mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
-        config_file.write_text.assert_not_called()
-        self.assert_resolved(mock_get_latest_version, "v4.5.0", BLOCK_ALL_UPDATES)
-        self.assert_invalid_bracket_item_logged(self.HOOK, ANY, "@@@")
 
 
 @patch("pathlib.Path.glob")

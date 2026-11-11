@@ -34,8 +34,8 @@ def _package_json(node: str = "18", *, section: str = "", directives: str = "", 
     """Return a package.json declaring the Node engine, with the section and the marker the test asks for.
 
     `section` declares a `node` version of its own above the engine, and `directives` steers the engine from the
-    file's `update-time` field. `field` sets that field's whole value instead, for a file whose field the marker
-    language cannot read. The engine sits on line 3, and on line 6 where a section is declared above it.
+    file's `update-time` field. `field` sets that field's whole value instead. The engine sits on line 3, and on line
+    6 where a section is declared above it.
     """
     other = {section: {"node": _OTHER_NODE_VERSION}} if section else {}
     marker: dict[str, object] = {"update-time": {"engines": {"node": directives}}} if directives else {}
@@ -211,25 +211,61 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
         self.assert_stale_dependency_logged("node", "19", Location(mock_package_json, 3))
 
-    def test_invalid_item_in_the_update_time_field_leaves_the_engine_unchanged(self, mock_glob: Mock):
-        """Test that an item Update-time cannot read is warned about and holds the engine's update back."""
+    def test_invalid_item_in_the_update_time_field_is_warned_about_and_the_engine_updates(self, mock_glob: Mock):
+        """Test that an item Update-time cannot read is warned about, and the engine updates as usual."""
         mock_package_json = self.update_engine(mock_glob, _package_json(directives="ignore[updaet]"))
-        mock_package_json.write_text.assert_not_called()
+        mock_package_json.write_text.assert_called_once_with(_package_json("19", directives="ignore[updaet]"))
         self.assert_invalid_bracket_item_logged("node", Location(mock_package_json, 3), "updaet")
-        self.assert_no_new_version_logged()
 
-    def test_a_field_the_marker_language_cannot_read_leaves_the_engine_unchanged(self, mock_glob: Mock):
-        """Test that an `update-time` field of the wrong shape is warned about, and the engine left as it is."""
-        fields: dict[str, object] = {
-            "a field that is not an object": "ignore",
-            "a section that is not an object": {"engines": "ignore"},
-            "directives that are not a string": {"engines": {"node": ["ignore"]}},
+    @kills(
+        Mutation(
+            package_json_manifest._marker,
+            "return replace(marker, spelling=_field_spelling(contents)) if marker.raw else marker",
+            "return marker",
+            "a readable field's marker is recognised as its directives rather than as the field",
+        ),
+        Mutation(
+            package_json_manifest._field_spelling,
+            ", ensure_ascii=False)",
+            ")",
+            "the field is quoted with its non-ASCII text escaped rather than as the file writes it",
+        ),
+    )
+    def test_the_engines_marker_is_recognised_as_the_field_the_file_holds(self, mock_glob: Mock):
+        """Test that the engine's marker is recognised, quoted as the JSON of its field with its text as written."""
+        marker = '{"engines": {"node": "ignore[update] (wait für 23)"}}'
+        self.update_engine(mock_glob, f'{{"engines": {{"node": "18"}}, "update-time": {marker}}}\n')
+        self.assert_recognised_marker_spelled(marker)
+
+    @kills(
+        Mutation(
+            package_json_manifest._marker,
+            '{name}", spelling=_field_spelling(contents))',
+            '{name}")',
+            "no Recognised line names a field of the wrong shape",
+        ),
+        Mutation(
+            Logger.recognised_marker,
+            "if not str(marker):",
+            "if not marker.raw:",
+            "no Recognised line names a marker spelled without directive text",
+        ),
+    )
+    def test_a_field_of_the_wrong_shape_is_warned_about_and_recognised_and_the_engine_updates(self, mock_glob: Mock):
+        """Test that an `update-time` field of the wrong shape is warned about and quoted, and the engine updates."""
+        fields: dict[str, tuple[object, str]] = {
+            "a field that is not an object": ("ignore[update]", '"ignore[update]"'),
+            "a section that is not an object": ({"engines": "ignore[update]"}, '{"engines": "ignore[update]"}'),
+            "directives that are not a string": (
+                {"engines": {"node": ["ignore[update]"]}},
+                '{"engines": {"node": ["ignore[update]"]}}',
+            ),
         }
-        for case, field in fields.items():
+        for case, (field, spelling) in fields.items():
             with self.subTest(case=case):
                 mock_package_json = self.update_engine(mock_glob, _package_json(field=field))
-                mock_package_json.write_text.assert_not_called()
+                mock_package_json.write_text.assert_called_once_with(_package_json("19", field=field))
                 self.assert_invalid_bracket_item_logged(
                     "node", Location(mock_package_json, 3), "update-time.engines.node"
                 )
-                self.assert_no_new_version_logged()
+                self.assert_recognised_marker_spelled(spelling)

@@ -49,7 +49,7 @@ def _warn_about_redundant_update_directives(
         log.warn_if_redundant_bound(reference, marker)
         return
     reason = ImageNotLookedUpReason(never_updated, Consequence.NEVER_UPDATED)
-    for directive in filter(None, (marker.hold_back_directive, marker.version_bound_directive)):
+    for directive in filter(None, (marker.scope_directive(Scope.UPDATE), marker.version_bound_directive)):
         log.redundant_directive(reference, directive, reason)
 
 

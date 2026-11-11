@@ -19,8 +19,10 @@ if TYPE_CHECKING:
 def report_file_markers(
     file: PythonDependencyToml, log: Logger, policy: ManagerPolicy[Declaration]
 ) -> list[Declaration]:
-    """Report each declaration's marker, and return the declarations, each with the directives Update-time acts on."""
-    return report_markers(declarations_of(file), log, policy)
+    """Report each declaration's marker, and return the declarations."""
+    declarations = declarations_of(file)
+    report_markers(declarations, log, policy)
+    return declarations
 
 
 def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:

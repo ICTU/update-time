@@ -41,3 +41,4 @@
 - 2026-11-04 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_failed_uv_lock_writes_the_files_the_run_rewrote_back` — a failed uv lock leaves a uv.lock behind where the project had none
 - 2026-11-05 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_build_requirement_keeps_its_pin_where_a_dependency_of_the_same_name_moves` — a build requirement moves along with a dependency of its name, although uv does not lock it
 - 2026-11-10 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_failed_uv_lock_keeps_the_cooldown_the_run_wrote` — giving back a uv.lock that held nothing raises where uv did not write one either
+- 2026-11-11 `tests.update_time.updaters.test_update_package_json.MarkerTest.test_an_undeclared_marker_that_cannot_be_read_is_reported_as_invalid` — an unreadable item on an undeclared dependency is said to leave the reference unchanged

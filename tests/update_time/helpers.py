@@ -646,16 +646,17 @@ class LoggingTestCase(CacheClearingTestCase):
             message_of(Logger.recognised_marker), directives=marker, dependency=dependency, location=location
         )
 
-    def assert_invalid_bracket_item_logged(
-        self, dependency: str, location: object, item: str, *, among_others: bool = False, holding_back: bool = True
-    ) -> None:
-        """Assert that an item the marker language cannot read was warned about, as the only warning by default.
+    def assert_recognised_marker_spelled(self, *spellings: str) -> None:
+        """Assert that the markers reported as recognised are spelled as given, in that order."""
+        records = self.records_of(message_of(Logger.recognised_marker))
+        self.assertEqual([str(record.args[1]["directives"]) for record in records], list(spellings))
 
-        The warning says the reference is left unchanged where the item holds the update back.
-        """
-        log_method = Logger.invalid_bracket_item if holding_back else Logger.invalid_bracket_item_holding_nothing_back
+    def assert_invalid_bracket_item_logged(
+        self, dependency: str, location: object, item: str, *, among_others: bool = False
+    ) -> None:
+        """Assert that an item the marker language cannot read was warned about, as the only warning by default."""
         self._assert_reported(
-            message_of(log_method),
+            message_of(Logger.invalid_bracket_item),
             among_others=among_others,
             bracket_item=item,
             dependency=dependency,

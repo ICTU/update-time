@@ -834,17 +834,14 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(left[PYPROJECT_TOML], contents)
         self.assert_no_new_version_logged()
 
-    def test_an_invalid_bracket_item_leaves_the_pin_unchanged(self, run: Mock, get: Mock, glob: Mock):
-        """Test that an item the marker language cannot read warns and keeps the pin, without reporting the marker."""
+    def test_an_invalid_bracket_item_is_warned_about_and_the_pin_updates(self, run: Mock, get: Mock, glob: Mock):
+        """Test that an item the marker language cannot read warns, and the pin updates as usual."""
         for directive, item in {"ignore[stlae]": "stlae", "ignore[update": "[update"}.items():
             with self.subTest(directive=directive):
                 left = self.updated_pin(run, get, glob, marker=directive)
-                self.assertNotIn(PYPROJECT_TOML, left.written_paths)
-                get.assert_not_called()
-                self.assert_no_new_version_logged()
+                self.assertEqual(left[PYPROJECT_TOML], pyproject("package==1.1", marker=directive))
+                self.assert_new_version_logged("package", _NEW_VERSION, Location(PYPROJECT_TOML, 2))
                 self.assert_invalid_bracket_item_logged("package", Location(PYPROJECT_TOML, 2), item)
-                # The item is reported as invalid, so the marker is neither echoed back nor obeyed as a hold-back.
-                self.assert_none_logged(message_of(Logger.recognised_marker), "recognised marker")
                 self.assert_no_ignored_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):

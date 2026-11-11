@@ -27,10 +27,9 @@ def report_markers(declared: list[pom_xml_manifest.Declaration], *, pom_names_ru
     for declaration in declared:
         reason = versions_plugin.reason_the_marker_steers_nothing(declaration, pom_names_rules=pom_names_rules)
         held_back = versions_plugin.range_held_back(declaration) if reason is None else ""
-        marker = _LOG.report_marker(
-            declaration.dependency, declaration.marker, declaration.location, steers_the_update=reason is None
-        )
-        if held_back is None and not marker.holds_the_update_back:
+        marker = declaration.marker
+        _LOG.report_marker(declaration.dependency, marker, declaration.location, steers_the_update=reason is None)
+        if held_back is None and not marker.ignores(Scope.UPDATE):
             _LOG.ignored(declaration.dependency, marker, declaration.location)
         elif held_back:
             _LOG.holding_back_range(declaration, held_back, marker.version_bound_directive)
