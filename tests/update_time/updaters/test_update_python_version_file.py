@@ -3,7 +3,6 @@
 from typing import TYPE_CHECKING
 
 from update_time.io.log import Logger
-from update_time.manifests import python_dependency_toml
 from update_time.markers.directive import Reason
 from update_time.package_managers.uv import uv
 from update_time.primitives.location import Location
@@ -280,15 +279,6 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
                     error=str(error),
                 )
 
-    @kills(
-        Mutation(
-            python_dependency_toml.parsed_config,
-            " or not is_well_formed(config)",
-            "",
-            "a `pyproject.toml` whose `project` is not a table stops the run for every `.python-version` file",
-            raises="AttributeError: 'str' object has no attribute 'get'",
-        )
-    )
     def test_a_pyproject_toml_whose_project_is_not_a_table_bounds_nothing(self, mock_glob: Mock):
         """Test that a `pyproject.toml` whose `project` is not a table leaves the entry to update as without it."""
         self.files[PYPROJECT_TOML] = 'project = "x"\n'

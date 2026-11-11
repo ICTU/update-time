@@ -6,9 +6,9 @@ from update_time.domain.file_type import PYPROJECT_TOML
 from update_time.formats import toml
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests import pyproject_config
 from update_time.manifests import pyproject_toml as pyproject_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
-from update_time.manifests.python_dependency_toml import is_well_formed
 from update_time.package_managers.uv import marker_policy, uv
 from update_time.package_managers.uv.lock import update_workspaces
 from update_time.updaters.uv_pins import warn_about_pins
@@ -16,6 +16,7 @@ from update_time.updaters.uv_pins import warn_about_pins
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from update_time.manifests.pyproject_config import PyprojectConfig
     from update_time.manifests.python_dependency_toml import Declaration, PythonDependencyToml
     from update_time.package_managers.policy import ManagerPolicy
 
@@ -34,17 +35,17 @@ def update_pyproject_tomls() -> None:
     projects_left_as_they_are: dict[PythonDependencyToml, ManagerPolicy[Declaration]] = {}
     for path in glob_for(PYPROJECT_TOML):
         _LOG.path(path)
-        config = toml.read(path)
-        if config is None:
+        table = toml.read(path)
+        if table is None:
             _LOG.invalid_file(path, toml.FORMAT)  # Exists but isn't valid TOML: skip rather than crash on it.
-        elif not is_well_formed(config):
+        elif (config := pyproject_config.from_table(table)) is None:
             _LOG.invalid_file(path, pyproject_toml_manifest.FORMAT)
         elif (name := uv.other_manager(path, config)) is not None:
             _LOG.unsupported_package_manager(path, name, "uv")
         else:
             pyproject_toml = PyprojectToml(path)
             pyproject_tomls.append(pyproject_toml)
-            if not pyproject_toml.declares_a_dependency(config):
+            if not config.declares_a_dependency:
                 _LOG.no_dependencies(path, "uv", "resolve")
                 marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.MARKER_POLICY)
             elif (policy := _policy_for_a_file_left_as_it_is(path, config)) is None:
@@ -57,7 +58,7 @@ def update_pyproject_tomls() -> None:
     warn_about_pins(pyproject_tomls, _LOG, policies)
 
 
-def _policy_for_a_file_left_as_it_is(path: Path, config: dict) -> ManagerPolicy[Declaration] | None:
+def _policy_for_a_file_left_as_it_is(path: Path, config: PyprojectConfig) -> ManagerPolicy[Declaration] | None:
     """Return the policy for the markers of a pyproject.toml that uv does not run for, or None where uv runs for it."""
     if not uv.workspace_root_is_scanned(path):
         return marker_policy.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY

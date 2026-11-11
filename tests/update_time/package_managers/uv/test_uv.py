@@ -6,7 +6,8 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
-from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
+from update_time.manifests import pyproject_config
+from update_time.manifests.pyproject_config import UvWorkspace
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers.uv import uv
 from update_time.package_managers.uv.uv import (
@@ -161,21 +162,21 @@ class WorkspaceRootTest(unittest.TestCase):
     ROOT = Path("/ws/pyproject.toml")
     MEMBER = Path("/ws/packages/lib/pyproject.toml")
 
-    def workspace_at_root(self, **workspace: object):
+    def workspace_at_root(self, **workspace: tuple[str, ...]):
         """Patch `_workspace_table` so only the root declares the given `[tool.uv.workspace]` table."""
         return patch(
             "update_time.package_managers.uv.uv._workspace_table",
-            side_effect=lambda pyproject_toml: workspace if pyproject_toml == self.ROOT else None,
+            side_effect=lambda pyproject_toml: UvWorkspace(**workspace) if pyproject_toml == self.ROOT else None,
         )
 
     def test_member_resolves_to_root(self):
         """Test that a member is resolved to the workspace root that lists it."""
-        with self.workspace_at_root(members=["packages/*"]):
+        with self.workspace_at_root(members=("packages/*",)):
             self.assertEqual(self.ROOT, _workspace_root(self.MEMBER))
 
     def test_root_is_its_own_member(self):
         """Test that the root project, which declares the workspace, resolves to itself."""
-        with self.workspace_at_root(members=["packages/*"]):
+        with self.workspace_at_root(members=("packages/*",)):
             self.assertEqual(self.ROOT, _workspace_root(self.ROOT))
 
     def test_standalone_resolves_to_self(self):
@@ -186,13 +187,13 @@ class WorkspaceRootTest(unittest.TestCase):
     def test_excluded_member_resolves_to_self(self):
         """Test that a nested project excluded from the workspace is treated as a standalone root."""
         vendor = Path("/ws/packages/vendor/pyproject.toml")
-        with self.workspace_at_root(members=["packages/*"], exclude=["packages/vendor"]):
+        with self.workspace_at_root(members=("packages/*",), exclude=("packages/vendor",)):
             self.assertEqual(vendor, _workspace_root(vendor))
 
     def test_member_not_matching_a_glob_resolves_to_self(self):
         """Test that a nested project not matched by any members glob is treated as a standalone root."""
         outsider = Path("/ws/tools/lib/pyproject.toml")
-        with self.workspace_at_root(members=["packages/*"]):
+        with self.workspace_at_root(members=("packages/*",)):
             self.assertEqual(outsider, _workspace_root(outsider))
 
 
@@ -202,7 +203,7 @@ class WorkspaceTableTest(unittest.TestCase):
     def test_returns_the_workspace_table(self):
         """Test that a declared `[tool.uv.workspace]` table is returned."""
         contents = '[project]\nname = "root"\n\n[tool.uv.workspace]\nmembers = ["packages/*"]\n'
-        self.assertEqual(_workspace_table(mock_path(contents)), {"members": ["packages/*"]})
+        self.assertEqual(_workspace_table(mock_path(contents)), UvWorkspace(members=("packages/*",)))
 
     def test_no_workspace_table(self):
         """Test that a pyproject.toml without a workspace table yields None."""
@@ -214,16 +215,11 @@ class WorkspaceTableTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            uv._workspace_table,
-            "if config is None or not is_well_formed(config):",
-            "if config is None:",
-            "a workspace table that is not a table is taken for one, so the walk up the tree stops with a traceback",
-        ),
-        Mutation(
-            python_dependency_toml_manifest,
-            '    ("tool", "uv", "workspace"),\n',
-            "",
-            "a pyproject.toml whose workspace is not a table counts as well formed",
+            pyproject_config,
+            '"workspace"), _is_table',
+            '"workspace"), bool',
+            "a pyproject.toml whose workspace is not a table stops the walk up the tree with a traceback",
+            raises="AttributeError: 'str' object has no attribute 'get'",
         ),
     )
     def test_malformed_pyproject_toml(self):

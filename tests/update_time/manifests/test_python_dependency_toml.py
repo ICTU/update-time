@@ -3,7 +3,7 @@
 import unittest
 from typing import TYPE_CHECKING
 
-from update_time.manifests import python_dependency_toml
+from update_time.manifests import pyproject_config, python_dependency_toml
 from update_time.manifests.inline_script import InlineScript
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.marker import Marker, Scope
@@ -233,15 +233,15 @@ class DeclarationsTest(unittest.TestCase):
     @kills(
         Mutation(
             python_dependency_toml.PythonDependencyToml.declarations,
-            "uv_sourced=normalized_python_name(requirement.name) in sourced,",
-            "uv_sourced=requirement.name in sourced,",
+            "uv_sourced=normalized_python_name(requirement.name) in config.uv.sources,",
+            "uv_sourced=requirement.name in config.uv.sources,",
             "a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked "
             "about a name it has no release for",
         ),
         Mutation(
-            python_dependency_toml._uv_source_names,
-            'return {normalized_python_name(name) for name in _uv_table(config).get("sources", {})}',
-            'return set(_uv_table(config).get("sources", {}))',
+            pyproject_config.from_table,
+            'sources=frozenset(normalized_python_name(name) for name in uv.get("sources", {})),',
+            'sources=frozenset(uv.get("sources", {})),',
             "a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about "
             "a name it has no release for",
         ),

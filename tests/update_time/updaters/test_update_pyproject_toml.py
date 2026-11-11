@@ -6,7 +6,7 @@ from unittest.mock import ANY, Mock, call, patch
 
 from update_time.io.log import Logger
 from update_time.lock_files import uv_lock
-from update_time.manifests import pyproject_toml as pyproject_toml_manifest
+from update_time.manifests import pyproject_config
 from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
@@ -53,16 +53,16 @@ if TYPE_CHECKING:
 # What the log renders for version 1.1, whose changelog PyPI does not name in `files_after_update`.
 _NEW_VERSION = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
 
-# The pyproject.toml updater checks these tables. Each entry names the table's row, the case of the test below that
-# pins it, and the error a run stops with once the row is gone. The `project` table is left out: another test guards
-# its row too.
+# Some of the tables the pyproject.toml updater checks. Each entry names the table's row, the case of the test below
+# that pins it, and the error a run stops with once the row is gone. The `project` table is left out, since another
+# test guards its row too.
 _CHECKED_TABLES = (
     (
         '("project", "optional-dependencies")',
         "project.optional-dependencies",
-        "AttributeError: 'str' object has no attribute 'values'",
+        "AttributeError: 'str' object has no attribute 'items'",
     ),
-    ('("dependency-groups",)', "dependency-groups", "AttributeError: 'str' object has no attribute 'values'"),
+    ('("dependency-groups",)', "dependency-groups", "AttributeError: 'str' object has no attribute 'items'"),
     ('("tool",)', "tool", "AttributeError: 'str' object has no attribute 'get'"),
     ('("tool", "uv")', "tool.uv", "AttributeError: 'str' object has no attribute 'get'"),
     ('("build-system",)', "build-system", "AttributeError: 'str' object has no attribute 'get'"),
@@ -1035,8 +1035,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     @kills(
         *(
             Mutation(
-                python_dependency_toml_manifest,
-                f"    {row},\n",
+                pyproject_config,
+                f"    ({row}, _is_table),\n",
                 "",
                 f"a pyproject.toml whose {table} is not a table stops the run",
                 raises=error,
@@ -1044,8 +1044,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             for row, table, error in _CHECKED_TABLES
         ),
         Mutation(
-            python_dependency_toml_manifest.is_well_formed,
-            "return all(isinstance(array, list) for array in _dependency_arrays(config))",
+            pyproject_config._is_well_formed,
+            "return all(isinstance(array, list) for _, array in [*_uv_arrays(table), *_build_requirements(table)])",
             "return True",
             "a pyproject.toml whose dependency array is not an array has uv run for it",
         ),
@@ -1101,7 +1101,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         ),
         Mutation(
             uv.manages,
-            'if root_config.get("tool", {}).get("uv", {}).get("managed") is False:',
+            "if not root_config.uv.managed:",
             "if False:",
             "uv runs for a pyproject.toml whose `[tool.uv]` table sets managed = false",
         ),
@@ -1171,7 +1171,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
 
     @kills(
         Mutation(
-            pyproject_toml_manifest,
+            pyproject_config,
             '("dependencies", "optional-dependencies")',
             '("dependencies",)',
             "uv does not run for a project whose extras its build backend declares",

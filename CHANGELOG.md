@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Drop a marker item Update-time cannot read and update the reference as usual, rather than leaving the reference unchanged, so the warning about such an item takes one form. Report a marker holding such an item as recognised, and quote a `package.json`'s whole `update-time` field in the `Recognised` line. Closes [#539](https://github.com/ICTU/update-time/issues/539).
 
+### Fixed
+
+- Warn about and skip a `pyproject.toml` or inline script metadata that Update-time cannot parse. Closes [#511](https://github.com/ICTU/update-time/issues/511).
+
 ## 0.0.57 - 2026-11-11
 
 ### Fixed
