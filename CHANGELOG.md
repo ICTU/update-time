@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.57 - 2026-11-11
+
 ### Fixed
 
 - Leave a `pyproject.toml` that uv does not manage as it is, rather than writing a `uv.lock` beside it and an `exclude-newer` into it, and still check its dependencies. Closes [#507](https://github.com/ICTU/update-time/issues/507).
