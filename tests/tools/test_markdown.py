@@ -2,6 +2,7 @@
 
 import unittest
 
+from tools import markdown
 from tools.markdown import anchor, headings, lines_without_code_blocks, without_code_blocks
 
 from tests.mutation import Mutation, kills
@@ -38,10 +39,26 @@ class WithoutCodeBlocksTest(unittest.TestCase):
 class AnchorTest(unittest.TestCase):
     """Unit tests for the anchor GitHub gives a heading."""
 
-    def test_github_slug_rules(self):
-        """Test that the slug is lower-cased, with punctuation and emoji dropped and the spaces left as hyphens."""
+    @kills(
+        Mutation(
+            markdown._combining_mark,
+            'unicodedata.category(match[0]).startswith("M")',
+            r'match[0] == "\ufe0f"',
+            "only the U+FE0F after an emoji is kept, so another combining mark is dropped where GitHub keeps it",
+        ),
+        Mutation(
+            markdown._combining_mark,
+            'unicodedata.category(match[0]).startswith("M")',
+            "unicodedata.combining(match[0])",
+            "only a mark with a combining class is kept, so the U+FE0F after an emoji such as ⚠️ is dropped",
+        ),
+    )
+    def test_github_anchor_rules(self):
+        """Test that the anchor is lower-cased, drops punctuation and emoji, keeps marks, and hyphenates spaces."""
         anchors = {
             "⏳ Cooldown": "#-cooldown",
+            "\u26a0\ufe0f Warnings": "#\ufe0f-warnings",
+            "Cafe\u0301": "#cafe\u0301",
             "What files are updated?": "#what-files-are-updated",
             "`pyproject.toml` dependencies": "#pyprojecttoml-dependencies",
         }
