@@ -1,4 +1,4 @@
-"""Read and rewrite the dependencies a file declares in TOML: a pyproject.toml, or a PEP 723 script block.
+"""Read and rewrite the dependencies a file declares in TOML: a pyproject.toml, or PEP 723 inline script metadata.
 
 The dependency TOML sits in the whole file or in the script's block, which the file's class says, so reading and
 rewriting the dependencies works alike for both kinds of file. Formatting, comments, and quoting are preserved.
@@ -6,7 +6,7 @@ rewriting the dependencies works alike for both kinds of file. Formatting, comme
 
 import re
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
@@ -14,6 +14,7 @@ from packaging.specifiers import SpecifierSet
 from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.domain.line import Line, located_lines
 from update_time.formats import toml
+from update_time.manifests import pyproject_config
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, parse_marker
 from update_time.markers.reference import SteeredReference
@@ -21,26 +22,21 @@ from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, MutableSequence
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
-    from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.domain.dependency import VersionString
+    from update_time.manifests.pyproject_config import PyprojectConfig
 
 
 type _DeclarationPosition = int
 
 
-# The manifests read these tables, each named by the keys that lead to it. Each follows the table that holds it, so
-# that table is known to be a table by the time the one inside it is read.
-_TABLES = (
-    ("project",),
-    ("project", "optional-dependencies"),
-    ("dependency-groups",),
-    ("tool",),
-    ("tool", "uv"),
-    ("tool", "uv", "workspace"),
-    ("build-system",),
-)
+class _Rewrite(NamedTuple):
+    """The file's text with specs replaced, and the config of the TOML whose specs were replaced."""
+
+    text: str
+    config: PyprojectConfig
 
 
 def _placeholder(position: _DeclarationPosition) -> str:
@@ -49,65 +45,6 @@ def _placeholder(position: _DeclarationPosition) -> str:
     The position is wrapped rather than appended, so one placeholder is never the start of another.
     """
     return f"update-time-spec-{position}-update-time-spec"
-
-
-def parsed_config(toml_text: str) -> dict | None:
-    """Return the TOML parsed, or None when it isn't valid TOML or a table the manifests read is not a table."""
-    if (config := toml.parse(toml_text)) is None or not is_well_formed(config):
-        return None
-    return config
-
-
-def is_well_formed(config: Mapping) -> bool:
-    """Return whether each table the manifests read is a table, and each dependency array an array, where declared."""
-    if not all(_is_table_or_absent(config, keys) for keys in _TABLES):
-        return False
-    return all(isinstance(array, list) for array in _dependency_arrays(config))
-
-
-def _is_table_or_absent(config: Mapping, keys: tuple[str, ...]) -> bool:
-    """Return whether the keys lead to a table, or to nothing the config declares."""
-    *parents, key = keys
-    table = config
-    for parent in parents:
-        table = table.get(parent, {})
-    return isinstance(table.get(key, {}), dict)
-
-
-def _uv_table(config: Mapping) -> Mapping:
-    """Return the config's `[tool.uv]` table, or an empty table when it has none."""
-    return config.get("tool", {}).get("uv", {})
-
-
-def _uv_source_names(config: dict) -> set[DependencyName]:
-    """Return the names of the dependencies uv resolves from a source of its own, each normalised.
-
-    uv matches a `sources` key to a dependency by the normalised name, so a key spells the dependency any of the
-    ways that normalize to the same name.
-    """
-    return {normalized_python_name(name) for name in _uv_table(config).get("sources", {})}
-
-
-def _dependency_arrays(config: Mapping) -> list[MutableSequence]:
-    """Return every array of dependency specs the config declares: the ones uv resolves, and the build requirements."""
-    return [*uv_dependency_arrays(config), config.get("build-system", {}).get("requires", [])]
-
-
-def uv_dependency_arrays(config: Mapping) -> list[MutableSequence]:
-    """Return every array of dependency specs that uv resolves.
-
-    A pyproject.toml declares them in the project's own array, in an array per extra, in an array per dependency
-    group, and in uv's legacy `[tool.uv] dev-dependencies`. uv still resolves that legacy array, so it is read like
-    the rest. An inline script metadata block declares them in one array of its own.
-    """
-    project = config.get("project", {})
-    return [
-        project.get("dependencies", []),
-        *project.get("optional-dependencies", {}).values(),
-        *config.get("dependency-groups", {}).values(),
-        _uv_table(config).get("dev-dependencies", []),
-        config.get("dependencies", []),
-    ]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -200,19 +137,17 @@ class PythonDependencyToml:
         too. A spec that does not parse is left out, without shifting the positions of the declarations after it.
         """
         contents = self.read()
-        config = parsed_config(self.toml(contents)) or {}
-        sourced = _uv_source_names(config)
-        # The arrays uv resolves come before the build requirements, so the specs in them take the first positions.
-        uv_resolved = sum(isinstance(spec, str) for array in uv_dependency_arrays(config) for spec in array)
         specs: dict[_DeclarationPosition, str] = {}
 
         def place(position: _DeclarationPosition, spec: str) -> str:
             specs[position] = spec
             return _placeholder(position)
 
-        placed = self._replaced_specs(contents, place)
-        if placed is None:
+        if (rewrite := self._replaced_specs(contents, place)) is None:
             return []
+        placed, config = rewrite
+        # The arrays uv resolves come before the build requirements, so the specs in them take the first positions.
+        uv_resolved = sum(len(array.specs) for array in config.uv_dependency_arrays)
         requirements = {
             position: requirement for position, spec in specs.items() if (requirement := _requirement(spec)) is not None
         }
@@ -226,7 +161,7 @@ class PythonDependencyToml:
                 requirement.name,
                 _pinned_version(requirement),
                 locations[position],
-                uv_sourced=normalized_python_name(requirement.name) in sourced,
+                uv_sourced=normalized_python_name(requirement.name) in config.uv.sources,
                 direct_url=bool(requirement.url),
                 build_requirement=position > uv_resolved,
                 environment_marker=str(requirement.marker or ""),
@@ -250,7 +185,7 @@ class PythonDependencyToml:
             rewritten = _rewritten_spec(spec, declaration, versions[declaration])
             return rewritten if rewritten != spec else None
 
-        return self._replaced_specs(contents, new_spec) or contents
+        return contents if (rewrite := self._replaced_specs(contents, new_spec)) is None else rewrite.text
 
     def with_locked_requirements(self, contents: str, bounds: Mapping[Declaration, str]) -> str:
         """Return the contents with the requirement of each declaration narrowed by the specifier `bounds` holds for it.
@@ -269,22 +204,26 @@ class PythonDependencyToml:
             requirement.specifier &= SpecifierSet(bounds[declaration])
             return str(requirement)
 
-        return self._replaced_specs(contents, new_spec) or contents
+        return contents if (rewrite := self._replaced_specs(contents, new_spec)) is None else rewrite.text
 
-    def _replaced_specs(self, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]) -> str | None:
+    def _replaced_specs(
+        self, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]
+    ) -> _Rewrite | None:
         """Return the file's text with each declared spec `replace` gives a replacement for, or None when it gives none.
 
         Every call walks the arrays in the same order, so a spec has the same position in each of them.
 
         Only the specs in the dependency arrays change. A string spelled like a spec elsewhere in the file, and the
-        comments, quoting, and whitespace around the specs, come back as they were. A file that is not valid TOML
-        comes back as None as well, so one malformed file does not abort the run.
+        comments, quoting, and whitespace around the specs, come back as they were. A file that is not valid TOML, or
+        not well formed, comes back as None as well, so one malformed file does not abort the run.
         """
-        if (document := toml.parse_document(self.toml(contents))) is None:
+        document = toml.parse_document(self.toml(contents))
+        if document is None or (config := pyproject_config.from_table(document)) is None:
             return None
         replaced = False
         position = 0
-        for array in _dependency_arrays(document):
+        for dependency_array in config.dependency_arrays:
+            array = toml.nested_array(document, *dependency_array.keys)
             for index, spec in enumerate(array):
                 if not toml.is_string(spec):
                     continue
@@ -292,7 +231,7 @@ class PythonDependencyToml:
                 if (new_spec := replace(position, spec)) is not None:
                     array[index] = toml.string(new_spec, quoted_as=spec)
                     replaced = True
-        return self.with_toml(contents, toml.dumps(document)) if replaced else None
+        return _Rewrite(self.with_toml(contents, toml.dumps(document)), config) if replaced else None
 
 
 def _marker(lines: list[Line], position: _DeclarationPosition, location: Location) -> Marker:

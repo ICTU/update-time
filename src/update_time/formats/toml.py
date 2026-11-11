@@ -1,7 +1,9 @@
 """Read, parse, and edit TOML files."""
 
 import tomllib
-from typing import TYPE_CHECKING, cast
+from functools import reduce
+from operator import getitem
+from typing import TYPE_CHECKING, TypeIs, cast
 
 import tomlkit
 import tomlkit.container
@@ -64,9 +66,14 @@ def line_of(text: str, table: str, key: str) -> int:
     return line_number(placed, placed.index(_PLACEHOLDER))
 
 
-def is_string(value: object) -> bool:
+def is_string(value: object) -> TypeIs[tomlkit.items.String]:
     """Return whether the value is a TOML string rather than another kind of item."""
     return isinstance(value, tomlkit.items.String)
+
+
+def nested_array(document: tomlkit.TOMLDocument, *keys: str) -> tomlkit.items.Array:
+    """Return the array the nested keys lead to, which the document has to declare."""
+    return cast("tomlkit.items.Array", reduce(getitem, keys, document))
 
 
 def nested_value(document: tomlkit.TOMLDocument, *keys: str) -> tuple[str, str] | None:

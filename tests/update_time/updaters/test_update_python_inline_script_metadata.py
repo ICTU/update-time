@@ -157,7 +157,7 @@ class ScriptLockTest(_ScriptLockTestCase):
     @kills(
         Mutation(
             uv_module.declarations_of,
-            "if isinstance(file, PyprojectToml) else set()",
+            "if isinstance(file, PyprojectToml) else frozenset()",
             "",
             "a script takes on the sources of a workspace root above it, which `uv lock --script` ignores",
         )
