@@ -6,7 +6,6 @@ naming the action, and Update-time matches the version itself.
 """
 
 from dataclasses import dataclass
-from enum import StrEnum
 from functools import cache, reduce
 from typing import TYPE_CHECKING, NotRequired, Self, TypedDict
 
@@ -15,8 +14,8 @@ from cvss.exceptions import CVSSError
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.vulnerability import Vulnerability
-from update_time.io.fetch import fetch
+from update_time.domain.vulnerability import Ecosystem, Vulnerability
+from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
 from update_time.sources.github import repository_of
 
@@ -28,22 +27,23 @@ if TYPE_CHECKING:
 _LOG = get_logger("osv")
 
 
-class Ecosystem(StrEnum):
-    """The ecosystems Update-time asks OSV about, in OSV's own spelling."""
+# The name OSV gives each ecosystem.
+_OSV_ECOSYSTEMS = {
+    Ecosystem.PYPI: "PyPI",
+    Ecosystem.NPM: "npm",
+    Ecosystem.MAVEN: "Maven",
+    Ecosystem.GITHUB_ACTIONS: "GitHub Actions",
+}
 
-    PYPI = "PyPI"
-    NPM = "npm"
-    MAVEN = "Maven"
-    GITHUB_ACTIONS = "GitHub Actions"
 
-    @property
-    def matches_versions(self) -> bool:
-        """Return whether OSV matches a version against the ecosystem's advisories, which it does not for actions."""
-        return self is not Ecosystem.GITHUB_ACTIONS
+def _matches_versions(ecosystem: Ecosystem) -> bool:
+    """Return whether OSV matches a version against the ecosystem's advisories, which it does not for actions."""
+    return ecosystem is not Ecosystem.GITHUB_ACTIONS
 
-    def package_name(self, dependency: str) -> str:
-        """Return the name OSV knows the dependency by in the ecosystem: for an action, the repository holding it."""
-        return str(repository_of(dependency)) if self is Ecosystem.GITHUB_ACTIONS else dependency
+
+def _package_name(ecosystem: Ecosystem, dependency: str) -> str:
+    """Return the name OSV knows the dependency by in the ecosystem: for an action, the repository holding it."""
+    return str(repository_of(dependency)) if ecosystem is Ecosystem.GITHUB_ACTIONS else dependency
 
 
 class _Severity(TypedDict):
@@ -107,13 +107,13 @@ class _Query:
     @classmethod
     def of(cls, reference: Reference, ecosystem: Ecosystem) -> Self:
         """Return the query asking OSV about the reference."""
-        version = reference.current_version if ecosystem.matches_versions else ""
-        return cls(ecosystem.package_name(reference.dependency), ecosystem, version)
+        version = reference.current_version if _matches_versions(ecosystem) else ""
+        return cls(_package_name(ecosystem, reference.dependency), ecosystem, version)
 
     @property
     def package(self) -> _Package:
         """Return the package OSV knows the dependency as."""
-        return {"name": self.name, "ecosystem": self.ecosystem}
+        return {"name": self.name, "ecosystem": _OSV_ECOSYSTEMS[self.ecosystem]}
 
     @property
     def payload(self) -> dict[str, object]:
@@ -168,8 +168,8 @@ def _queries_with_advisories(queries: Sequence[_Query]) -> list[bool | None]:
     asked. Such a query gets None rather than False.
     """
     payloads = [query.payload for query in queries]
-    response = fetch(f"{_OSV_API}/v1/querybatch", _LOG, method="post", json={"queries": payloads})
-    results = response.json().get("results", []) if response is not None else []
+    batch = fetch_json(f"{_OSV_API}/v1/querybatch", _LOG, method="post", json={"queries": payloads}).value
+    results = batch.get("results", []) if batch is not None else []
     answers = results[: len(queries)]
     return [bool(answer.get("vulns")) for answer in answers] + [None] * (len(queries) - len(answers))
 
@@ -188,8 +188,8 @@ def _advisory_records(query: _Query) -> list[_Record] | None:
     The request is cached, so references with the same query share it: two references to one action, or two pins of
     one version in different files.
     """
-    response = fetch(f"{_OSV_API}/v1/query", _LOG, method="post", json=query.payload)
-    return None if response is None else response.json().get("vulns", [])
+    answer = fetch_json(f"{_OSV_API}/v1/query", _LOG, method="post", json=query.payload).value
+    return None if answer is None else answer.get("vulns", [])
 
 
 def _records_naming_the_version(records: list[_Record], query: _Query, version: str) -> list[_Record]:
@@ -197,7 +197,7 @@ def _records_naming_the_version(records: list[_Record], query: _Query, version: 
 
     OSV picks them out already, except for GitHub Actions.
     """
-    if query.ecosystem.matches_versions:
+    if _matches_versions(query.ecosystem):
         return records
     pinned = Version(version)
     return [record for record in records if _names(record, query.package, pinned)]

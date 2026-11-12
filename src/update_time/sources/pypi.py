@@ -2,14 +2,12 @@
 
 import re
 import string
-from dataclasses import replace
 from functools import cache, partial
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import Version
 
-from update_time.domain.archival import archival_reporting
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import CooldownWalk, first_eligible
 from update_time.domain.dependency import (
@@ -20,16 +18,17 @@ from update_time.domain.dependency import (
     DependencyVersion,
     PinnedDependency,
     Project,
+    ProjectGetter,
     Release,
     Yank,
     is_valid,
     normalized_python_name,
 )
-from update_time.domain.publication import publication_date_reporting
-from update_time.domain.vulnerability import vulnerability_reporting
-from update_time.domain.yank import with_yank_state, yank_reporting
+from update_time.domain.source import Source, every_dependency
+from update_time.domain.vulnerability import Ecosystem
+from update_time.domain.yank import with_yank_state
 from update_time.formats import markdown
-from update_time.io.fetch import failure_reason, fetch
+from update_time.io.fetch import fetch, fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
@@ -122,16 +121,11 @@ class ReleaseMetadata(TypedDict):
 @cache
 def release_metadata(package: str, version: str) -> LookedUp[ReleaseMetadata]:
     """Get the release metadata from PyPI, or why it can't be fetched."""
-    response = fetch(f"{_PYPI}/pypi/{package}/{version}/json", _LOG, require_ok=False)
-    if response is not None and not response.ok:  # The fetch logged a failed request, but not a refused one
-        _LOG.response(response)
-    if response is None or not response.ok:
-        return LookedUp(None, failure_reason(response))
-    return LookedUp(response.json())
+    return fetch_json(f"{_PYPI}/pypi/{package}/{version}/json", _LOG)
 
 
 def _project_metadata(package: str) -> dict | None:
-    """Get the package's metadata from PyPI's Index API, or None if it can't be fetched.
+    """Get the package's metadata from PyPI's Index API, or None if it can't be read.
 
     The name is normalized first, so every spelling of one package shares a single request; the index redirects
     the other spellings to that one anyway.
@@ -140,13 +134,13 @@ def _project_metadata(package: str) -> dict | None:
 
 
 def _project_metadata_or_empty(package: str) -> dict:
-    """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be fetched."""
+    """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be read."""
     return _project_metadata(package) or {}
 
 
 @cache
 def _index_metadata(package: str) -> dict | None:
-    """Fetch the Index API response for the normalized package name, or None if it can't be fetched.
+    """Fetch the Index API response for the normalized package name, or None if it can't be read.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
@@ -154,12 +148,11 @@ def _index_metadata(package: str) -> dict | None:
     and `_newest_release` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
-    response = fetch(f"{_PYPI}/simple/{package}/", _LOG, headers=headers)
-    return response.json() if response is not None else None
+    return fetch_json(f"{_PYPI}/simple/{package}/", _LOG, headers=headers).value
 
 
 def _project_versions(package: str) -> list[str]:
-    """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched."""
+    """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be read."""
     return _project_metadata_or_empty(package).get("versions", [])
 
 
@@ -192,7 +185,7 @@ def _newest_release(package: DependencyName) -> Release | None:
 _ARCHIVED_STATUS = "archived"
 
 
-@archival_reporting
+@partial(ProjectGetter, declares_archival=True)
 def project(package: DependencyName) -> Project:
     """Return what PyPI reports about the project: its newest release, and whether it declares it archived."""
     return Project(newest=_newest_release(package), archival=_archival(package))
@@ -201,7 +194,7 @@ def project(package: DependencyName) -> Project:
 def _archival(package: DependencyName) -> Archival | None:
     """Return what PyPI declares about the project: whether it is archived, and the reason published beside it.
 
-    The archival is None where the Index API can't be fetched.
+    The archival is None where the Index API can't be read.
     """
     if (metadata := _project_metadata(package)) is None:
         return None
@@ -216,10 +209,6 @@ def _release_datetime(urls: list[_Distribution]) -> datetime | None:
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
 
-@archival_reporting
-@publication_date_reporting
-@vulnerability_reporting
-@yank_reporting
 def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown.
 
@@ -241,14 +230,11 @@ def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, co
         current_version,
         cooldown_days,
     )
-    latest = with_yank_state(latest, current_version, partial(yank_state, package))
-    # Always attach what PyPI reports about the project, so a pin that is already up to date can still be reported
-    # as stale or archived. It rides on the Index API response fetched above, so it costs no request of its own.
-    return replace(latest, project=project(package))
+    return with_yank_state(latest, current_version, partial(yank_state, package))
 
 
 def yank_state(package: str, version: str) -> Yank | None:
-    """Return the version's yank state (PEP 592), or None where the Index API can't be fetched or doesn't list it.
+    """Return the version's yank state (PEP 592), or None where the Index API can't be read or doesn't list it.
 
     The Index API lists each distribution file's yank state (`false`, `true`, or the reason string); a version is
     yanked when one of its files is. Files whose name doesn't parse to a version are skipped. So the Index API lists
@@ -391,3 +377,14 @@ def _changelog_from_github_releases(url: str, package: str, version: str) -> Cha
 def _changelog_from_repository_root(url: str, version: str) -> Changes:
     """Get the changelog from a changelog file in the root of the repository."""
     return changes_from_changelog_file(github_repository(url), version)
+
+
+SOURCE = Source(
+    project=project,
+    yank=yank_state,
+    changes=get_changes,
+    publication_date=get_publication_datetime,
+    ecosystem=Ecosystem.PYPI,
+    new_version=get_latest_version,
+    dates_versions_of=every_dependency,
+)

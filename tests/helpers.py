@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 from unittest.mock import Mock, patch
 
+import requests
+
 from tests.mutation import CHECKED_TEST, CHECKS_OFF
 
 if TYPE_CHECKING:
@@ -28,6 +30,14 @@ def mock_response(json: Mapping | list | str | None = None, **kwargs: object) ->
     response.links = {}  # requests parses the Link header into `.links`; default to none, override per test.
     response.headers = {}  # A real response always carries a mapping of headers; default to none, override per test.
     response.configure_mock(**kwargs)
+    return response
+
+
+def unparsable_response(**kwargs: object) -> Mock:
+    """Return a mock requests Response whose body is not JSON, with the attributes the keyword arguments set."""
+    response = mock_response()
+    response.configure_mock(**kwargs)
+    response.json.side_effect = requests.JSONDecodeError("Expecting value", "Too Many Requests", 0)
     return response
 
 

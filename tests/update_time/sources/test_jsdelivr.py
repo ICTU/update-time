@@ -1,19 +1,16 @@
 """Unit tests for the jsDelivr source."""
 
-from datetime import datetime
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, PinnedDependency, Release, Yank
+from update_time.domain.dependency import DependencyVersion, PinnedDependency, Yank
 from update_time.io.log import Logger
-from update_time.sources import jsdelivr
 from update_time.sources.jsdelivr import version_getter
 
-from tests.helpers import mock_response
-from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import FRESH_DATE, HASH, HASH1, HASH2, PAST_COOLDOWN_DATE, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, days_ago, message_of, staleness_disabled
+from tests.helpers import mock_response, unparsable_response
+from tests.update_time.fixtures import FRESH_DATE, HASH, HASH1, HASH2, PAST_COOLDOWN_DATE
+from tests.update_time.helpers import LoggingTestCase, days_ago, message_of
 from tests.update_time.sources.helpers import jsdelivr_versions, npm_registry
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
@@ -131,6 +128,13 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [mock_response(ok=False), npm_registry({"1.0": _ELIGIBLE})]
         self.assertEqual(_get_latest_version("clipboard", "1.0", _FILENAME).version, "1.0")
 
+    def test_package_api_answer_that_is_not_json_keeps_current(self, mock_get: Mock):
+        """Test that a jsDelivr package API answer that is not JSON is warned about, leaving the version unchanged."""
+        url = "https://data.jsdelivr.com/v1/packages/npm/clipboard"
+        mock_get.side_effect = [unparsable_response(ok=True, url=url), npm_registry({"1.0": _ELIGIBLE})]
+        self.assertEqual(_get_latest_version("clipboard", "1.0", _FILENAME).version, "1.0")
+        self.assert_invalid_json_logged(url)
+
     def test_integrity_fetch_failure_keeps_current(self, mock_get: Mock):
         """Test that a failed integrity-hash fetch leaves the version unchanged, so the hash can't fall out of sync."""
         mock_get.side_effect = [
@@ -141,6 +145,19 @@ class GetLatestVersionTest(LoggingTestCase):
         latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest_version.version, "1.0")
         self.assertEqual(latest_version.sha, "")
+
+    def test_integrity_listing_that_is_not_json_keeps_current(self, mock_get: Mock):
+        """Test that a jsDelivr file listing that is not JSON is warned about, leaving the version unchanged."""
+        url = "https://data.jsdelivr.com/v1/packages/npm/clipboard@1.1?structure=flat"
+        mock_get.side_effect = [
+            jsdelivr_versions("1.1", "1.0"),
+            npm_registry({"1.1": _ELIGIBLE}),
+            unparsable_response(ok=True, url=url),
+        ]
+        latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
+        self.assertEqual(latest_version.version, "1.0")
+        self.assertEqual(latest_version.sha, "")
+        self.assert_invalid_json_logged(url, among_others=True)
 
     def test_hashes_referenced_file_not_package_default(self, mock_get: Mock):
         """Test that the referenced file's hash is used, even when the package default isn't a listed file."""
@@ -166,32 +183,3 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest_version.sha, "")
         message = message_of(Logger.no_integrity_hash)
         self.assert_logged(message, dependency="clipboard", version="1.1", filename=_FILENAME)
-
-    @kills(
-        Mutation(
-            jsdelivr.version_getter,
-            "return replace(latest, project=npm_project(pinned.name))",
-            "_p = npm_project(pinned.name)\n"
-            "        return replace(latest, project=replace(_p, "
-            "newest=_p.newest and replace(_p.newest, version=latest.version)))",
-            "the release attached names the version the run leaves the URL on, not the package's newest",
-        )
-    )
-    def test_newest_release_attached(self, mock_get: Mock):
-        """Test that the newest release is attached, and not the version the run leaves the URL on.
-
-        The cooldown holds 1.1 back, so the URL stays on 1.0 while 1.1 is the release that dates the package.
-        """
-        old = STALE_DATE.isoformat()
-        mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.0": old, "1.1": _FRESH})]
-        latest = _get_latest_version("clipboard", "1.0", _FILENAME)
-        self.assertEqual(latest.version, "1.0")
-        self.assertEqual(Release("1.1", datetime.fromisoformat(_FRESH)), latest.project.newest)
-
-    def test_newest_release_attached_when_globally_disabled(self, mock_get: Mock):
-        """Test that the newest release is attached with the check off, so a marker can set its own threshold."""
-        old = STALE_DATE.isoformat()
-        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
-        with staleness_disabled:
-            latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
-        self.assertEqual(Release("1.0", datetime.fromisoformat(old)), latest_version.project.newest)

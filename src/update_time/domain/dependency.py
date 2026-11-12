@@ -12,24 +12,25 @@ from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from datetime import datetime
-    from typing import Protocol
 
     from update_time.primitives.lookup import Lookup
-
-    class ProjectGetter(Protocol):
-        """The contract the project checks bind and a source implements, answering what it reports about a project."""
-
-        def __call__(self, dependency: DependencyName, /) -> Project:
-            """Return what the source reports about the dependency's project."""
-            ...
 
 
 # The name of a dependency as it appears in a manifest: a Docker image (`cimg/python`), a GitHub action
 # (`actions/checkout`), a PyPI or npm package, etc. A version string is an arbitrary version or tag (`3.14.2`, `v1`).
 type DependencyName = str
 type VersionString = str
+
+# What a source answers the yank checks about a version: whether the source withdrew it, or None where it is unknown.
+type YankGetter = Callable[[DependencyName, VersionString], Yank | None]
+
+# What a source's changelog records for a version.
+type ChangesGetter = Callable[[DependencyName, VersionString], Changes]
+
+# When a source says it published a version, or None where it does not say.
+type PublicationDateGetter = Callable[[DependencyName, VersionString], datetime | None]
 
 
 @dataclass(frozen=True)
@@ -197,6 +198,22 @@ class Project:
     archival: Archival | None = None  # None where the source does not say whether it archived the project
 
 
+# The project of a reference the source reports nothing about.
+NO_PROJECT = Project()
+
+
+@dataclass(frozen=True)
+class ProjectGetter:
+    """How a source gets the project behind a dependency, and whether what it gets declares the project's archival."""
+
+    get: Callable[[DependencyName], Project]
+    declares_archival: bool = False
+
+    def __call__(self, dependency: DependencyName, /) -> Project:
+        """Return what the source reports about the dependency's project."""
+        return self.get(dependency)
+
+
 class Changes(str):
     """A version's changes as a changelog records them, with the markup they are in and the page they come from."""
 
@@ -231,20 +248,17 @@ class DependencyVersion:
     sha: str = ""
     publication: Lookup[datetime] = UNDATED  # When the source says the version was published, or why it can't say
     yank: Yank | None = None  # The version's withdrawal state (yanked on PyPI, deprecated on npm), None if unknown
-    project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
     unserved: Unserved | None = None  # What the source does not serve, if anything
-    image_not_looked_up: ImageNotLookedUp | None = None  # Why Update-time does not ask a registry about the image
     tag_name: str = ""  # The version's tag as the repository spells it (`v6.0.0`), where the source reads tags
     fresh_release: Release | None = None  # The newest release inside the cooldown, if any
-
-    @classmethod
-    def unpinned(cls, project: Project) -> DependencyVersion:
-        """Return the version for a reference that pins no version, carrying its source's report on the project."""
-        return cls(version="", project=project)
 
     def __str__(self) -> str:
         """Render the version as its version string, followed by its publication date in UTC when that is known."""
         if (published := self.publication.value) is None:
             return self.version
         return f"{self.version}, published: {utc_date_and_time(published)}"
+
+
+# A reference carries this release where the run does not resolve a version for it.
+NO_RELEASE = DependencyVersion(version="")

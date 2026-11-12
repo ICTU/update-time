@@ -2,6 +2,7 @@
 
 import contextlib
 import re
+from dataclasses import replace
 from pathlib import Path
 from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
@@ -9,11 +10,11 @@ from unittest.mock import Mock, call, patch
 
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import NO_CHANGES, UNDATED, Changes, Project, Release
+from update_time.domain.dependency import NO_CHANGES, Changes, Project, Release
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_manifest
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers.maven import marker_policy as maven_marker_policy
 from update_time.package_managers.maven import reactor as reactor_module
 from update_time.package_managers.maven import version_range, versions_plugin
@@ -77,6 +78,21 @@ from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulner
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from unittest.mock import _patch
+
+    from update_time.domain.dependency import ChangesGetter, PublicationDateGetter
+    from update_time.domain.source import Source
+
+
+def _maven_central_source(
+    changes: ChangesGetter | None = None, publication_date: PublicationDateGetter | None = None
+) -> _patch[Source]:
+    """Return a patch of Maven Central's record, with the getters given in place of its own."""
+    source = maven_central_module.SOURCE
+    patched = replace(
+        source, changes=changes or source.changes, publication_date=publication_date or source.publication_date
+    )
+    return patch.object(maven_central_module, "SOURCE", patched)
 
 
 # The tests discover each pom in this directory or in one below it. The scan runs in `SCAN_ROOT`, so a Maven run in
@@ -422,8 +438,7 @@ _CHILDS_EFFECTIVE_POM_LISTING_A_PROFILE = effective_pom_declaring(
 @patch.object(maven_central_module, "project", Mock(return_value=Project()))
 @patch.object(maven_central_module, "serves", Mock(return_value=True))
 @patch.object(maven_central_module, "lacks_a_github_repository", Mock(return_value=False))
-@patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES))
-@patch.object(maven_central_module, "publication", Mock(return_value=UNDATED))
+@_maven_central_source(changes=Mock(return_value=NO_CHANGES), publication_date=Mock(return_value=None))
 @patch.object(maven_central_module, "versions_held_back", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT, exists=False)
 @patch("subprocess.run")
@@ -1314,8 +1329,8 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     @kills(
         Mutation(
             maven_central_module,
-            "@archival_reporting\ndef project",
-            "def project",
+            "declares_archival=True",
+            "declares_archival=False",
             "the repository reports no archival, so a switched-off staleness check skips the pom it reads",
         ),
     )
@@ -1774,14 +1789,14 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     @kills(
         Mutation(
             versions_plugin._artefact_rule,
-            "max(cooldown_days(declaration.marker) for declaration in declarations)",
-            "cooldown_days(declarations[-1].marker)",
+            "max(declaration.cooldown_days for declaration in declarations)",
+            "declarations[-1].cooldown_days",
             "the last declaration of an artefact sets its cooldown, so a shorter one undoes a longer one before it",
         ),
         Mutation(
             versions_plugin._artefact_rule,
-            "max(cooldown_days(declaration.marker) for declaration in declarations)",
-            "cooldown_days(declarations[0].marker)",
+            "max(declaration.cooldown_days for declaration in declarations)",
+            "declarations[0].cooldown_days",
             "the first declaration of an artefact sets its cooldown, so a shorter one undoes a longer one after it",
         ),
         Mutation(
@@ -1901,12 +1916,12 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         )
         self.find_rewritten_pom(mock_run, mock_glob, before, after, effective_pom="")
         mock_project = Mock(return_value=Project())
+        mock_changes, mock_publication = Mock(return_value=NO_CHANGES), Mock(return_value=None)
         with (
             self.asked_about() as asked,
             osv() as mock_post,
             patch.object(maven_central_module, "project", mock_project),
-            patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES)) as mock_changes,
-            patch.object(maven_central_module, "publication", Mock(return_value=UNDATED)) as mock_publication,
+            _maven_central_source(changes=mock_changes, publication_date=mock_publication),
             patch.object(maven_central_module, "serves", Mock(return_value=True)) as mock_serves,
         ):
             update_pom_xmls()
@@ -2094,7 +2109,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         def changes(artefact: str, version: str) -> Changes:
             return Changes(f"Changes in {artefact} {version}", markdown=False, url="")
 
-        with patch.object(maven_central_module, "get_changes", changes):
+        with _maven_central_source(changes=changes):
             update_pom_xmls()
         self.assert_new_version_logged_among_others(
             GUAVA, "33.7.1-jre", Location(pom, 6), changes="Changes in com.google.guava:guava 33.7.1-jre"
@@ -2118,7 +2133,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         with (
             patch.object(maven_central_module, "versions_held_back", mock_held_back),
             patch.object(maven_central_module, "project", mock_project),
-            patch.object(maven_central_module, "publication", maven_central_publication),
+            _maven_central_source(publication_date=maven_central_publication),
             patch_maven_central(listing, _POM_ON_GITHUB) as mock_get,
         ):
             update_pom_xmls()
@@ -2152,9 +2167,10 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         before = pom_declaring(client, *mistaken, properties=properties_element({"jersey.version": "3.1.11"}))
         after = pom_declaring(client, *mistaken, properties=properties_element({"jersey.version": "3.1.12"}))
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
+        mock_changes = Mock(return_value=NO_CHANGES)
         with (
             patch.object(maven_central_module, "serves", Mock(side_effect=_on_jersey_core)),
-            patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES)) as mock_changes,
+            _maven_central_source(changes=mock_changes),
         ):
             update_pom_xmls()
         self.assert_new_versions_logged("3.1.12", Location(pom, 3), "org.glassfish.jersey.core:jersey-client")
@@ -2268,7 +2284,8 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         effective_junit = effective_dependency_element("junit:junit", "4.13.2", line=15, managed_at=(PARENT_POM_ID, 20))
         effective_pom = effective_pom_declaring(effective_guava, effective_spring, effective_junit)
         self.find_rewritten_pom(mock_run, mock_glob, unchanged, unchanged, effective_pom)
-        with patch.object(maven_central_module, "get_changes") as get_changes:
+        get_changes = Mock()
+        with _maven_central_source(changes=get_changes):
             update_pom_xmls()
         self.assert_maven_ran(mock_run, rules=_RULES)  # The pom was examined, so reporting nothing says something.
         self.assert_no_new_version_logged()

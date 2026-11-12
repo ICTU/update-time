@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import update_time
 from update_time.domain.bound import Verb
+from update_time.domain.reference import Reference
 from update_time.io.log import Logger
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.sources import pypi
@@ -23,7 +24,6 @@ from tests.update_time.helpers import (
     _cached_functions,
     bound,
     message_of,
-    reference,
 )
 from tests.update_time.io.helpers import create_location
 
@@ -150,8 +150,8 @@ class AssertNoRedundantSuppressionLoggedTest(unittest.TestCase):
         case = LoggingTestCase()
         case.setUp()
         self.addCleanup(case.doCleanups)
-        pin = reference("django", create_location("requirements.txt", 1), "3.2.0")
-        Logger("test").redundant_vulnerable_level(pin, VULNERABILITY_LEVEL_NONE, "none", "low")
+        pin = Reference("django", "3.2.0", create_location("requirements.txt", 1), marker=VULNERABILITY_LEVEL_NONE)
+        Logger("test").redundant_vulnerable_level(pin, "low")
         self.assertRaises(AssertionError, case.assert_no_redundant_suppression_logged)
 
 

@@ -2,22 +2,20 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import DependencyVersion, normalized_python_name
+from update_time.domain.dependency import normalized_python_name
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import PEP_440
-from update_time.primitives.lookup import LookedUp
-from update_time.sources.pypi import get_changes, get_publication_datetime
+from update_time.sources import pypi
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from update_time.domain.dependency import DependencyName, PinnedDependency, VersionString
     from update_time.io.log import Logger
-    from update_time.markers.reference import SteeredReference
     from update_time.primitives.location import Location
 
 
-def by_package[ReferenceT: SteeredReference](
+def by_package[ReferenceT: Reference](
     declarations: Iterable[ReferenceT],
 ) -> dict[DependencyName, list[ReferenceT]]:
     """Return the declarations, each with its marker, grouped by the normalized name of their package.
@@ -36,7 +34,7 @@ def log_moved_versions(
     manager: str,
     before: Iterable[PinnedDependency],
     after: Iterable[PinnedDependency],
-    declarations: Iterable[SteeredReference],
+    declarations: Iterable[Reference],
 ) -> None:
     """Log each version that moved, up or back, at each declaration of its package that does not pin an exact version.
 
@@ -64,9 +62,7 @@ def log_new_version(
     The package is named as the package manager reports it, so one package is named one way however each line spells it.
     The changelog and publication date are fetched once, whichever locations the version is reported at.
     """
-    changes = get_changes(package, version)
-    published = get_publication_datetime(package, version)
-    dependency_version = DependencyVersion(version, changes, publication=LookedUp(published))
+    dependency_version = pypi.SOURCE.release(package, version)
     for location in locations:
         # This message renders no version the reference is pinned to, so the reference names none.
         log.new_version(Reference(package, "", location), dependency_version)

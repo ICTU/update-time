@@ -35,6 +35,7 @@ from tests.mutation_subject import (
     Doubler,
     Greeter,
     is_even,
+    is_multiple_of_five,
     is_multiple_of_three,
     is_odd,
     is_positive_even,
@@ -54,6 +55,8 @@ _DOUBLING = "value * 2"
 _TRIPLING = "value * 3"
 _SUBJECT_TEST_NAME = "tests.test_mutation.IsEvenTest.test_an_even_number"
 _MULTIPLE_TEST_NAME = "tests.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
+_FIVE_TEST_NAME = "tests.test_mutation.IsMultipleOfFiveTest.test_a_multiple_of_five"
+_NO_MUTATION_TEST_NAME = "tests.test_mutation.KillsTest.test_a_registration_of_no_mutation_fails_the_test"
 _DOUBLER_TEST_NAME = "tests.test_mutation.DoublerTest.test_a_doubled_value"
 _ONE_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_one_doubled"
 _TWO_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_two_doubled"
@@ -180,6 +183,15 @@ class IsMultipleOfThreeTest(unittest.TestCase):
     def test_a_multiple_of_three(self):
         """Test that three is a multiple of three."""
         self.assertTrue(is_multiple_of_three(3))
+
+
+class IsMultipleOfFiveTest(unittest.TestCase):
+    """Unit tests for deciding whether a value is a multiple of five, which a mutation of a constant targets."""
+
+    def test_a_multiple_of_five(self):
+        """Test that ten is a multiple of five, and seven is not."""
+        self.assertTrue(is_multiple_of_five(10))
+        self.assertFalse(is_multiple_of_five(7))
 
 
 class IsOddTest(unittest.TestCase):
@@ -354,6 +366,70 @@ class CheckTest(unittest.TestCase):
         for case, mutation, test_name in cases:
             with self.subTest(case):
                 self.assertEqual(_checked(mutation, test_name), (Result(Outcome.KILLED), 0))
+
+    def test_a_mutation_of_a_module_level_assignment_is_checked_without_executing_its_module_afresh(self):
+        """Test that a mutation of a module-level assignment kills its test in the loaded module, then restores it.
+
+        The module loses a name again afterwards when only the mutated assignment binds it.
+        """
+        for case, new in (("rebinding a name", "_FIVE = 4"), ("binding a name the module lacks", "_FIVE = _SIX = 4")):
+            with self.subTest(case):
+                mutation = Mutation(mutation_subject, "_FIVE = 5", new, _ANY_REGRESSION)
+                self.assertEqual(_checked(mutation, _FIVE_TEST_NAME), (Result(Outcome.KILLED), 0))
+                self.assertEqual(mutation_subject._FIVE, 5)
+                self.assertFalse(hasattr(mutation_subject, "_SIX"))
+
+    @kills(
+        Mutation(
+            checker.Mutation._run_test,
+            "if result.failures and not result.errors:",
+            "if True:",
+            "a mutation of an assignment that survives in place is reported as surviving, though a constant computed "
+            "from it still holds the original value",
+        ),
+        Mutation(
+            checker.Mutation._mutated_assignments,
+            "if self._qualified_name or self._module.__name__ == __name__:",
+            "if self._qualified_name:",
+            "a mutation of one of the checker's own constants is swapped into the checker that runs the check",
+        ),
+    )
+    def test_a_mutation_of_an_assignment_the_loaded_module_cannot_judge_is_checked_afresh(self):
+        """Test that a mutated assignment that does not parse, raises, or leaves its test passing is checked afresh.
+
+        So is one of the checker's own, which would otherwise change the check that runs it.
+        """
+        five = "_FIVE = 5"
+        checker_constant = '_NO_MUTATION = "registers '
+        for case, mutation, test_name, outcome in (
+            (
+                "does not parse",
+                Mutation(mutation_subject, five, "_FIVE = (5", _ANY_REGRESSION),
+                _FIVE_TEST_NAME,
+                Outcome.BROKEN,
+            ),
+            (
+                "raises",
+                Mutation(mutation_subject, five, "_FIVE = 5 // 0", _ANY_REGRESSION),
+                _FIVE_TEST_NAME,
+                Outcome.BROKEN,
+            ),
+            (
+                "leaves its test passing",
+                Mutation(mutation_subject, five, "_FIVE = 4 + 1", _ANY_REGRESSION),
+                _FIVE_TEST_NAME,
+                Outcome.SURVIVED,
+            ),
+            (
+                "assigns a name of the checker",
+                Mutation(checker, checker_constant, '_NO_MUTATION = "lists ', _ANY_REGRESSION),
+                _NO_MUTATION_TEST_NAME,
+                Outcome.KILLED,
+            ),
+        ):
+            with self.subTest(case):
+                result, executed = _checked(mutation, test_name)
+                self.assertEqual((result.outcome, executed), (outcome, 1))
 
     def test_a_mutation_leaves_a_string_spanning_the_methods_lines_as_it_is(self):
         """Test that a mutation of a method holding a string spanning lines changes nothing in the string."""

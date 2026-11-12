@@ -10,10 +10,16 @@ import requests
 from update_time.domain import dependency
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp, PinnedDependency, Release
-from update_time.domain.publication import reports_publication_dates
+from update_time.domain.dependency import (
+    DependencyVersion,
+    FloatingPin,
+    ImageNotLookedUp,
+    PinnedDependency,
+    Release,
+    Unserved,
+)
 from update_time.io.log import Logger
-from update_time.sources import docker_hub, oci
+from update_time.sources import oci
 from update_time.sources.docker_hub import _MAX_TAG_LISTING_PAGES, _TAG_LISTING_PAGE_SIZE
 from update_time.sources.oci import (
     _MAX_FLOATING_TAG_PROBES,
@@ -24,7 +30,7 @@ from update_time.sources.oci import (
     is_docker_hub_image,
 )
 
-from tests.helpers import patch_environ, requested_urls
+from tests.helpers import patch_environ, requested_urls, unparsable_response
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3, FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, bound, days_ago, docker_tag, message_of
@@ -39,9 +45,10 @@ from tests.update_time.registry import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
-    from update_time.domain.bound import NewVersionGetter, VersionBound
+    from update_time.domain.bound import VersionBound
 
 
 def get_latest_tag(
@@ -50,6 +57,25 @@ def get_latest_tag(
     """Return what the source resolves for the image and tag, as a test writes them."""
     pinned = PinnedDependency(image, current_tag)
     return oci.get_latest_tag(pinned, version_bound, cooldown_days)
+
+
+# The first page of the `python` image's tag names, as Docker Hub's registry lists them.
+_PYTHON_TAG_NAMES_URL = "https://registry-1.docker.io/v2/library/python/tags/list?n=1000"
+
+
+def _registry_answering_tag_names_with(answer: Mock) -> Callable[..., Mock]:
+    """Return what the registry answers a request with: the answer for its tag names, and a mock for the rest."""
+    registry = mock_docker_registry()
+
+    def get(url: str, *args: object, **kwargs: object) -> Mock:
+        return answer if "/tags/list" in url else registry(url, *args, **kwargs)
+
+    return get
+
+
+def _newest_release(image: str) -> Release | None:
+    """Return the image's newest release, as the source reports it about the image."""
+    return oci._project(image).newest
 
 
 class IsDockerHubImageTest(unittest.TestCase):
@@ -106,37 +132,32 @@ class ImagesNotPulledTest(RegistryRequestsMixin, unittest.TestCase):
     NOT_PULLED = ("ubuntu-2204:2024.01.1", "default")
     REASON = ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE
 
-    def getter(self) -> NewVersionGetter:
+    def getter(self) -> TagGetter:
         """Return a getter excluding those references, as an updater builds it from what its file declares."""
         return TagGetter(ImagesNotPulled(set(self.NOT_PULLED), self.REASON))
 
-    def resolve(self, image: str, tag: str) -> DependencyVersion:
-        """Return what the getter resolves for the reference, with the registry offering a newer tag."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("9.9", DIGEST))
-        return self.getter()(PinnedDependency(image, tag), NO_BOUND, COOLDOWN.default)
+    def why_not_looked_up(self, image: str, tag: str) -> ImageNotLookedUp | None:
+        """Return why the getter's source does not look the reference's image up, or None where it does."""
+        return self.getter().source.why_image_not_looked_up(PinnedDependency(image, tag))
 
-    def test_a_reference_not_pulled_keeps_its_version_where_another_resolves(self):
-        """Test that a reference not pulled is left as it is, saying why, where one the getter resolves moves on."""
-        not_pulled = self.resolve("ubuntu-2204", "2024.01.1")
-        self.assertEqual(not_pulled, DependencyVersion(version="2024.01.1", image_not_looked_up=self.REASON))
-        self.requests.assert_not_called()
-        self.assertEqual(self.resolve("python", "3.14").version, "9.9")
+    def test_a_reference_not_pulled_is_not_looked_up_where_another_is(self):
+        """Test that the source says why it does not look up a reference not pulled, and looks up one pulled."""
+        self.assertEqual(self.why_not_looked_up("ubuntu-2204", "2024.01.1"), self.REASON)
+        self.assertIsNone(self.why_not_looked_up("python", "3.14"))
 
-    def test_a_reference_not_pulled_naming_no_tag_is_left_as_it_is(self):
+    def test_a_reference_not_pulled_naming_no_tag_is_not_looked_up(self):
         """Test that an entry listed without a tag matches the reference that names none."""
-        resolved = self.resolve("default", "")
-        self.assertEqual(resolved, DependencyVersion(version="", image_not_looked_up=self.REASON))
-        self.requests.assert_not_called()
+        self.assertEqual(self.why_not_looked_up("default", ""), self.REASON)
 
     def test_a_reference_not_pulled_is_dated_by_nothing(self):
         """Test that the getter does not date the versions of a reference not pulled."""
         not_pulled = PinnedDependency("ubuntu-2204", "2024.01.1")
-        self.assertFalse(reports_publication_dates(self.getter(), not_pulled))
+        self.assertFalse(self.getter().source.reports_publication_dates(not_pulled))
 
     def test_a_reference_pulled_is_dated_by_docker_hub(self):
         """Test that a reference the getter resolves on Docker Hub is dated, since Docker Hub dates its tags."""
         served = PinnedDependency("python", "3.14")
-        self.assertTrue(reports_publication_dates(self.getter(), served))
+        self.assertTrue(self.getter().source.reports_publication_dates(served))
 
 
 class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
@@ -154,8 +175,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             get_latest_tag("python", "3.14.6").version,
             "3.14.6",
         )
-        url = "https://registry-1.docker.io/v2/library/python/tags/list?n=1000"
-        self.assert_could_not_fetch_logged(url, status=HTTPStatus.SERVICE_UNAVAILABLE)
+        self.assert_could_not_fetch_logged(_PYTHON_TAG_NAMES_URL, status=HTTPStatus.SERVICE_UNAVAILABLE)
 
     @kills(
         Mutation(
@@ -183,23 +203,25 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     def test_tag_names_refused_for_an_invalid_token_are_warned_about(self):
         """Test that tag names refused for an invalid token are warned about, on a repository taken as served."""
         challenge = 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io",error="invalid_token"'
-        registry = mock_docker_registry()
-
-        def get(url: str, *args: object, **kwargs: object) -> Mock:
-            if "/tags/list" in url:
-                return unauthorized(url, headers={"WWW-Authenticate": challenge})
-            return registry(url, *args, **kwargs)
-
-        self.requests.side_effect = get
+        refusal = unauthorized(_PYTHON_TAG_NAMES_URL, headers={"WWW-Authenticate": challenge})
+        self.requests.side_effect = _registry_answering_tag_names_with(refusal)
         self.assertIsNone(get_latest_tag("python", "3.14.6").unserved)
-        url = "https://registry-1.docker.io/v2/library/python/tags/list?n=1000"
-        self.assert_could_not_fetch_logged(url, status=HTTPStatus.UNAUTHORIZED)
+        self.assert_could_not_fetch_logged(_PYTHON_TAG_NAMES_URL, status=HTTPStatus.UNAUTHORIZED)
+
+    def test_tag_names_that_are_not_json_are_warned_about(self):
+        """Test that tag names that are not JSON are warned about, on a repository taken as served."""
+        not_json = unparsable_response(ok=True, url=_PYTHON_TAG_NAMES_URL)
+        self.requests.side_effect = _registry_answering_tag_names_with(not_json)
+        latest = get_latest_tag("python", "3.14.6")
+        self.assertEqual(latest.version, "3.14.6")
+        self.assertIsNone(latest.unserved)
+        self.assert_invalid_json_logged(_PYTHON_TAG_NAMES_URL)
 
     def test_tag_of_a_repository_the_registry_does_not_serve_costs_no_request_to_date_it(self):
         """Test that a version tag of a repository the registry does not serve is left undated, without asking."""
         self.requests.side_effect = mock_docker_registry(repository_served=False)
         latest = get_latest_tag("spark-rm-base", "3.5.1")
-        self.assertIsNone(latest.project.newest)
+        self.assertEqual(latest.unserved, Unserved.REPOSITORY)
         requested = requested_urls(self.requests)
         self.assertIn("https://registry-1.docker.io/v2/library/spark-rm-base/tags/list?n=1000", requested)
         self.assertFalse([url for url in requested if url.startswith("https://registry.hub.docker.com/")])
@@ -495,7 +517,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         )
         latest = get_latest_tag("python", "3.12-slim")
         self.assertEqual(latest.version, "3.13-slim")  # The update keeps the slim line...
-        newest = latest.project.newest
+        newest = _newest_release("python")
         self.assertEqual(Release("3.14.7", recent), newest)  # ...staleness does not.
 
     def test_dated_snapshot_within_the_cooldown_is_held_back(self):
@@ -569,8 +591,8 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             docker_tag("3.14.7", DIGEST1, tag_last_pushed=pushed),
             docker_tag("3.13.5", DIGEST2, tag_last_pushed=pushed),
         )
-        get_latest_tag("python", "3.14.7")
-        get_latest_tag("python", "3.13.5")
+        for _reference in range(2):
+            _newest_release("python")
         listings = [call for call in self.requests.call_args_list if "/tags?" in call.args[0]]
         self.assertEqual(len(listings), 1)
 
@@ -585,15 +607,14 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(
             *(docker_tag(name, DIGEST, tag_last_pushed=pushed) for name in names)
         )
-        latest = get_latest_tag("python", "3.12")
-        self.assertEqual(Release("3.14.7", pushed), latest.project.newest)
+        self.assertEqual(Release("3.14.7", pushed), _newest_release("python"))
 
     def test_newest_release_ignores_cooldown(self):
         """Test that the newest release is the newest tag even when that tag is held back by the cooldown."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.4", DIGEST, tag_last_pushed=FRESH_DATE))
         latest = get_latest_tag("newest_release", "1.3")
         self.assertEqual(latest.version, "1.3")  # 1.4 is held back by the cooldown...
-        self.assertEqual(Release("1.4", FRESH_DATE), latest.project.newest)
+        self.assertEqual(Release("1.4", FRESH_DATE), _newest_release("newest_release"))
 
     def test_newest_release_ignores_version_bound(self):
         """Test that the newest release is the newest tag even when a bound excludes it from the update."""
@@ -605,18 +626,17 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         latest = get_latest_tag("bounded_staleness", "1.3", bound(Verb.ALLOW, "update<2"))
         self.assertEqual(latest.version, "1.4")  # The bound keeps the update below 2.0...
         # ...but 2.0 still defines staleness:
-        self.assertEqual(Release("2.0", newest), latest.project.newest)
+        self.assertEqual(Release("2.0", newest), _newest_release("bounded_staleness"))
 
     def test_no_newest_release_for_other_registry(self):
         """Test that no newest release is reported for non-Docker-Hub registries, which expose no push date."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST), challenge=False)
-        latest_tag = get_latest_tag("mcr.microsoft.com/dotnet/sdk", "1.0")
-        self.assertIsNone(latest_tag.project.newest)
+        self.assertIsNone(_newest_release("mcr.microsoft.com/dotnet/sdk"))
 
     def test_no_newest_release_without_tags(self):
         """Test that no newest release is set when the registry lists no tags at all."""
         self.requests.side_effect = mock_docker_registry()
-        self.assertIsNone(get_latest_tag("no_tags", "1.0").project.newest)
+        self.assertIsNone(_newest_release("no_tags"))
 
     @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @patch("requests.Session.post")
@@ -764,7 +784,8 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(*_tags_past_the_page_cap(STALE_DATE))
         latest = get_latest_tag("node", "lts-alpine")
         newest_on_the_first_page = f"1.{_TAG_LISTING_PAGE_SIZE - 1}"
-        self.assertEqual(Release(newest_on_the_first_page, STALE_DATE), latest.project.newest)
+        self.assertIsNone(latest.unserved)  # The registry may well serve the tag, so the newest release dates it.
+        self.assertEqual(Release(newest_on_the_first_page, STALE_DATE), _newest_release("node"))
 
     def test_listing_read_one_page_past_the_aliases(self):
         """Test that the listing is read until a page holds no alias, which is what says the aliases are exhausted."""
@@ -819,7 +840,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         latest = get_latest_tag("debian", "bookworm-20260803")
         self.assertEqual(latest.version, "bookworm-20260803")
         self.assertEqual(latest.sha, "")
-        self.assertEqual(Release("12.15", pushed), latest.project.newest)
+        self.assertIsNone(latest.unserved)
 
     def test_newest_release_for_a_floating_tag(self):
         """Test that a reference on a floating tag is measured against the image's newest release.
@@ -832,7 +853,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         )
         latest = get_latest_tag("python", "latest")
         self.assertEqual(latest.version, "3.14.7")
-        self.assertEqual(Release("3.14.7", STALE_DATE), latest.project.newest)
+        self.assertIsNone(latest.unserved)
 
     @kills(
         Mutation(
@@ -859,7 +880,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "dev-2024")
         self.assertEqual(latest.sha, DIGEST)
         self.assertIsNone(latest.floating)  # The tag names no channel, so no pin of its floats.
-        self.assertEqual(Release("12.15", STALE_DATE), latest.project.newest)
+        self.assertIsNone(latest.unserved)
 
     @kills(
         Mutation(
@@ -875,7 +896,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         latest = get_latest_tag("acme/api", "dev-2024")
         self.assertEqual(latest.version, "dev-2024")
         self.assertEqual(latest.sha, "")  # The registry serves no manifest, so there is no digest to pin.
-        self.assertIsNone(latest.project.newest)
+        self.assertEqual(latest.unserved, Unserved.VERSION)
 
     def test_shortest_alias_wins_when_the_tag_names_no_variant(self):
         """Test that a floating tag naming no variant lands on the alias that adds none, versioned or not."""
@@ -904,16 +925,8 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         latest = get_latest_tag("python", "latest")
         self.assertEqual(latest.version, "latest")
         self.assertEqual(latest.floating, FloatingPin.NOT_LISTED)
-        self.assertIsNone(latest.project.newest)
+        self.assertEqual(latest.unserved, Unserved.VERSION)
 
-    @kills(
-        Mutation(
-            docker_hub._listing_page,
-            "_LOG.response(response)",
-            "pass",
-            "a tag listing Docker Hub fails to serve leaves the floating tag as it is without a warning",
-        )
-    )
     def test_listing_unavailable(self):
         """Test that a floating tag is left as it is when the tag listing can't be fetched, and the failure logged."""
         self.requests.side_effect = mock_docker_registry(unavailable=Endpoint.TAG_DIGESTS)
@@ -1024,14 +1037,6 @@ class RegistryTokenTest(LoggingTestCase):
         """Test that a network error probing the registry yields no token (anonymous) instead of crashing."""
         self.assertIsNone(_registry_token("ghcr.io", "owner/repo"))
 
-    @kills(
-        Mutation(
-            oci._registry_token,
-            "_LOG.response(response)",
-            "pass",
-            "drops the warning about a token request the registry fails to answer",
-        )
-    )
     @patch("requests.Session.get")
     def test_token_request_failure(self, mock_get: Mock):
         """Test that a failed token request (after a valid auth challenge) yields no token instead of crashing."""

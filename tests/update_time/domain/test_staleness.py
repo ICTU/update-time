@@ -3,7 +3,7 @@
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
 
-from update_time.domain.dependency import DependencyVersion, Project, Release
+from update_time.domain.dependency import Project, Release
 from update_time.domain.staleness import STALE_AFTER, is_stale, release_judged_alike
 
 from tests.mutation import Mutation, kills
@@ -49,7 +49,7 @@ class IsStaleTest(unittest.TestCase):
 
 
 class ReleaseJudgedAlikeTest(unittest.TestCase):
-    """Unit tests for telling whether two staleness thresholds judge a dependency's newest release alike."""
+    """Unit tests for telling whether two staleness thresholds judge a project's newest release alike."""
 
     @kills(
         Mutation(
@@ -64,5 +64,5 @@ class ReleaseJudgedAlikeTest(unittest.TestCase):
         for case, age in {"neither warns": 30, "both warn": 500}.items():
             with self.subTest(case=case):
                 newest = Release("4.15.0", days_ago(age))
-                version = DependencyVersion("4.15.0", project=Project(newest=newest))
-                self.assertEqual(release_judged_alike(version, 90, STALE_AFTER.default), newest)
+                project = Project(newest=newest)
+                self.assertEqual(release_judged_alike(project, 90, STALE_AFTER.default), newest)

@@ -215,14 +215,46 @@ class Mutation:
             return None
         return defined.get(self._qualified_name.rsplit(".", maxsplit=1)[-1])
 
+    def _mutated_assignments(self, source: str, mutated: str) -> dict[str, object] | None:
+        """Return the names the module-level assignments around the snippet bind, as the mutated source binds them.
+
+        That is None for an anchor other than a module, for this module, and where the replacement reaches a statement
+        other than an assignment to plain names, which would change a shared object rather than a name. It is None as
+        well where the mutated statements do not parse or raise when executed.
+        """
+        if self._qualified_name or self._module.__name__ == __name__:
+            return None
+        start = source.index(self.old)
+        try:
+            statements = _statements_overlapping(mutated, start, start + len(self.new))
+        except SyntaxError:
+            return None
+        names = [_names_assigned(statement) for statement in statements]
+        if not names or None in names:
+            return None
+        namespace = dict(vars(self._module))
+        try:
+            exec(compile(ast.Module(body=statements, type_ignores=[]), self.path, "exec"), namespace)  # noqa: S102 # nosec
+        except Exception:  # noqa: BLE001  # Executing the module afresh reports what the statements raise.
+            return None
+        return {name: namespace[name] for assigned in names if assigned for name in assigned}
+
     def _run_test(self, test_name: str, source: str, mutated: str) -> unittest.TestResult:
         """Run the test against the mutated source, with the anchored function's definition swapped in place.
 
-        The module is executed afresh instead where the definition cannot be swapped: for a module or a class anchor,
-        for a function of this module, and for a mutated definition that does not parse, raises when executed, defines
-        another name, or needs other free variables than the function has.
+        A module anchor on module-level assignments has the names they bind swapped instead. A test that does not fail
+        against them, or raises, is run against the module executed afresh as well, since a constant computed from
+        the mutated one, or a name another module imported, still holds the original value. The module is executed
+        afresh where neither can be swapped: for any other module or a class anchor, for a function of this module,
+        and for a mutated definition that does not parse, raises when executed, defines another name, or needs other
+        free variables than the function has.
         """
         function = self._function()
+        if function is None and (assignments := self._mutated_assignments(source, mutated)) is not None:
+            result = self._run_test_with_names_bound(test_name, assignments)
+            if result.failures and not result.errors:
+                return result
+            return self._run_test_afresh(test_name, mutated)
         mutated_function = None if function is None else self._mutated_function(source, mutated)
         if function is None or mutated_function is None:
             return self._run_test_afresh(test_name, mutated)
@@ -235,6 +267,18 @@ class Mutation:
             return self._run_test_in_place(test_name)
         finally:
             _define(function, original)
+
+    def _run_test_with_names_bound(self, test_name: str, names: dict[str, object]) -> unittest.TestResult:
+        """Run the test with the module's names bound to the mutated values, binding the original values again after."""
+        namespace = vars(self._module)
+        originals = {name: namespace[name] for name in names if name in namespace}
+        namespace.update(names)
+        try:
+            return self._run_test_in_place(test_name)
+        finally:
+            namespace.update(originals)
+            for name in names.keys() - originals.keys():
+                del namespace[name]
 
     def _run_test_in_place(self, test_name: str) -> unittest.TestResult:
         """Run the test with its modules loaded as they are, a cached anchor forgetting its answers before and after."""
@@ -375,6 +419,27 @@ def _node_span(source: str, node: ast.stmt) -> tuple[int, int]:
     if source.startswith("\n", end):
         end += 1
     return start, end
+
+
+def _statements_overlapping(source: str, start: int, end: int) -> list[ast.stmt]:
+    """Return the top-level statements of the source that the part of it from the start to the end reaches into."""
+    statements = []
+    for node in ast.parse(source).body:
+        first, last = _node_span(source, node)
+        if first < end and start < last:
+            statements.append(node)
+    return statements
+
+
+def _names_assigned(statement: ast.stmt) -> list[str] | None:
+    """Return the names the statement assigns a value to, or None where it assigns to anything but plain names.
+
+    Assigning to an item or an attribute changes a shared object rather than binding a name, so it gets None.
+    """
+    if not isinstance(statement, ast.Assign):
+        return None
+    names = [target.id for target in statement.targets if isinstance(target, ast.Name)]
+    return names if len(names) == len(statement.targets) else None
 
 
 def _offset(source: str, line: int, column: int) -> int:

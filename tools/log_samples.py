@@ -26,13 +26,14 @@ from update_time.domain.dependency import (
     Release,
     Yank,
 )
+from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
+from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.reference import DriftedPin, Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
 from update_time.lock_files.compiled_requirements_txt import Unrecompilable
-from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
-from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
+from update_time.markers.parser import parse_directives
 from update_time.package_managers.maven.versions_plugin import OverrideConsequence
 from update_time.primitives.location import Location
 from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
@@ -84,14 +85,14 @@ def _redundant_directives(
     """Log a sample per warning about a marker directive that holds nothing back, paired with the block's placeholder.
 
     A redundancy warning is handed the directive it names, so most samples pass one as text; the two about a
-    vulnerability suppression read theirs off a marker, which is what their warnings take.
+    vulnerability suppression read theirs off the marker the reference carries.
     """
     suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
-    log.redundant_vulnerable_advisory(reference("django", requirements, "4.2.0"), suppression)
+    log.redundant_vulnerable_advisory(reference("django", requirements, "4.2.0", suppression))
     redundant_vulnerable_advisory = capture.take()
 
     level = Marker(vulnerable=Threshold(value="high", directive="set[vulnerability-level=high]"))
-    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high", "low")
+    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0", level), "low")
     redundant_vulnerable_level = capture.take()
 
     log.redundant_directive(reference("python", dockerfile), "ignore[yanked]", Reason.NO_YANK_CONCEPT)
@@ -259,10 +260,10 @@ def _redundant_hash_drift_opt_ins(log: Logger, capture: _Capture, loose: Referen
 
 def _invalid_items(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
     """Log a sample per warning about an item Update-time cannot read, paired with the block's placeholder."""
-    log.invalid_bracket_item("python", "stlae", dockerfile)
+    log.invalid_bracket_item(reference("python", dockerfile), "stlae")
     unrecognised = capture.take()
 
-    log.invalid_bracket_item("node", "update-time.engines.node", Location(Path("package.json"), 3))
+    log.invalid_bracket_item(reference("node", Location(Path("package.json"), 3)), "update-time.engines.node")
     return {"@@UNRECOGNISED_ITEM_WARNING@@": unrecognised, "@@INVALID_FIELD_WARNING@@": capture.take()}
 
 
@@ -278,7 +279,7 @@ def _directives_asking_for_the_default(
 def _bounds_deciding_nothing(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
     """Log a bound that never has an effect and one that blocks every update, and pair the lines."""
     for directives in ("allow[update>=3.12]", "ignore[update>=3.12]"):
-        log.warn_if_redundant_bound(reference("python", dockerfile, "3.12"), parse_directives(directives))
+        log.warn_if_redundant_bound(reference("python", dockerfile, "3.12", parse_directives(directives)))
     return {"@@BOUNDS_DECIDING_NOTHING@@": capture.take()}
 
 
@@ -394,12 +395,12 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     dockerfile = Location(Path("Dockerfile"), 2)
 
     published = stale_publication_date()
-    stale = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", published)))
-    log.report_staleness(resolved("humanize", requirements, stale), STALE_AFTER.get())
+    stale = Project(newest=Release("4.15.0", published))
+    log.report_staleness(resolved("humanize", requirements, project=stale), STALE_AFTER.get())
     staleness = capture.take()
 
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))
-    log.report_yank(resolved("humanize", requirements, yanked), Marker())
+    log.report_yank(resolved("humanize", requirements, yanked))
     yank = capture.take()
 
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
@@ -408,11 +409,11 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.unreadable_affected_versions("GHSA-1111-2222-3333", InvalidVersion("Invalid version: 'unknown'"))
     unreadable_affected_versions = capture.take()
 
-    archived_project = DependencyVersion.unpinned(Project(archival=Archival(archived=True)))
-    log.report_archival(resolved("aioredis", requirements, archived_project), Marker())
+    archived_project = Project(archival=Archival(archived=True))
+    log.report_archival(resolved("aioredis", requirements, project=archived_project))
     repository = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
-    archived_repository = DependencyVersion.unpinned(Project(archival=repository))
-    log.report_archival(resolved("actions/setup-ruby", workflow, archived_repository), Marker())
+    archived_repository = Project(archival=repository)
+    log.report_archival(resolved("actions/setup-ruby", workflow, project=archived_repository))
     archival = capture.take()
 
     redundant = _redundant_directives(log, capture, requirements, dockerfile)
@@ -500,13 +501,16 @@ def _redundant_suppressions(
 ) -> dict[str, str]:
     """Log a sample per warning about a staleness threshold, yank, or archival directive that decides nothing."""
     recent = Release("4.15.0", datetime.now(UTC) - timedelta(days=30))
-    standing = DependencyVersion("4.15.0", yank=Yank(), project=Project(newest=recent, archival=Archival()))
-    log.report_yank(resolved("humanize", requirements, standing), Marker(ignored_scopes=Scope.YANKED))
+    standing = DependencyVersion("4.15.0", yank=Yank())
+    active_project = Project(newest=recent, archival=Archival())
+    log.report_yank(resolved("humanize", requirements, standing, marker=Marker(ignored_scopes=Scope.YANKED)))
     yank = capture.take()
-    log.report_archival(resolved("humanize", requirements, standing), Marker(ignored_scopes=Scope.ARCHIVED))
-    active_repository = DependencyVersion.unpinned(Project(archival=Archival(subject=ArchivedSubject.REPOSITORY)))
     log.report_archival(
-        resolved("actions/checkout", workflow, active_repository), Marker(ignored_scopes=Scope.ARCHIVED)
+        resolved("humanize", requirements, project=active_project, marker=Marker(ignored_scopes=Scope.ARCHIVED))
+    )
+    active_repository = Project(archival=Archival(subject=ArchivedSubject.REPOSITORY))
+    log.report_archival(
+        resolved("actions/checkout", workflow, project=active_repository, marker=Marker(ignored_scopes=Scope.ARCHIVED))
     )
     archival = capture.take()
     threshold = Threshold(value=90, directive="set[stale-after=90]")
@@ -684,10 +688,10 @@ def _held_back_by_cooldown(log: Logger, capture: _Capture, dockerfile: Location)
 def _understood_markers(log: Logger, capture: _Capture, requirements: Location) -> dict[str, str]:
     """Log the lines confirming a marker was understood, and pair them with their placeholders."""
     marker = Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]")
-    log.recognised_marker("humanize", marker, requirements)
+    log.recognised_marker(reference("humanize", requirements, marker=marker))
     recognised = capture.take()
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason=""))
-    log.report_yank(resolved("humanize", requirements, yanked), marker)
+    log.report_yank(resolved("humanize", requirements, yanked, marker=marker))
     silenced = capture.take()
     log.holding_back_range(
         reference("com.google.guava:guava", Location(Path("pom.xml"), 12)), "[34,)", "ignore[update>=34]"

@@ -7,25 +7,27 @@ from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.reference import Reference
-from update_time.domain.vulnerability import RISK_LEVELS, Vulnerability
+from update_time.domain.vulnerability import RISK_LEVELS, Ecosystem, Vulnerability
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.sources import osv
-from update_time.sources.osv import _RISK_LEVEL_BANDS, Ecosystem, get_vulnerabilities
+from update_time.sources.osv import _RISK_LEVEL_BANDS, get_vulnerabilities
 
-from tests.helpers import mock_response
+from tests.helpers import mock_response, unparsable_response
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, message_of, vulnerability
 from tests.update_time.sources.helpers import osv_action_entry, osv_action_package, osv_advisory, osv_api
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 _ADVISORY = "PYSEC-2021-109"
 _SUMMARY = "SQL injection in QuerySet.order_by"
 # The summary of the second vulnerability, and of a vulnerability's second advisory, for the tests that serve either.
 _OTHER_SUMMARY = "Denial of service in Django"
 _REFERENCE = Reference("django", "3.2.0", Location(Path("requirements.txt"), 1))
+# A second pin, for the tests of a batch that answers about every pin at once.
+_OTHER_REFERENCE = Reference("flask", "1.0", Location(Path("requirements.txt"), 2))
 # Further advisory ids, for the tests that serve more than one advisory. OSV holds an advisory per database, and the
 # databases name one vulnerability by a `GHSA`, a `CVE`, a `PYSEC`, and a `BIT` identifier.
 _GHSA = "GHSA-1111-1111-1111"
@@ -40,6 +42,16 @@ def _expected_vulnerability(
 ) -> Vulnerability:
     """Return the vulnerability an advisory reports, at the level, and known by the aliases."""
     return vulnerability(advisory, summary, level, aliases)
+
+
+def _osv_answering_the_query_with(answer: Mock) -> Callable[..., Mock]:
+    """Return what OSV answers a post with: a batch reporting an advisory for the pin, and the answer to its query."""
+    batch = mock_response({"results": [{"vulns": [{"id": _ADVISORY}]}]})
+
+    def serve(url: str, **_kwargs: object) -> Mock:
+        return batch if url.endswith("/querybatch") else answer
+
+    return serve
 
 
 @patch("requests.Session.post")
@@ -262,26 +274,36 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         """Test that a pin the batch reports advisories for is left unanswered when they can't be read."""
         status = HTTPStatus.SERVICE_UNAVAILABLE
         unreachable = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://osv")
-        with_advisories = mock_response({"results": [{"vulns": [{"id": _ADVISORY}]}]})
-
-        def serve(url: str, **_kwargs: object) -> Mock:
-            return with_advisories if url.endswith("/querybatch") else unreachable
-
-        mock_post.side_effect = serve
+        mock_post.side_effect = _osv_answering_the_query_with(unreachable)
         self.assertEqual(get_vulnerabilities([_REFERENCE], Ecosystem.PYPI), [None])
         self.assert_could_not_fetch_logged("https://osv", status=status, reason=status.phrase)
+
+    def test_advisories_that_are_not_json(self, mock_post: Mock):
+        """Test that a pin the batch reports advisories for is left unanswered when their answer is not JSON."""
+        url = "https://api.osv.dev/v1/query"
+        mock_post.side_effect = _osv_answering_the_query_with(unparsable_response(ok=True, url=url))
+        self.assertEqual(get_vulnerabilities([_REFERENCE], Ecosystem.PYPI), [None])
+        self.assert_invalid_json_logged(url)
 
     def test_unreachable_osv(self, mock_post: Mock):
         """Test that an unreachable OSV returns an answer per pin, each of them none, and is warned about."""
         status = HTTPStatus.SERVICE_UNAVAILABLE
         mock_post.return_value = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://osv")
         self.assertEqual(
-            get_vulnerabilities(
-                [_REFERENCE, Reference("flask", "1.0", Location(Path("requirements.txt"), 2))], Ecosystem.PYPI
-            ),
+            get_vulnerabilities([_REFERENCE, _OTHER_REFERENCE], Ecosystem.PYPI),
             [None, None],
         )
         self.assert_could_not_fetch_logged("https://osv", status=status, reason=status.phrase)
+
+    def test_a_batch_answer_that_is_not_json(self, mock_post: Mock):
+        """Test that a batch answer that is not JSON leaves every pin unanswered, and is warned about."""
+        url = "https://api.osv.dev/v1/querybatch"
+        mock_post.return_value = unparsable_response(ok=True, url=url)
+        self.assertEqual(
+            get_vulnerabilities([_REFERENCE, _OTHER_REFERENCE], Ecosystem.PYPI),
+            [None, None],
+        )
+        self.assert_invalid_json_logged(url)
 
 
 _ACTION = "tj-actions/changed-files"

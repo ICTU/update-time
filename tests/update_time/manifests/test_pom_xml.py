@@ -2,9 +2,9 @@
 
 import unittest
 
+from update_time.domain.marker import Marker, Threshold
 from update_time.formats import xml
 from update_time.manifests import pom_xml
-from update_time.markers.marker import Marker, Threshold
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills

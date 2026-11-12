@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from update_time.markers.marker import parse_directives
+from update_time.markers.parser import parse_directives
 from update_time.sources import github
 
 from tests.mutation import Mutation
@@ -47,11 +47,11 @@ CHANGELOG = "## 1.1\n- Fixed ..."
 # A regexp matching an `image: name:version` reference, as a Docker Compose or Helm manifest holds one.
 IMAGE_REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
 
-# This mutation drops the one cache that keeps each GitHub API URL to a single request per run. Two test modules
+# This mutation drops the cache that keeps each GitHub API lookup to a single request per run. Two test modules
 # count those requests, so they share the mutation rather than each spelling it out.
 GITHUB_UNCACHED = Mutation(
     github,
-    "@cache\ndef _fetch_github(",
-    "def _fetch_github(",
+    "@cache\ndef _look_up_github(",
+    "def _look_up_github(",
     "a GitHub API URL is fetched again for every caller that asks for it",
 )

@@ -4,16 +4,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from update_time.domain.archival import reports_archival
-from update_time.domain.publication import reports_publication_dates
-from update_time.domain.vulnerability import reports_vulnerabilities
-from update_time.domain.yank import reports_yanks
-from update_time.markers.marker import Scope
+from update_time.domain.marker import Scope
+from update_time.domain.source import Source
 
 if TYPE_CHECKING:
-    from update_time.domain.dependency import ImageNotLookedUp
-    from update_time.markers.marker import Marker
-    from update_time.primitives.capability import HasCapability
+    from collections.abc import Callable
+
+    from update_time.domain.dependency import ImageNotLookedUp, PinnedDependency
+    from update_time.domain.marker import Marker
 
 
 class Reason(StrEnum):
@@ -116,6 +114,9 @@ class ImageNotLookedUpReason:
 
 type RedundancyReason = Reason | ImageNotLookedUpReason
 
+# Whether the source can apply a directive to the pinned dependency.
+type _AppliesDirective = Callable[[Source, PinnedDependency], bool]
+
 
 @dataclass(frozen=True)
 class _Directive:
@@ -123,8 +124,7 @@ class _Directive:
 
     `scope` is what the directive steers, which the marker is asked for both the directive it carries and whether it
     carries one at all, in whichever of the scope's forms (see `Marker.directive_for`).
-    `is_applied_by` tells whether a check can apply the directive. It reads that off the function the check asks,
-    which answers per subject (see `capability`).
+    `is_applied_by` tells whether the source the check asks can apply the directive to the pinned dependency.
     `reason` is why the source cannot apply it, and `without_a_version` why it holds nothing back for a reference
     that pins no version, which is None for a directive such a reference still steers something with.
     `consequence` is what Update-time never does for a reference whose image it does not look up, which is None for
@@ -132,7 +132,7 @@ class _Directive:
     """
 
     scope: Scope
-    is_applied_by: HasCapability
+    is_applied_by: _AppliesDirective
     reason: Reason
     without_a_version: Reason | None = None
     consequence: Consequence | None = None
@@ -150,31 +150,31 @@ class _Directive:
 DIRECTIVES = (
     _Directive(
         Scope.YANKED,
-        reports_yanks,
+        Source.reports_yanks,
         Reason.NO_YANK_CONCEPT,
         Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,
     ),
     _Directive(
         Scope.VULNERABLE,
-        reports_vulnerabilities,
+        Source.reports_vulnerabilities,
         Reason.NO_VULNERABILITY_REPORTS,
         Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
     ),
     _Directive(
         Scope.ARCHIVED,
-        reports_archival,
+        Source.reports_archival,
         Reason.NO_ARCHIVAL_SIGNAL,
     ),
     _Directive(
         Scope.COOLDOWN,
-        reports_publication_dates,
+        Source.reports_publication_dates,
         Reason.NO_COOLDOWN_DATES,
         Reason.NO_VERSION_TO_UPDATE,  # a cooldown steers an update, and no update is resolved for such a reference
         consequence=Consequence.NEVER_UPDATED,
     ),
     _Directive(
         Scope.STALE,
-        reports_publication_dates,
+        Source.reports_publication_dates,
         Reason.NO_STALENESS_DATES,
         consequence=Consequence.STALENESS_NEVER_CHECKED,
     ),
@@ -187,16 +187,14 @@ WARNING_DIRECTIVES = tuple(directive for directive in DIRECTIVES if directive.sc
 _HELD_BACK_OPT_INS = {Scope.FLOATING_PIN: Reason.NEVER_PINNED, Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED}
 
 
-def opt_in_redundancy(
-    marker: Marker, scope: Scope, reason: RedundancyReason | None, *, update_held_back: bool
-) -> RedundancyReason | None:
+def opt_in_redundancy(marker: Marker, scope: Scope, reason: RedundancyReason | None) -> RedundancyReason | None:
     """Return why the marker's opt-in to the scope is redundant, or None where the opt-in decides something.
 
     The reference's own `reason` wins, so removing a hold-back never changes it. Without one, the opt-in is redundant
-    only where the update is held back.
+    only where the marker holds the update back.
     """
     if not marker.allows(scope):
         return None
-    if reason is not None or not update_held_back:
+    if reason is not None or not marker.ignores(Scope.UPDATE):
         return reason
     return _HELD_BACK_OPT_INS[scope]

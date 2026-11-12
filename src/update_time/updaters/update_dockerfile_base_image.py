@@ -1,12 +1,11 @@
 """Update the base images of Dockerfiles, writing a version that a build argument holds onto that argument's line."""
 
 from collections import defaultdict
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import DependencyVersion, ImageNotLookedUp
+from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKERFILES
-from update_time.domain.image_lookup import explaining_skipped_lookups
+from update_time.domain.source import Source
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.dockerfile import (
@@ -17,37 +16,24 @@ from update_time.manifests.dockerfile import (
     base_image_match,
     pins_a_digest_beside_a_variable,
 )
-from update_time.markers.marker import Marker, parse_marker
+from update_time.markers.parser import parse_marker
 from update_time.references.file import rewrite_file
 from update_time.references.match import matched_reference
 from update_time.references.rewrite import update_references_in_lines
 from update_time.sources.oci import TagGetter
 
 if TYPE_CHECKING:
-    from update_time.domain.bound import VersionBound
-    from update_time.domain.dependency import PinnedDependency
-    from update_time.domain.line import Line
+    from update_time.domain.marker import Marker
     from update_time.manifests.dockerfile import ReferencePart
+    from update_time.primitives.line import Line
 
 
 _LOG = get_logger("dockerfile")
 
 
-@dataclass(eq=False)
-class _Refusal:
-    """A getter that leaves every reference as it is for the reason, whatever the reference names."""
-
-    reason: ImageNotLookedUp
-
-    def __post_init__(self) -> None:
-        """Register that the getter does not look any image up, and why."""
-        explaining_skipped_lookups(self, lambda _pinned: self.reason)
-
-    def __call__(
-        self, pinned: PinnedDependency, _version_bound: VersionBound, _cooldown_days: int, /
-    ) -> DependencyVersion:
-        """Return the reference as it is, saying why its image is not looked up."""
-        return DependencyVersion(version=pinned.version, image_not_looked_up=self.reason)
+def _refusal(reason: ImageNotLookedUp) -> Source:
+    """Return the source that leaves every reference as it is for the reason, whatever the reference names."""
+    return Source(why_image_not_looked_up=lambda _pinned: reason)
 
 
 def _shared_lines(substituted_lines: list[SubstitutedLine | None]) -> set[int]:
@@ -83,19 +69,19 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     for index, (line, substituted) in enumerate(zip(lines, substituted_lines, strict=True)):
         if substituted is None:
             digest_overrules = pins_a_digest_beside_a_variable(line.text)
-            getter = (
-                _Refusal(ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS) if digest_overrules else get_new_version
+            source = (
+                _refusal(ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS)
+                if digest_overrules
+                else get_new_version.source
             )
-            [result[index]] = update_references_in_lines(
-                [line], BASE_IMAGE_REFERENCE, get_new_version=getter, logger=_LOG
-            )
+            [result[index]] = update_references_in_lines([line], BASE_IMAGE_REFERENCE, source=source, logger=_LOG)
             continue
         reference = matched_reference(base_image_match(line.text), line.location)
         _LOG.substituted_reference(reference, substituted.substituted_reference)
         reason = _refusal_reason(substituted, shared_lines)
-        getter = get_new_version if reason is None else _Refusal(reason)
+        source = get_new_version.source if reason is None else _refusal(reason)
         [updated_line] = update_references_in_lines(
-            [substituted], DIGESTLESS_BASE_IMAGE_REFERENCE, get_new_version=getter, logger=_LOG
+            [substituted], DIGESTLESS_BASE_IMAGE_REFERENCE, source=source, logger=_LOG
         )
         if reason is None:
             rewrites.update(substituted.axis_rewrites(updated_line))

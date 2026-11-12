@@ -9,9 +9,8 @@ from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ClassVar, override
 
-from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, normalized_python_name
+from update_time.domain.dependency import normalized_python_name
 from update_time.io.filesystem import is_scanned
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
@@ -19,10 +18,8 @@ from update_time.lock_files.uv_lock import UvLock
 from update_time.manifests import pyproject_config
 from update_time.manifests.pyproject_config import PyprojectConfig
 from update_time.manifests.pyproject_toml import PyprojectToml
-from update_time.markers.reference import SteeredResolvedReference
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.command import Command
-from update_time.sources.pypi import project
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -231,14 +228,6 @@ def _workspace_includes(root_dir: Path, workspace: UvWorkspace, project_dir: Pat
 def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
     """Return each of the declarations that PyPI serves a release for."""
     return [declaration for declaration in declarations if declaration.names_a_release]
-
-
-@archival_reporting
-def pypi_projects(declarations: Iterable[Declaration]) -> Iterable[SteeredResolvedReference]:
-    """Yield each of the declarations, carrying PyPI's report on the project it names."""
-    for declaration in declarations:
-        release = DependencyVersion.unpinned(project(declaration.dependency))
-        yield SteeredResolvedReference.from_reference(declaration, release=release)
 
 
 def by_workspace(pyproject_tomls: Iterable[PyprojectToml]) -> dict[Path, list[PyprojectToml]]:

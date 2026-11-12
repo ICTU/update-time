@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import FileType
+from update_time.domain.source import Source
 from update_time.references import file as file_module
 from update_time.references.file import rewrite_file, update_file, update_yaml_files
 
@@ -16,7 +17,7 @@ from tests.update_time.references.helpers import mock_logger, new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
-    from update_time.domain.line import Line
+    from update_time.primitives.line import Line
 
 
 def _rewrite_second_line(lines: list[Line]) -> list[str]:
@@ -48,7 +49,11 @@ class UpdateFileTest(unittest.TestCase):
         mount_regexp = r"mount: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
         mock_file = mock_path("image: python:3.14\nmount: redis:1.0\n")
         update_file(
-            mock_file, IMAGE_REGEXP, mount_regexp, get_new_version=new_version_getter("9.9"), logger=mock_logger()
+            mock_file,
+            IMAGE_REGEXP,
+            mount_regexp,
+            source=Source(new_version=new_version_getter("9.9")),
+            logger=mock_logger(),
         )
         mock_file.read_text.assert_called_once_with()
         mock_file.write_text.assert_called_once_with("image: python:9.9\nmount: redis:9.9\n")
@@ -64,7 +69,8 @@ class UpdateYamlFilesTest(unittest.TestCase):
 
     def update(self, logger: Mock, get_new_version: NewVersionGetter) -> None:
         """Update the discovered files, each with the given getter."""
-        with patch.object(file_module, "TagGetter", Mock(return_value=get_new_version)):
+        tag_getter = Mock(source=Source(new_version=get_new_version))
+        with patch.object(file_module, "TagGetter", Mock(return_value=tag_getter)):
             update_yaml_files(
                 self.FILE_TYPE,
                 regexp=IMAGE_REGEXP,

@@ -3,9 +3,9 @@
 import json
 from typing import TYPE_CHECKING
 
+from update_time.domain.directive import Reason
 from update_time.io.log import Logger
 from update_time.manifests import package_json as package_json_manifest
-from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.references import rewrite
 from update_time.updaters import update_node_engine
@@ -102,7 +102,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             rewrite._reference_match,
-            "return pattern.search(line.text, reference_marker.reference_location.column)",
+            "return pattern.search(line.text, declared.location.column)",
             "return pattern.search(line.text)",
             "the named line is read from its start, so the entry declared before the engine is taken for it",
         )
@@ -140,7 +140,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             update_node_engine._update_node_engine,
-            """if engine_marker.reference_location.line_number is None:
+            """if engine.location.line_number is None:
         _LOG.no_entry(package_json_manifest.NODE_ENGINE, package_json.path)
         return
     update_file(""",
@@ -246,8 +246,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         ),
         Mutation(
             Logger.recognised_marker,
-            "if not str(marker):",
-            "if not marker.raw:",
+            "if not str(marker := reference.marker):",
+            "if not (marker := reference.marker).raw:",
             "no Recognised line names a marker spelled without directive text",
         ),
     )

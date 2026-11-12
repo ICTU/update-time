@@ -2,6 +2,7 @@
 
 import unittest
 from datetime import UTC, datetime
+from http import HTTPStatus
 from logging import ERROR, WARNING
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
@@ -240,7 +241,7 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("owner/with cooldown", "1.0")
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(PAST_COOLDOWN_DATE, latest.publication.value)
-        newest = latest.project.newest
+        newest = github.project("owner/with cooldown").newest
         self.assertEqual(Release("2.0", FRESH_DATE), newest)  # The release the cooldown held back dates it
 
     @patch_github(
@@ -264,7 +265,7 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(latest.publication.value, PAST_COOLDOWN_DATE)  # The tagged commit's committer date
         newest = Release("1.1", PAST_COOLDOWN_DATE)
-        self.assertEqual(latest.project.newest, newest)  # Also feeds the staleness check
+        self.assertEqual(github.project("owner/tags only").newest, newest)  # Also feeds the staleness check
 
     @patch_github(
         releases=[github_release_json("v1.1", body="changelog", published_at=PAST_COOLDOWN_DATE)],
@@ -831,32 +832,41 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     @kills(
         Mutation(
             github._list_contents,
-            'return _list(repository, f"contents/{directory}", require_ok=not directory)',
-            'return _list(repository, f"contents/{directory}")',
+            "(HTTPStatus.NOT_FOUND,) if directory else ()",
+            "()",
             "a package whose registry metadata names a directory that moved warns on every run",
         ),
     )
     @patch("requests.Session.get")
-    def test_directory_the_repository_does_not_serve(self, mock_get: Mock):
-        """Test that a directory the repository doesn't serve leaves the root to supply the changes, without warning."""
-        not_found = mock_response(ok=False, status_code=404, reason="Not Found", url="https://not/found")
-        respond_per_url(
-            mock_get,
-            {
-                contents_url(self.MONOREPO, "packages/gone"): not_found,
-                contents_url(self.MONOREPO): mock_response(contents_json("CHANGELOG.md")),
-                file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
-            },
-        )
-        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/gone")
-        self.assertEqual(changes, self.CHANGES)
-        self.assert_no_warnings_logged()
+    def test_directory_that_cannot_be_listed_leaves_the_root_to_supply_the_changes(self, mock_get: Mock):
+        """Test that a directory GitHub doesn't list leaves the root to supply the changes, warning only if refused."""
+        cases = {  # The status GitHub answers the listing with, and whether that is a refusal
+            "not served": (HTTPStatus.NOT_FOUND, False),
+            "refused": (HTTPStatus.SERVICE_UNAVAILABLE, True),
+        }
+        for case, (status, refused) in cases.items():
+            with self.subTest(case):
+                unlisted = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://not/listed")
+                respond_per_url(
+                    mock_get,
+                    {
+                        contents_url(self.MONOREPO, "packages/gone"): unlisted,
+                        contents_url(self.MONOREPO): mock_response(contents_json("CHANGELOG.md")),
+                        file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
+                    },
+                )
+                changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/gone")
+                self.assertEqual(changes, self.CHANGES)
+                if refused:
+                    self.assert_could_not_fetch_logged("https://not/listed", status=status, reason=status.phrase)
+                else:
+                    self.assert_no_warnings_logged()
 
     @kills(
         Mutation(
             github._list,
-            "listing = response.json()\n    return tuple(listing) if isinstance(listing, list) else ()",
-            "return tuple(response.json())",
+            "return tuple(listing) if isinstance(listing, list) else ()",
+            "return tuple(listing)",
             "a directory the contents endpoint answers with a file ends the run with a traceback",
             raises="TypeError: string indices must be integers, not 'str'",
         ),

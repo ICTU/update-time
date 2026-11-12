@@ -3,10 +3,10 @@
 import unittest
 from typing import TYPE_CHECKING
 
+from update_time.domain.marker import Marker, Scope
 from update_time.manifests import pyproject_config, python_dependency_toml
 from update_time.manifests.inline_script import InlineScript
 from update_time.manifests.pyproject_toml import PyprojectToml
-from update_time.markers.marker import Marker, Scope
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills

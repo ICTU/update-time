@@ -276,6 +276,7 @@ class FaultsTest(unittest.TestCase):
     NEGATED_VERB = r"The repository is not asked about an artefact whose coordinates name a property."
     NEGATED_SUBJECT = r"No artefact whose coordinates name a property is asked about."
     NEGATED_EXISTENCE = r"The check passes when there is no new version."
+    NEGATED_POSSESSION = r"A body that isn't JSON has no message to include."
 
     @kills(
         Mutation(
@@ -291,10 +292,16 @@ class FaultsTest(unittest.TestCase):
             "a subject opening with the negation is reported, though it carries the negation to the verb",
         ),
         Mutation(
-            readability_check._negates_a_noun_phrase,
-            "and not _denies_existence(tagged, index)",
+            readability_check._is_plain,
+            "_denies_existence(tagged, index) or ",
             "",
             "`there is no new version` is reported, though that is how plain prose says it",
+        ),
+        Mutation(
+            readability_check._is_plain,
+            " or _denies_possession(tagged, index)",
+            "",
+            "`has no message to include` is reported, though that is how plain prose says it",
         ),
     )
     def test_a_negation_in_a_noun_phrase_is_reported(self):
@@ -302,11 +309,12 @@ class FaultsTest(unittest.TestCase):
         cases = {
             "a negation hung on an object": (
                 self.NEGATED_NOUN,
-                "negation in a noun phrase (put the negation on the verb, as in 'does not have a release')",
+                "negation in a noun phrase (put the negation on the verb, as in 'does not report a date')",
             ),
             "a negation on the verb": (self.NEGATED_VERB, ""),
             "a negation opening the subject": (self.NEGATED_SUBJECT, ""),
             "a negation denying that anything exists": (self.NEGATED_EXISTENCE, ""),
+            "a negation denying that the subject has something": (self.NEGATED_POSSESSION, ""),
         }
         for case, (sentence, expected) in cases.items():
             with self.subTest(case=case):

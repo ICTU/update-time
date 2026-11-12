@@ -3,9 +3,9 @@
 import re
 from typing import TYPE_CHECKING
 
-from update_time.domain.line import located_lines
-from update_time.markers.marker import parse_marker
-from update_time.markers.reference import SteeredReference
+from update_time.domain.reference import Reference
+from update_time.markers.parser import parse_marker
+from update_time.primitives.line import located_lines
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,7 +38,7 @@ LOOSE_REQUIREMENT_REFERENCE = re.compile(rf"(?!{_EXACT_PIN})" + _REQUIREMENT_NAM
 _ARCHIVE_SUFFIXES = (".zip", ".whl", ".tar.gz", ".tar.bz2", ".tar", ".tgz", ".tar.xz", ".txz", ".tlz", ".tar.lzma")
 
 
-def declarations(path: Path) -> list[SteeredReference]:
+def declarations(path: Path) -> list[Reference]:
     """Return the requirements in the file, each with its marker and with the exact version it pins, if any."""
     requirements = []
     for line in located_lines(path, path.read_text().splitlines(keepends=True)):
@@ -48,7 +48,7 @@ def declarations(path: Path) -> list[SteeredReference]:
             dependency, version = requirement["dependency"], ""
         else:
             continue
-        requirements.append(SteeredReference(dependency, version, line.location, marker=parse_marker(line)))
+        requirements.append(Reference(dependency, version, line.location, marker=parse_marker(line)))
     return requirements
 
 

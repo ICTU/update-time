@@ -13,7 +13,7 @@ _LOG = get_logger("gitlab ci")
 def update_gitlab_ci_config() -> None:
     """Update the images in the GitLab CI configuration file, if the repository has one."""
     for gitlab_ci_config in glob_for(GITLAB_CI_CONFIG):
-        update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, get_new_version=TagGetter(), logger=_LOG)
+        update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, source=TagGetter().source, logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

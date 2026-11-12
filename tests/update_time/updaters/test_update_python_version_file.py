@@ -2,8 +2,8 @@
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.directive import Reason
 from update_time.io.log import Logger
-from update_time.markers.directive import Reason
 from update_time.package_managers.uv import uv
 from update_time.primitives.location import Location
 from update_time.updaters import update_python_version_file
@@ -106,7 +106,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             update_python_version_file._report_requires_python,
-            " and not marker.ignores(Scope.UPDATE)",
+            " and not reference.marker.ignores(Scope.UPDATE)",
             "",
             "an entry its marker holds back is logged as held back by the `requires-python` as well",
         )

@@ -13,7 +13,7 @@ from update_time.sources.npmjs import (
     newest_release,
 )
 
-from tests.helpers import mock_response, patch_get, requested_urls
+from tests.helpers import mock_response, patch_get, requested_urls, unparsable_response
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase
 from tests.update_time.sources.helpers import (
@@ -37,6 +37,11 @@ _REPOSITORY = "org/package"
 def _version_url(package: str, version: str = "1.0") -> str:
     """Return the URL the npm registry serves the package version's document at."""
     return f"https://registry.npmjs.org/{package}/{version}"
+
+
+def _package_url(package: str) -> str:
+    """Return the URL the npm registry serves the package's document at."""
+    return f"https://registry.npmjs.org/{package}"
 
 
 class NpmjsPublicationDatetimeTest(LoggingTestCase):
@@ -66,11 +71,6 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
     def test_get_publication_datetime_for_unlisted_version(self):
         """Test that a version the registry doesn't list yields no publication date instead of raising."""
         self.assertIsNone(get_publication_datetime("package", "9.9"))
-
-    @patch_get(ok=False)
-    def test_get_changes_when_unreachable(self):
-        """Test that an unreachable registry yields no changelog instead of crashing."""
-        self.assertEqual(get_changes("package", "1.0"), "")
 
 
 class NpmjsNewestReleaseTest(LoggingTestCase):
@@ -128,9 +128,29 @@ class NpmjsDeprecationTest(LoggingTestCase):
         self.assertIsNone(deprecation("package", "1.0"))
         self.assert_could_not_fetch_logged()
 
+    @patch(
+        "requests.Session.get",
+        Mock(return_value=unparsable_response(ok=True, url=_package_url("package"))),
+    )
+    def test_package_document_that_is_not_json(self):
+        """Test that a package document that is not JSON leaves the deprecation state unknown, and is warned about."""
+        self.assertIsNone(deprecation("package", "1.0"))
+        self.assert_invalid_json_logged(_package_url("package"))
+
 
 class GetChangesRepositoryTest(LoggingTestCase):
     """Unit tests for locating the changelog from npm's varied `repository` metadata."""
+
+    @patch_get(ok=False)
+    def test_get_changes_when_unreachable(self):
+        """Test that an unreachable registry yields no changelog instead of crashing."""
+        self.assertEqual(get_changes("package", "1.0"), "")
+
+    @patch("requests.Session.get", Mock(return_value=unparsable_response(ok=True, url=_version_url("package"))))
+    def test_get_changes_when_the_version_document_is_not_json(self):
+        """Test that a version document that is not JSON is warned about, and the version gets an empty changelog."""
+        self.assertEqual(get_changes("package", "1.0"), "")
+        self.assert_invalid_json_logged(_version_url("package"))
 
     def test_unreadable_repository(self):
         """Test that metadata naming no GitHub URL yields no changelog, without raising and without asking GitHub."""

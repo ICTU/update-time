@@ -17,23 +17,19 @@ from update_time.domain.reference import ResolvedReference, hash_drifted
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.sphinx_config import ATTRIBUTES, URL_REFERENCE, spell_integrity
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Scope
 from update_time.primitives.text import rewrite_string
 from update_time.references.file import rewrite_file
-from update_time.references.match import matched_reference
 from update_time.references.resolve import latest_version
 from update_time.references.rewrite import apply_marker
 from update_time.references.vulnerability import warn_about_vulnerable_references
+from update_time.sources import npmjs
 from update_time.sources.jsdelivr import integrity_hash, version_getter
-from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
     import re
 
-    from update_time.domain.line import Line
-    from update_time.markers.marker import Marker
-    from update_time.primitives.location import Location
+    from update_time.domain.reference import Reference
+    from update_time.primitives.line import Line
 
 _LOG = get_logger("jsdelivr")
 
@@ -101,23 +97,16 @@ class _Rewriter:
 
     resolved: _ResolvedURL | None = None
 
-    def update_url(self, match: re.Match[str], location: Location, marker: Marker) -> str:
+    def update_url(self, match: re.Match[str], reference: Reference) -> str:
         """Return the URL's line bumped to the latest version, or unchanged when there is no new version.
 
         Which version to move to is `latest_version`'s decision, shared with every other reference kind, honouring
         the URL's `# update-time:` marker with its bound and hold-backs. Only the URL's own output is spelled here;
         the hash of the resolved version is left to the dictionary line, which the pass reaches next.
         """
-        reference = matched_reference(match, location)
-        _LOG.warn_if_the_opt_in_is_redundant(
-            reference,
-            marker,
-            Scope.HASH_DRIFT,
-            Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED,
-            update_held_back=marker.ignores(Scope.UPDATE),
-        )
         filename = match.group("filename")
-        latest = latest_version(reference, version_getter(filename), marker, _LOG)
+        source = replace(npmjs.SOURCE, new_version=version_getter(filename), adopts_hash_drift=False)
+        latest = latest_version(reference, source, _LOG)
         if latest is None:
             return match.string
         self.resolved = _ResolvedURL.from_reference(reference, release=latest, filename=filename)
@@ -162,7 +151,7 @@ def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob_for(SPHINX_CONFIG):
         lines = rewrite_file(sphinx_config_py, _Rewriter().updated_lines, _LOG)
-        warn_about_vulnerable_references(lines, URL_REFERENCE, Ecosystem.NPM, _LOG)
+        warn_about_vulnerable_references(lines, URL_REFERENCE, npmjs.SOURCE, _LOG)
 
 
 def main() -> None:  # pragma: no cover

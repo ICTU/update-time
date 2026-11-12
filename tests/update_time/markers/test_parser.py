@@ -8,9 +8,10 @@ import unittest
 from pathlib import Path
 
 from update_time.domain.bound import Verb
-from update_time.domain.line import Line
-from update_time.markers import marker as marker_module
-from update_time.markers.marker import Marker, Scope, Threshold, parse_directives, parse_marker
+from update_time.domain.marker import Marker, Scope, Threshold
+from update_time.markers import parser as parser_module
+from update_time.markers.parser import parse_directives, parse_marker
+from update_time.primitives.line import Line
 from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
@@ -52,62 +53,6 @@ def _fields_that_cannot_combine() -> set[str]:
     return {keyword.arg for keyword in merged.keywords if keyword.arg and _cannot_combine(keyword.value)}
 
 
-class MergeTest(unittest.TestCase):
-    """Unit tests for folding two markers into one."""
-
-    def test_raw_texts_concatenate_in_order(self):
-        """Test that merging keeps both verbatim directive runs, this marker's first, so the echo reads in order."""
-        merged = Marker(raw="allow[update<3.13]").merge(Marker(raw="ignore[yanked]"))
-        self.assertEqual(merged.raw, "allow[update<3.13] ignore[yanked]")
-
-    def test_raw_is_excluded_from_equality(self):
-        """Test that two markers meaning the same thing compare equal however their directives were spelled."""
-        self.assertEqual(Marker(ignored_scopes=Scope.UPDATE, raw="ignore[update]"), Marker(ignored_scopes=Scope.UPDATE))
-
-
-class DirectiveTest(unittest.TestCase):
-    """Unit tests for the directive a marker names when one of its scopes is reported."""
-
-    def marker(self, directives: str) -> Marker:
-        """Return the marker the directives express, as a reference's own line carries them."""
-        return parse_marker(_line(f"image: python:3.14  # update-time: {directives}"))
-
-    def test_a_scope_the_marker_leaves_live_is_named_by_nothing(self):
-        """Test that a scope the marker does not hold back names no directive."""
-        self.assertEqual(self.marker("set[stale-after=0]").scope_directive(Scope.YANKED), "")
-
-    def test_a_scope_is_named_alone(self):
-        """Test that a scope names its own directive, leaving out an `ignore` beside it that holds plenty back."""
-        self.assertEqual(self.marker("ignore[update] ignore[yanked]").scope_directive(Scope.YANKED), "ignore[yanked]")
-
-    def test_a_threshold_is_named_alone(self):
-        """Test that a staleness threshold is named as its own directive, leaving out a directive beside it."""
-        marker = self.marker("set[stale-after=90] allow[hash-drift]")
-        self.assertEqual(marker.directive_for(Scope.STALE), "set[stale-after=90]")
-
-    def test_a_cooldown_is_named_alone(self):
-        """Test that a cooldown is named as its own directive, leaving out a directive beside it."""
-        marker = self.marker("set[cooldown=30] allow[hash-drift]")
-        self.assertEqual(marker.cooldown_directive, "set[cooldown=30]")
-
-    def test_every_vulnerable_form_the_marker_carries_is_named(self):
-        """Test that each `vulnerable` form is named, the advisories sharing a bracket and sorted within it."""
-        marker = self.marker("ignore[vulnerable=CVE-2, vulnerable=CVE-1] set[vulnerability-level=high]")
-        self.assertEqual(
-            marker.directive_for(Scope.VULNERABLE),
-            "ignore[vulnerable=CVE-1, vulnerable=CVE-2] set[vulnerability-level=high]",
-        )
-
-
-class RawTextTest(unittest.TestCase):
-    """Unit tests for reading a marker's verbatim directive text back out of its `raw` text."""
-
-    def test_str_is_the_whole_marker(self):
-        """Test that a marker renders as the whole of its verbatim directive text, every verb's directives kept."""
-        marker = Marker(raw="ignore[update] allow[hash-drift]")
-        self.assertEqual(str(marker), "ignore[update] allow[hash-drift]")
-
-
 class ParseMarkerScopeTest(unittest.TestCase):
     """Unit tests for what an `ignore` directive's bracket expresses."""
 
@@ -129,7 +74,7 @@ class ParseMarkerScopeTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            marker_module.Marker.merge,
+            Marker.merge,
             "default_directives=self.default_directives + other.default_directives,",
             "default_directives=self.default_directives or other.default_directives,",
             "a marker asking for the default more than once is reported for the first such directive alone",
@@ -229,19 +174,19 @@ class ParseMarkerSetTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            marker_module,
+            parser_module,
             "(?P<key>{_STALE_AFTER}|{_COOLDOWN})",
             r"(?P<key>[\w-]+)",
             "a `set` item takes any key, so one naming a scope rather than an option sets a value",
         ),
         Mutation(
-            marker_module,
+            parser_module,
             r"=(?P<days>\d+)",
             r"=(?P<days>-?\d+)",
             "a `set` item takes a negative day count",
         ),
         Mutation(
-            marker_module,
+            parser_module,
             "(?P<level>{'|'.join([*RISK_LEVELS, NO_RISK_LEVEL])})",
             r"(?P<level>\w+)",
             "a `set` item takes any word as a risk level",

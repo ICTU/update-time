@@ -3,9 +3,9 @@
 from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope
 from update_time.io.log import Logger
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope
 from update_time.package_managers.uv import lock, marker_policy
 from update_time.package_managers.uv import uv as uv_module
 from update_time.primitives.command import Command

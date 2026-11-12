@@ -2,19 +2,17 @@
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.directive import Reason
 from update_time.domain.file_type import POM_XML
+from update_time.domain.marker import Scope
 from update_time.formats import xml
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_manifest
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Scope
 from update_time.package_managers.maven import marker_policy, versions_plugin
 from update_time.package_managers.maven.reactor import reactors
-from update_time.references.delegated import project_resolver, warn_about_projects
-from update_time.references.vulnerability import warn_about_vulnerable_dependencies
+from update_time.references.delegated import warn_about_pinned_versions, warn_about_projects
 from update_time.sources import maven_central
-from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -71,7 +69,7 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor: Re
 
 def _check_projects(declared: list[pom_xml_manifest.Declaration]) -> None:
     """Warn about each dependency and plugin whose newest release is old, or whose source repository is archived."""
-    warn_about_projects([declared], project_resolver(maven_central.project), _LOG)
+    warn_about_projects([declared], maven_central.project, _LOG)
 
 
 def _warn_about_vulnerabilities(declared: list[pom_xml_manifest.Declaration]) -> None:
@@ -88,7 +86,7 @@ def _warn_about_vulnerabilities(declared: list[pom_xml_manifest.Declaration]) ->
             vulnerable := declaration.marker.directive_for(Scope.VULNERABLE)
         ):
             _LOG.redundant_directive(declaration, vulnerable, Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY)
-    warn_about_vulnerable_dependencies([resolved], Ecosystem.MAVEN, _LOG)
+    warn_about_pinned_versions([resolved], _LOG, maven_central.SOURCE)
 
 
 def main() -> None:  # pragma: no cover

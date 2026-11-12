@@ -16,17 +16,26 @@ from unittest.mock import ANY, Mock, call, patch
 
 import update_time
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin, ImageNotLookedUp, tag_of
-from update_time.domain.reference import Reference, RefKind
+from update_time.domain.dependency import (
+    NO_PROJECT,
+    NO_RELEASE,
+    ArchivedSubject,
+    DependencyVersion,
+    FloatingPin,
+    ImageNotLookedUp,
+    Project,
+    tag_of,
+)
+from update_time.domain.directive import Reason
+from update_time.domain.marker import NO_MARKER, Marker
+from update_time.domain.reference import Reference, RefKind, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.console import CHANGES, NOTE
 from update_time.io.log import Logger, LogMessage
 from update_time.manifests.python_dependency_toml import Declaration
 from update_time.markers.bound import parse_bound
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker
-from update_time.markers.reference import SteeredResolvedReference
+from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
@@ -41,9 +50,9 @@ if TYPE_CHECKING:
     from unittest.mock import _Call
 
     from update_time.domain.bound import Verb, VersionBound
+    from update_time.domain.directive import RedundancyReason
     from update_time.domain.reference import DriftedPin
     from update_time.io.log import Drift
-    from update_time.markers.directive import RedundancyReason
 
 
 def declaration(  # noqa: PLR0913 — a declaration is that many facts
@@ -147,11 +156,25 @@ def _cached_functions(module: ModuleType) -> list[_Cached]:
     ]
 
 
-def _all_loggers(package: ModuleType) -> list[Logger]:
-    """Return the loggers the package's modules hold, as module constants or as attributes of their classes."""
+@cache
+def _all_loggers(package: ModuleType) -> tuple[Logger, ...]:
+    """Return the loggers the package's modules hold, as module constants or as attributes of their classes.
+
+    A module creates its loggers when it is imported, so the package's modules are scanned for them once.
+    """
     values = [value for module in _package_modules(package) for value in vars(module).values()]
     attributes = [attribute for value in values if isinstance(value, type) for attribute in vars(value).values()]
-    return [value for value in values + attributes if isinstance(value, Logger)]
+    return tuple(value for value in values + attributes if isinstance(value, Logger))
+
+
+def setting_names(package: ModuleType) -> set[str]:
+    """Return the environment variable of each setting the package's modules hold: what a run is configured with."""
+    return {
+        value.name
+        for module in _package_modules(package)
+        for value in vars(module).values()
+        if isinstance(value, EnvVar)
+    }
 
 
 class CacheClearingTestCase(unittest.TestCase):
@@ -381,6 +404,10 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assert_error_logged(
             message_of(Logger.unpinned_ref), dependency=dependency, ref=ref, name=name, location=location, reason=reason
         )
+
+    def assert_invalid_json_logged(self, url: str, *, among_others: bool = False) -> None:
+        """Assert that an answer that is not JSON was reported, naming the URL, as the run's only warning by default."""
+        self._assert_reported(message_of(Logger.invalid_json), among_others=among_others, url=url)
 
     def assert_unpinned_floating_tag_logged(
         self, dependency: str, version: str, location: Location, reason: FloatingPin, looked_up: str = ""
@@ -853,14 +880,12 @@ def reference(dependency: str, location: Location, version: str = "") -> Referen
 def resolved_reference(
     dependency: str,
     location: Location,
-    release: DependencyVersion,
-    version: str = "",
-    marker: Marker | None = None,
-) -> SteeredResolvedReference:
-    """Return the resolved reference a check is handed: the reference, its release, and its marker."""
-    return SteeredResolvedReference(
-        dependency, version, location, release=release, marker=Marker() if marker is None else marker
-    )
+    release: DependencyVersion = NO_RELEASE,
+    marker: Marker = NO_MARKER,
+    project: Project = NO_PROJECT,
+) -> ResolvedReference:
+    """Return the resolved reference a check is handed: the reference, its release, its marker, and its project."""
+    return ResolvedReference(dependency, "", location, release=release, marker=marker, project=project)
 
 
 def bound(verb: Verb, item: str) -> VersionBound:

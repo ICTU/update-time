@@ -491,10 +491,12 @@ class RecompileTest(UvSettingsTestCase):
     def test_the_longest_cooldown_among_the_declarations_of_a_package_applies(self):
         """Test that a package both sources declare gets their longest cooldown, the run's for an unmarked one."""
         thirty, sixty = "flask>=1  # update-time: set[cooldown=30]\n", "flask>=1  # update-time: set[cooldown=60]\n"
+        three = "flask>=1  # update-time: set[cooldown=3]\n"
         cases = {
             "the longer one annotated last": (thirty, sixty, "flask=60 days"),
             "the longer one annotated first": (sixty, thirty, "flask=60 days"),
             "one in the source annotated first alone": (thirty, "flask>=1\n", "flask=30 days"),
+            "one shorter than the run's beside an unmarked one": (three, "flask>=1\n", "flask=7 days"),
         }
         for case, (base, dev, package_cooldown) in cases.items():
             with self.subTest(case):

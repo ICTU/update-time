@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, call, patch
 
+import update_time
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
@@ -25,6 +26,7 @@ from update_time.updaters.update import _SCRIPTS, _SRC, _Script, _Scripts, main
 
 from tests.helpers import patch_environ, patch_pathlib_path
 from tests.mutation import Mutation, kills
+from tests.update_time.helpers import setting_names
 
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
@@ -187,8 +189,8 @@ class UpdateMainTest(unittest.TestCase):
     ) -> tuple[int, dict[str, str]]:
         """Run `main()` with the given CLI arguments and return the environment it exported for the subprocesses.
 
-        The returned snapshot is taken while main's exports (cooldown, log level, excluded paths) are still in place,
-        so a caller can assert on them even though `patch.dict` restores the real environment afterwards.
+        The returned snapshot is taken while main's exports are still in place, so a caller can assert on them even
+        though `patch.dict` restores the real environment afterwards.
         """
         mock_popen.return_value.wait.return_value = 0
         for signal_number in update_module._STOP_SIGNALS:
@@ -248,6 +250,28 @@ class UpdateMainTest(unittest.TestCase):
         exit_code, environment = self.run_main(mock_popen, "--exclude-path", "vendor,packages/legacy")
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[_EXCLUDE_PATHS.name], "vendor,packages/legacy")
+
+    @kills(
+        Mutation(
+            update_module._pass_settings_down,
+            "STALE_AFTER.set(args.stale_after)",
+            "pass",
+            "the updaters run on the default staleness threshold, whatever --stale-after says",
+        ),
+        Mutation(
+            update_module._pass_settings_down,
+            "VULNERABILITY_LEVEL.set(args.vulnerability_level)",
+            "pass",
+            "the updaters run on the default risk level, whatever --vulnerability-level says",
+        ),
+    )
+    def test_main_passes_every_setting_to_subprocesses(self, mock_popen: Mock):
+        """Test that main exports each setting the package holds, a setting added later included."""
+        settings = setting_names(update_time)
+        self.assertIn(COOLDOWN.name, settings)  # The scan finds the settings, so the assertion below examines some.
+        exit_code, environment = self.run_main(mock_popen)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(settings - environment.keys(), set())
 
     def test_main_passes_no_excluded_paths_by_default(self, mock_popen: Mock):
         """Test that main exports an empty excluded-paths variable when --exclude-path is not given."""

@@ -12,12 +12,13 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 
 from update_time.domain.dependency import is_valid, normalized_python_name
-from update_time.domain.line import Line, located_lines
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope
+from update_time.domain.reference import Reference
 from update_time.formats import toml
 from update_time.manifests import pyproject_config
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, parse_marker
-from update_time.markers.reference import SteeredReference
+from update_time.markers.parser import parse_marker
+from update_time.primitives.line import Line, located_lines
 from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
 
@@ -48,7 +49,7 @@ def _placeholder(position: _DeclarationPosition) -> str:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Declaration(SteeredReference):
+class Declaration(Reference):
     """A dependency a file declares, and where the file says its release comes from.
 
     `uv_sourced` says the file names this dependency in its `[tool.uv] sources` table, so uv resolves it from a

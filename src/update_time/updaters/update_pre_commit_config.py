@@ -1,6 +1,5 @@
 """Pin the `rev:` of each GitHub-hosted hook in pre-commit configs to a commit, and bump it to the latest version."""
 
-from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.file_type import PRE_COMMIT_CONFIG
@@ -13,7 +12,7 @@ from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_repository
 
 if TYPE_CHECKING:
-    from update_time.domain.line import Line
+    from update_time.primitives.line import Line
 
 _LOG = get_logger("pre-commit config")
 _REV = PinUpdater(spell_rev, _LOG)
@@ -34,9 +33,10 @@ def _updated_lines(lines: list[Line]) -> list[str]:
             result.append(line.text)
         elif (rev_match := REV_REFERENCE.search(line.text)) and repository is not None:
             dependency = str(repository)
-            update_line = partial(_REV.update_line, dependency=dependency)
             result.append(
-                apply_marker(line, rev_match, update_line, _LOG, dependency, steers_the_update=_REV.steers_the_update)
+                apply_marker(
+                    line, rev_match, _REV.update_line, _LOG, dependency, steers_the_update=_REV.steers_the_update
+                )
             )
         else:
             result.append(line.text)

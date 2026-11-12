@@ -8,12 +8,10 @@ flowchart TD
   domain --> primitives
   formats --> primitives
   io --> domain
-  io --> markers
   io --> primitives
   lock_files --> domain
   lock_files --> formats
   lock_files --> manifests
-  lock_files --> markers
   lock_files --> primitives
   manifests --> domain
   manifests --> formats
@@ -26,7 +24,6 @@ flowchart TD
   package_managers --> io
   package_managers --> lock_files
   package_managers --> manifests
-  package_managers --> markers
   package_managers --> primitives
   package_managers --> sources
   references --> domain

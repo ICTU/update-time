@@ -1,8 +1,8 @@
-"""A line of a file, with the context needed to read a reference on it.
+"""A line of a file, with the text of the line above it and where it sits.
 
-A reference is never read from its own line alone. An `# update-time:` marker may sit on the line above it instead of
-inline, and a reported reference points at the line it sits on. So a line's text, the text above it, and its location
-travel together as one `Line`, produced for a file's lines by `located_lines`.
+What a line holds is not always read from that line alone: the line above it can add to it, and a report about it
+names where it sits. So a line's text, the text above it, and its location travel together as one `Line`, produced
+for a file's lines by `located_lines`.
 """
 
 from dataclasses import dataclass
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Line:
-    """One line of a file being rewritten: its text, the text of the line above it, and where it sits."""
+    """One line of a file: its text, the text of the line above it, and where it sits."""
 
     text: str
     previous_text: str

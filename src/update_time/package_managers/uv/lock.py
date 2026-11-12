@@ -102,7 +102,7 @@ class _Member:
         """Warn about each bound that never has an effect, or blocks every update, at its declaration's version."""
         for declaration in self.bounded_declarations:
             if current_version := marker_policy.current_version(declaration, self.locked_as_written):
-                log.warn_if_redundant_bound(replace(declaration, current_version=current_version), declaration.marker)
+                log.warn_if_redundant_bound(replace(declaration, current_version=current_version))
 
     @property
     def bounds(self) -> dict[Declaration, str]:

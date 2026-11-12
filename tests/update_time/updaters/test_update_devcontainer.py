@@ -122,7 +122,7 @@ class ScannedDevcontainersTest(unittest.TestCase):
         mock_file = mock_path("{}")
         mock_glob.return_value = [mock_file]
         update_devcontainers()
-        mock_update_file.assert_called_once_with(mock_file, ANY, ANY, get_new_version=ANY, logger=ANY)
+        mock_update_file.assert_called_once_with(mock_file, ANY, ANY, source=ANY, logger=ANY)
         image_pattern, feature_pattern = mock_update_file.call_args.args[1:3]
         self.assertRegex('"image": "python:3.12"', image_pattern)
         self.assertRegex('"ghcr.io/devcontainers/features/node:1": {', feature_pattern)

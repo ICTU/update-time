@@ -14,12 +14,12 @@ if TYPE_CHECKING:
 REPOSITORY_KEY = re.compile(r"repo:\s*(?P<quote>['\"]?)(?P<repo>[^\s'\"]+)(?P=quote)")
 # Match a `rev:` value that is either already pinned to a commit SHA with a pre-commit `# frozen:` comment naming a
 # version or a branch (`rev: <sha> # frozen: v4.5.0`, `rev: <sha> # frozen: main`), or unpinned (`rev: v4.5.0`,
-# optionally quoted). The tag group also takes an unpinned branch, a tag such as `stable-2024`, and a bare commit
-# SHA. The tag stops at whitespace, a quote, or a `#`, so a trailing `# update-time:` marker (or any comment) is left
-# outside the match and preserved.
+# optionally quoted). Where no commit SHA comes first, the version group also takes an unpinned branch, a tag such as
+# `stable-2024`, and a bare commit SHA. It then stops at whitespace, a quote, or a `#`, so a trailing `# update-time:`
+# marker (or any comment) is left outside the match and preserved.
 REV_REFERENCE = re.compile(
-    r"rev:\s*"
-    rf"(?:(?P<sha>{COMMIT_SHA})\s*#\s*frozen:\s*(?P<version>\S+)|(?P<quote>['\"]?)(?P<tag>[^\s'\"#]+)(?P=quote))"
+    rf"rev:\s*(?:(?P<sha>{COMMIT_SHA})\s*#\s*frozen:\s*|(?P<quote>['\"]?))"
+    r"(?P<version>(?(sha)\S+|[^\s'\"#]+))(?(quote)(?P=quote))"
 )
 
 

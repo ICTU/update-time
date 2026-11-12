@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from update_time.domain.dependency import VERSION_NUMBERS, ImageNotLookedUp
-from update_time.domain.line import Line
 from update_time.manifests.image_reference import DIGESTLESS_IMAGE_REFERENCE, OPTIONALLY_TAGGED_IMAGE_REFERENCE
+from update_time.primitives.line import Line
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence

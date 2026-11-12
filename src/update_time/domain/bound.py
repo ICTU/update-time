@@ -19,23 +19,11 @@ from update_time.domain.dependency import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-    from typing import Protocol
+    from collections.abc import Callable, Iterable
 
-    class NewVersionGetter(Protocol):
-        """The contract every updater binds and every source implements, resolving the version to update to."""
-
-        def __call__(
-            self,
-            pinned: PinnedDependency,
-            version_bound: VersionBound,
-            cooldown_days: int,
-            /,
-        ) -> DependencyVersion:
-            """Return the version to update the pinned dependency to.
-
-            The bound and the cooldown are the two constraints on the candidates, by version and by age.
-            """
+# A getter of the version to update a pinned dependency to. The bound limits the candidates by version, and the
+# cooldown in days limits them by age.
+type NewVersionGetter = Callable[[PinnedDependency, VersionBound, int], DependencyVersion]
 
 
 # A version higher than any real one, used to probe whether a bound caps anything above the current version.
@@ -87,10 +75,6 @@ class UpdateLevel(enum.IntEnum):
     MAJOR = 0
     MINOR = 1
     PATCH = 2
-
-    def __str__(self) -> str:
-        """Return the level as it appears in a `<level>-update` marker item, so parsing and rendering agree."""
-        return self.name.lower()
 
 
 # The operator keeping exactly the versions a clause with the other operator drops, so the bound an `ignore` item

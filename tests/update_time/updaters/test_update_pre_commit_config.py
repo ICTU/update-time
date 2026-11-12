@@ -12,10 +12,10 @@ from update_time.domain.dependency import (
     Project,
     Release,
 )
+from update_time.domain.directive import Reason
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
 from update_time.manifests import pre_commit_config as pre_commit_config_manifest
-from update_time.markers.directive import Reason
 from update_time.primitives import digest
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
@@ -35,7 +35,12 @@ from tests.update_time.sources.helpers import (
     github_tag_json,
     patch_github,
 )
-from tests.update_time.updaters.helpers import full_commit_sha, github_version, no_other_version_at_the_tag
+from tests.update_time.updaters.helpers import (
+    GitHubProjectMixin,
+    full_commit_sha,
+    github_version,
+    no_other_version_at_the_tag,
+)
 
 _HOOKS = "hooks:\n      - id: trailing-whitespace\n"
 
@@ -48,7 +53,7 @@ def config(rev_block: str) -> str:
 @no_other_version_at_the_tag
 @patch("update_time.references.github.get_latest_version", autospec=True)
 @patch("pathlib.Path.glob")
-class UpdatePreCommitConfigsTest(LoggingTestCase):
+class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
     """Unit tests for the update pre-commit configs function."""
 
     HOOK = "pre-commit/pre-commit-hooks"
@@ -230,11 +235,10 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
                 config_file.write_text.assert_called_once_with(f"{repo}    rev: {NEW_SHA}  # frozen: v4.6.0\n")
                 self.assert_resolved(mock_get_latest_version)
 
-    @patch_github(
-        releases=[github_release_json("v4.5.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
-    )
+    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
     def test_stale_branch_rev_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev naming a branch is warned about when its repository's newest release is old."""
+        self.get_project.return_value = Project(newest=Release("4.5.0", STALE_DATE))
         config_file = mock_path(config("rev: main\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -278,9 +282,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: 20240301\n"))
         self.assert_resolved(mock_get_latest_version, "20240101")
 
-    @patch_github(
-        releases=[github_release_json("v4.5.0", published_at=FRESH_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
-    )
+    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
     def test_bare_sha_without_frozen_comment_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev pinned to a bare commit SHA without a frozen comment is not rewritten, its commit unasked."""
         config_file = mock_path(config(f"rev: {OLD_SHA}\n"))
@@ -289,14 +291,14 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assertEqual(github_requests("commits"), [])
-        self.assertEqual(len(github_requests("releases")), 1)
+        self.get_project.assert_called_once_with(self.HOOK)
         self.assert_no_warnings_logged()
 
     @kills(
         Mutation(
             update_pre_commit_config._updated_lines,
-            "dependency, steers_the_update=_REV.steers_the_update)",
-            "dependency)",
+            ", steers_the_update=_REV.steers_the_update",
+            "",
             "an `ignore[update]` on a rev pinned to a bare commit SHA is logged as holding the update back",
         )
     )
@@ -372,7 +374,8 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         """Test that a hook whose newest version is old is warned about, even when it is up to date."""
         newest = Release("4.7.0", STALE_DATE)
         project = Project(newest=newest)
-        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA, project=project)
+        self.get_project.return_value = project
+        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -383,7 +386,8 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         """Test that a hook whose repository GitHub declares archived is warned about, even when it is up to date."""
         archival = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
         project = Project(archival=archival)
-        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA, project=project)
+        self.get_project.return_value = project
+        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -425,7 +429,8 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[update]` leaves the rev unchanged but still warns when the hook is stale."""
         newest = Release("4.7.0", STALE_DATE)
-        mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, project=Project(newest=newest))
+        self.get_project.return_value = Project(newest=newest)
+        mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -437,7 +442,8 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
     def test_stale_after_zero_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `set[stale-after=0]` bumps the rev but skips the staleness check even for an old release."""
         newest = Release("4.7.0", STALE_DATE)
-        mock_latest.return_value = github_version("4.6.0", Project(newest=newest))
+        self.get_project.return_value = Project(newest=newest)
+        mock_latest.return_value = github_version("4.6.0")
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: set[stale-after=0]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -481,8 +487,8 @@ class UpdatePreCommitConfigsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github._PinResolver._report_redundant_directives,
-            "reports_vulnerabilities(self.source, reference.pinned) and ",
+            references_github.PinUpdater._report_redundant_directives,
+            "self.source.reports_vulnerabilities(reference.pinned) and ",
             "",
             "a `set[vulnerability-level=none]` on a pre-commit hook naming a branch is reported twice",
         )

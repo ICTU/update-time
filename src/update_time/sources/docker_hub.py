@@ -14,7 +14,7 @@ from functools import cache
 from http import HTTPStatus
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from update_time.io.fetch import failure_reason, fetch
+from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import parse_timestamp
@@ -52,8 +52,8 @@ def api_headers() -> dict[str, str]:
     """
     if creds := credentials():
         username, token = creds
-        response = fetch(_AUTH_URL, _LOG, method="post", json={"identifier": username, "secret": token})
-        if response is not None and (access_token := response.json().get("access_token")):
+        answer = fetch_json(_AUTH_URL, _LOG, method="post", json={"identifier": username, "secret": token}).value
+        if answer is not None and (access_token := answer.get("access_token")):
             return {"Authorization": f"Bearer {access_token}"}
     return {}
 
@@ -166,15 +166,11 @@ def _listing_page(url: str) -> LookedUp[_ListingPage]:
     A 404 means Docker Hub does not serve the repository, so the page is absent. Any other failure is logged, and
     reads as a page listing nothing.
     """
-    response = fetch(url, _LOG, headers=api_headers(), require_ok=False)
-    if response is None:
+    found = fetch_json(url, _LOG, headers=api_headers(), statuses_meaning_absent=(HTTPStatus.NOT_FOUND,))
+    if found.absent:
+        return found
+    if (listing := found.value) is None:
         return LookedUp(_ListingPage())
-    if response.status_code == HTTPStatus.NOT_FOUND:
-        return LookedUp(None, absent=True)
-    if not response.ok:
-        _LOG.response(response)
-        return LookedUp(_ListingPage())
-    listing = response.json()
     return LookedUp(_ListingPage(tuple(listing.get("results") or []), listing.get("next") or ""))
 
 
@@ -195,11 +191,9 @@ def last_pushed(repository: str, tag: str) -> LookedUp[datetime]:
 
     `repository` is the `namespace/repository` path (e.g. `library/redis`).
     """
-    response = fetch(f"{_tags_url(repository)}/{tag}", _LOG, headers=api_headers(), require_ok=False)
-    if response is not None and not response.ok:  # The fetch logged a failed request, but not a refused one
-        _LOG.response(response)
-    if response is None or not response.ok:
-        return LookedUp(None, failure_reason(response))
-    if (pushed := parse_timestamp(response.json().get("tag_last_pushed"))) is None:
+    found = fetch_json(f"{_tags_url(repository)}/{tag}", _LOG, headers=api_headers())
+    if found.value is None:
+        return found
+    if (pushed := parse_timestamp(found.value.get("tag_last_pushed"))) is None:
         return LookedUp(None, _NO_PUSH_DATE)
     return LookedUp(pushed)
