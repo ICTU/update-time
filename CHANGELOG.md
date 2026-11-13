@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.58 - 2026-11-13
+
 ### Changed
 
 - Drop a marker item Update-time cannot read and update the reference as usual, rather than leaving the reference unchanged, so the warning about such an item takes one form. Report a marker holding such an item as recognised, and quote a `package.json`'s whole `update-time` field in the `Recognised` line. Closes [#539](https://github.com/ICTU/update-time/issues/539).
