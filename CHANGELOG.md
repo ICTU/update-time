@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Warn about and skip a `pyproject.toml` or inline script metadata that Update-time cannot parse. Closes [#511](https://github.com/ICTU/update-time/issues/511).
+- Move an exact pin that a `pyproject.toml` shares with a project it sources by path to the version that project moves to, also where the projects source each other, rather than leaving the pin behind where uv cannot lock it. Closes [#554](https://github.com/ICTU/update-time/issues/554).
 
 ## 0.0.57 - 2026-11-11
 

@@ -22,7 +22,7 @@ from update_time.package_managers.uv.uv import (
 from update_time.primitives.command import Command
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from pathlib import Path
 
     from update_time.io.log import Logger
@@ -218,11 +218,8 @@ class _LockSnapshot:
         ]
         return cls(target, members, log)
 
-    def update(self) -> dict[PythonDependencyToml, ManagerPolicy[Declaration]]:
-        """Lock the files as written, report the markers, and update the pins where uv locked the files.
-
-        Return the policy each member's markers are judged by.
-        """
+    def steered_update(self) -> _LockUpdate:
+        """Lock the files as written, report the markers, and return the update of the pins."""
         locked = self._lock_as_written()
         # Where uv did not lock the files as written, the lock on disk records nothing about them as they are now.
         members = []
@@ -234,10 +231,7 @@ class _LockSnapshot:
                 else marker_policy.UNKEPT_LOCK_POLICY
             )
             members.append(member.steered_member(locked_as_written, policy, self.log))
-        lock_update = _LockUpdate(self, members)
-        if locked:
-            lock_update.update()
-        return lock_update.policies
+        return _LockUpdate(self, members, lock_as_written_succeeded=locked)
 
     def _lock_as_written(self) -> bool:
         """Lock the files as written, and return whether uv locked them.
@@ -254,27 +248,52 @@ class _LockSnapshot:
 
 @dataclass(frozen=True)
 class _LockUpdate:
-    """What uv locks, as it was before uv ran, with the members whose markers were reported."""
+    """What uv locks, as it was before uv ran, with the members whose markers were reported.
+
+    `lock_as_written_succeeded` says whether uv locked the files as written.
+    """
 
     before: _LockSnapshot
     members: list[_Member]
+    lock_as_written_succeeded: bool
 
     @property
     def policies(self) -> dict[PythonDependencyToml, ManagerPolicy[Declaration]]:
         """Return the policy each member's markers are judged by."""
         return {member.before.file: member.policy for member in self.members}
 
-    def update(self) -> None:
-        """Update the exact pins to the versions uv locks and report the new versions, or give the files back.
+    def move_pins(self) -> bool:
+        """Move the exact pins to the versions uv locks, or give the files back; return whether the pins moved.
 
-        The reports read the versions the lock records, so the run removes a lock it created after them.
+        Where uv did not lock the files as written, nothing moves.
         """
+        if not self.lock_as_written_succeeded:
+            return False
         if self.before.target.keeps_the_lock:
             self.before.log.path(self.before.target.uv_lock.path)
         self._report_pins_with_environment_markers()
         if not self._update_pins():
-            self._restore()
-            return
+            self.roll_back()
+            return False
+        return True
+
+    def relock(self) -> bool:
+        """Lock the files once more, so the lock records the current pins of each project the files source by path.
+
+        Return whether uv locked them.
+        """
+        return self._lock()
+
+    @property
+    def paths(self) -> list[Path]:
+        """Return the path of each file uv locks."""
+        return [member.before.file.path for member in self.members]
+
+    def report(self) -> None:
+        """Report the new versions of the pins that moved.
+
+        The reports read the versions the lock records, so the run removes a lock it created after them.
+        """
         self._report_new_pins()
         self._report_moved_versions()
         if not self.before.target.keeps_the_lock:
@@ -282,7 +301,7 @@ class _LockUpdate:
 
     def _update_pins(self) -> bool:
         """Move the exact pins of the files to the versions uv locks; return whether uv locked them."""
-        if not self._write_locked_requirements() or not self._lock("--upgrade", *self.before.target.cooldown_options):
+        if not self.relax() or not self._lock("--upgrade", *self.before.target.cooldown_options):
             return False
         return self._pin_locked_versions() and (not self.before.target.keeps_the_lock or self._lock())
 
@@ -290,7 +309,7 @@ class _LockUpdate:
         """Lock the files with the uv options, and return whether uv locked."""
         return self.before.target.lock([member.before.file for member in self.members], self.before.log, *options)
 
-    def _restore(self) -> None:
+    def roll_back(self) -> None:
         """Give the lock and the files back the text they held, and log each one that cannot get it."""
         self._restore_lock()
         for member in self.members:
@@ -314,7 +333,7 @@ class _LockUpdate:
         except OSError as error:
             failure(path, error)
 
-    def _write_locked_requirements(self) -> bool:
+    def relax(self) -> bool:
         """Write the requirements for uv to lock, each narrowed by the bound of its declaration's marker."""
 
         def text_to_lock(member: _Member) -> str:
@@ -411,7 +430,12 @@ def update_workspaces(
     Each workspace is read, and gets its cooldown, before uv locks any of them. A workspace with an unreadable lock is
     left as it is.
     """
-    return _update([_read_workspace(root, members, log) for root, members in by_workspace(pyproject_tomls).items()])
+    return _update(
+        [
+            [_read_workspace(root, members, log) for root, members in group.items()]
+            for group in by_workspace(pyproject_tomls)
+        ]
+    )
 
 
 def update_scripts(
@@ -421,16 +445,58 @@ def update_scripts(
 
     A script with an unreadable lock is left as it is.
     """
-    return _update(_read_script(script, log) for script in scripts)
+    return _update([[_read_script(script, log)] for script in scripts])
 
 
-def _update(snapshots: Iterable[_LockSnapshot | None]) -> dict[PythonDependencyToml, ManagerPolicy[Declaration]]:
-    """Update what uv locks for each snapshot, and return the policy each file's markers are judged by."""
-    policies: dict[PythonDependencyToml, ManagerPolicy[Declaration]] = {}
-    for snapshot in snapshots:
-        if snapshot is not None:
-            policies.update(snapshot.update())
-    return policies
+def _update(
+    groups: Iterable[Iterable[_LockSnapshot | None]],
+) -> dict[PythonDependencyToml, ManagerPolicy[Declaration]]:
+    """Update what uv locks for each group of snapshots, and return the policy each file's markers are judged by.
+
+    uv locks the files of every snapshot as written before it upgrades any. So uv reads the pins of a project that
+    another sources by path as the run found them, when it locks the other's files as written.
+    """
+    lock_update_groups = [[snapshot.steered_update() for snapshot in group if snapshot is not None] for group in groups]
+    for lock_updates in lock_update_groups:
+        _update_together(lock_updates)
+    return {
+        file: policy
+        for lock_updates in lock_update_groups
+        for lock_update in lock_updates
+        for file, policy in lock_update.policies.items()
+    }
+
+
+def _update_together(lock_updates: Sequence[_LockUpdate]) -> None:
+    """Move the pins of what uv locks for each lock update, and report them.
+
+    Several lock updates are the workspaces of projects that source each other by path. Their requirements are all
+    relaxed before uv upgrades any, so each upgrade sees the others relaxed. Each lock but the last is locked once
+    more, so it records the pins the others moved to after it. Where uv cannot lock one of them, they all get their
+    files back.
+    """
+    together = len(lock_updates) > 1
+    if together:
+        for lock_update in lock_updates:
+            lock_update.relax()
+    steps = [(lock_update, lock_update.move_pins) for lock_update in lock_updates]
+    steps += [(lock_update, lock_update.relock) for lock_update in lock_updates[:-1]]
+    for lock_update, step in steps:
+        if not step():
+            if together:
+                _roll_back(lock_updates, lock_update)
+            return
+    for lock_update in lock_updates:
+        lock_update.report()
+
+
+def _roll_back(lock_updates: Iterable[_LockUpdate], failed: _LockUpdate) -> None:
+    """Give each lock update its files back, and report the files of each but the failed one, whose uv lock failed."""
+    for lock_update in lock_updates:
+        lock_update.roll_back()
+        if lock_update is not failed:
+            for path in lock_update.paths:
+                lock_update.before.log.rolled_back_with_cycle(path, failed.paths)
 
 
 def _read_workspace(root: Path, pyproject_tomls: Iterable[PyprojectToml], log: Logger) -> _LockSnapshot | None:

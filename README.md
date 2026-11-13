@@ -1114,10 +1114,22 @@ In a PEP 723 inline script metadata block, Update-time updates only the pins in 
 
 Update-time rewrites a dependency's declaration when it pins one exact version with `==`, and keeps an extra as written, so it rewrites `django[argon2]==3.2.0` to the new version. In a `requirements.txt`, it keeps an environment marker as written too, so it rewrites `humanize==4.15.0; python_version < "3.13"` as well.
 
-In a `pyproject.toml`, the new version is the newest that installs together with the other dependencies of the project, and of the uv workspace the project belongs to. In inline script metadata, it is the newest that installs together with the script's other dependencies. uv can lock a package at one version for an older Python and at another for a newer one. The pin then takes the lower version, which installs on every Python the project or script supports. Update-time leaves a pin with an environment marker as it is, and reports that at `INFO`:
+In a `pyproject.toml`, the new version is the newest that installs together with the other dependencies of the project, of the uv workspace the project belongs to, and of the projects it sources by path. In inline script metadata, it is the newest that installs together with the script's other dependencies. uv can lock a package at one version for an older Python and at another for a newer one. The pin then takes the lower version, which installs on every Python the project or script supports. Update-time leaves a pin with an environment marker as it is, and reports that at `INFO`:
 
 ```console
 INFO Leaving humanize in pyproject.toml:3 as it is: Update-time does not update a pin with an environment marker
+```
+
+Update-time updates a project before each project that sources it by path, and projects that source each other by path together, so a pin they share moves to the same version. It reports the projects it updates together at `DEBUG`:
+
+```console
+DEBUG Updating the uv workspaces of lib/pyproject.toml and app/pyproject.toml together: their projects source each other by path
+```
+
+Where uv cannot lock one of them, Update-time gives each of them back the text it held before the run. It reports that at `ERROR`, next to the error of the project uv could not lock:
+
+```console
+ERROR Could not update the dependencies in lib/pyproject.toml: they move together with app/pyproject.toml, which uv could not lock
 ```
 
 Update-time leaves every other specifier untouched, so you can pin a maximum version, such as `humanize<5`, to opt a dependency out of automatic updates. A `==` that names a range, such as `humanize==4.15.*`, does not pin an exact version either.
@@ -1206,6 +1218,8 @@ An `ignore[update]` holds the dependency's update back, so Update-time leaves th
 In a `pyproject.toml` that uv manages and in inline script metadata, a bound narrows the versions uv locks, whether or not its dependency pins an exact version. So `humanize>=4  # update-time: allow[update<5]` keeps humanize below 5, and `humanize==4.10.0  # update-time: ignore[major-update]` moves the pin to the newest 4.x. A bound that leaves out the version, such as `allow[update<4]` on `humanize==4.10.0`, keeps the dependency on that version. A level bound on a dependency without an exact pin anchors at the version uv locks for the file as written.
 
 In a `pyproject.toml` or a script without a lock, a bound on a dependency without an exact pin holds nothing back, since uv resolves the dependency afresh on every run. uv resolves a name together for the whole workspace or script, so a marker that holds one declaration of a name back holds every declaration of that name. The file does not hold the bound, so a `uv lock --upgrade` you run yourself moves a dependency without an exact pin past it.
+
+A marker holds back the pins of its own workspace alone. Say `app` sources `lib` by path, and a marker in `app` holds back a pin that `lib` shares. Where `lib` moves that pin, uv cannot lock `app`. Update-time then leaves `app` as it was, and reports at `ERROR` that it could not update its dependencies (see [What files are updated?](#what-files-are-updated)).
 
 Update-time checks a requirement that does not pin an exact version for staleness and archival, so such a requirement can carry a marker as well: `humanize>=4  # update-time: set[stale-after=1095]` warns as soon as the package's newest release is more than three years old. In the source of a compiled file, such a requirement is checked for yanks and vulnerabilities as well, at the version the compiled file pins, so the `yanked` and `vulnerable` scopes apply to it too.
 

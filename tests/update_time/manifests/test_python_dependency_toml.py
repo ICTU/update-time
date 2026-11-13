@@ -239,9 +239,9 @@ class DeclarationsTest(unittest.TestCase):
             "about a name it has no release for",
         ),
         Mutation(
-            pyproject_config.from_table,
-            'sources=frozenset(normalized_python_name(name) for name in uv.get("sources", {})),',
-            'sources=frozenset(uv.get("sources", {})),',
+            pyproject_config._UvTable.from_mapping,
+            "sources=frozenset(normalized_python_name(name) for name in sources),",
+            "sources=frozenset(sources),",
             "a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about "
             "a name it has no release for",
         ),

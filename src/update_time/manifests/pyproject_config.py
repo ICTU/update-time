@@ -1,7 +1,7 @@
 """The config of a pyproject.toml or of PEP 723 inline script metadata, and the parse that checks its shape."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from update_time.domain.dependency import normalized_python_name
 from update_time.formats import toml
@@ -70,16 +70,51 @@ class UvWorkspace:
 
 
 @dataclass(frozen=True)
+class PathSource:
+    """A source that has uv resolve the dependency it names from a path, relative to the file declaring the source."""
+
+    dependency: DependencyName
+    path: str
+
+
+@dataclass(frozen=True)
 class _UvTable:
     """A `[tool.uv]` table: whether uv manages the project, the dependencies it sources, and the workspace it roots.
 
     The sources are the names of the dependencies uv resolves from a source of its own, each normalised, since uv
-    matches a `sources` key to a dependency by the normalised name.
+    matches a `sources` key to a dependency by the normalised name. The path sources are those that name a path.
     """
 
     managed: bool = True
     sources: frozenset[DependencyName] = frozenset()
+    path_sources: tuple[PathSource, ...] = ()
     workspace: UvWorkspace | None = None
+
+    @classmethod
+    def from_mapping(cls, uv: Mapping) -> Self:
+        """Return the `[tool.uv]` table read from its parsed mapping, whose shape is checked already.
+
+        A dependency takes a source, or a list of sources, and a source can name a path.
+        """
+        sources = uv.get("sources", {})
+        listed_sources = [
+            (name, source)
+            for name, value in sources.items()
+            for source in (value if isinstance(value, list) else [value])
+        ]
+        workspace = uv.get("workspace")
+        return cls(
+            managed=uv.get("managed") is not False,
+            sources=frozenset(normalized_python_name(name) for name in sources),
+            path_sources=tuple(
+                PathSource(normalized_python_name(name), source["path"])
+                for name, source in listed_sources
+                if isinstance(source, dict) and isinstance(source.get("path"), str)
+            ),
+            workspace=None
+            if workspace is None
+            else UvWorkspace(tuple(workspace.get("members", [])), tuple(workspace.get("exclude", []))),
+        )
 
 
 @dataclass(frozen=True)
@@ -127,8 +162,6 @@ def from_table(table: Mapping) -> PyprojectConfig | None:
     if not _is_well_formed(table):
         return None
     project = table.get("project", {})
-    uv = table.get("tool", {}).get("uv", {})
-    workspace = uv.get("workspace")
     return PyprojectConfig(
         uv_dependency_arrays=tuple(_DependencyArray(keys, tuple(array)) for keys, array in _uv_arrays(table)),
         build_requirements=tuple(_DependencyArray(keys, tuple(array)) for keys, array in _build_requirements(table)),
@@ -136,13 +169,7 @@ def from_table(table: Mapping) -> PyprojectConfig | None:
         requires_python=None if (specifier := project.get("requires-python")) is None else str(specifier),
         dynamic=tuple(project.get("dynamic", [])),
         tools=frozenset(table.get("tool", {})),
-        uv=_UvTable(
-            managed=uv.get("managed") is not False,
-            sources=frozenset(normalized_python_name(name) for name in uv.get("sources", {})),
-            workspace=None
-            if workspace is None
-            else UvWorkspace(tuple(workspace.get("members", [])), tuple(workspace.get("exclude", []))),
-        ),
+        uv=_UvTable.from_mapping(table.get("tool", {}).get("uv", {})),
     )
 
 
