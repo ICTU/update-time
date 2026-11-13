@@ -2,8 +2,9 @@
 
 import unittest
 
-from update_time.markers.directive import DIRECTIVES
-from update_time.markers.marker import _IGNORABLE_SCOPES, Scope
+from update_time.domain.directive import DIRECTIVES
+from update_time.domain.marker import Scope
+from update_time.markers.parser import _IGNORABLE_SCOPES
 
 
 class DirectivesTest(unittest.TestCase):

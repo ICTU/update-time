@@ -26,7 +26,7 @@ def update_manifest_images() -> None:
         logger=_LOG,
     )
     for helm_chart in glob_for(HELM_CHARTS):
-        update_file(helm_chart, YAML_IMAGE_REFERENCE, get_new_version=TagGetter(), logger=_LOG)
+        update_file(helm_chart, YAML_IMAGE_REFERENCE, source=TagGetter().source, logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

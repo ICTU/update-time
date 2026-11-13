@@ -3,19 +3,19 @@
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from update_time.markers.directive import WARNING_DIRECTIVES
-from update_time.markers.marker import Scope
-from update_time.markers.reference import SteeredReference
+from update_time.domain.directive import WARNING_DIRECTIVES
+from update_time.domain.marker import Scope
+from update_time.domain.reference import Reference
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
+    from update_time.domain.directive import Reason
     from update_time.io.log import Logger
-    from update_time.markers.directive import Reason
 
 
 @dataclass(frozen=True)
-class ManagerPolicy[ReferenceT: SteeredReference]:
+class ManagerPolicy[ReferenceT: Reference]:
     """Which directives steer the dependencies a package manager updates.
 
     `hold_back_redundancy` gives the reason an `ignore[update]` keeps nothing for a reference, or None where it keeps
@@ -55,14 +55,9 @@ class ManagerPolicy[ReferenceT: SteeredReference]:
         return reference.marker.ignores(Scope.UPDATE) and self.steers_the_update(reference)
 
 
-def report_markers[ReferenceT: SteeredReference](
+def report_markers[ReferenceT: Reference](
     references: Iterable[ReferenceT], log: Logger, policy: ManagerPolicy[ReferenceT]
 ) -> None:
     """Report each reference's marker."""
     for reference in references:
-        log.report_marker(
-            reference.dependency,
-            reference.marker,
-            reference.location,
-            steers_the_update=policy.steers_the_update(reference),
-        )
+        log.report_marker(reference, steers_the_update=policy.steers_the_update(reference))

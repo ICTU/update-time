@@ -9,9 +9,13 @@ from update_time.primitives.lookup import LookedUp
 from update_time.sources import docker_hub
 from update_time.sources.docker_hub import api_headers
 
-from tests.helpers import mock_response, patch_environ
+from tests.helpers import mock_response, patch_environ, unparsable_response
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase
+
+_CREDENTIALS = {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"}  # nosec
+# The endpoint Docker Hub exchanges the credentials for a token at.
+_AUTH_URL = "https://hub.docker.com/v2/auth/token"
 
 
 class ApiHeadersTest(LoggingTestCase):
@@ -29,30 +33,37 @@ class ApiHeadersTest(LoggingTestCase):
             self.assertEqual(api_headers(), {})
         mock_post.assert_not_called()  # Both credentials are required, so the token endpoint is never called.
 
-    @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch_environ(_CREDENTIALS)
     @patch("requests.Session.post")
     def test_bearer_token_header_when_credentials_are_configured(self, mock_post: Mock):
         """Test that a bearer token is fetched with the credentials and returned as the Authorization header."""
         mock_post.return_value = mock_response({"access_token": "token"})  # nosec
         self.assertEqual(api_headers(), {"Authorization": "Bearer token"})
         mock_post.assert_called_once_with(
-            "https://hub.docker.com/v2/auth/token",
+            _AUTH_URL,
             timeout=10,
             json={"identifier": "joe_doe", "secret": "pat123"},  # nosec
         )
 
-    @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch_environ(_CREDENTIALS)
     @patch("requests.Session.post", Mock(return_value=mock_response(ok=False)))
     def test_no_headers_when_token_request_fails(self):
         """Test that a failed token request degrades to anonymous access rather than crashing."""
         self.assertEqual(api_headers(), {})
 
-    @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch_environ(_CREDENTIALS)
+    @patch("requests.Session.post", Mock(return_value=unparsable_response(ok=True, url=_AUTH_URL)))
+    def test_no_headers_when_token_response_is_not_json(self):
+        """Test that a token response that is not JSON degrades to anonymous access, and is warned about."""
+        self.assertEqual(api_headers(), {})
+        self.assert_invalid_json_logged(_AUTH_URL)
+
+    @patch_environ(_CREDENTIALS)
     @kills(
         Mutation(
             docker_hub.api_headers,
-            'response.json().get("access_token")',
-            'response.json()["access_token"]',
+            'answer.get("access_token")',
+            'answer["access_token"]',
             "a Docker Hub token response carrying no token ends the run with a traceback",
             raises="KeyError: 'access_token'",
         ),
@@ -61,6 +72,39 @@ class ApiHeadersTest(LoggingTestCase):
     def test_no_headers_when_token_response_carries_no_token(self):
         """Test that a token response carrying no token degrades to anonymous access rather than crashing."""
         self.assertEqual(api_headers(), {})
+
+
+class DockerHubHeadersTest(LoggingTestCase):
+    """Unit tests for the headers the Docker Hub API requests carry."""
+
+    @patch_environ(_CREDENTIALS)
+    @kills(
+        Mutation(
+            docker_hub.last_pushed,
+            "_LOG, headers=api_headers())",
+            "_LOG)",
+            "a push-date request spends Docker Hub's anonymous rate limit although credentials are set",
+        ),
+        Mutation(
+            docker_hub._listing_page,
+            "headers=api_headers(), statuses_meaning_absent",
+            "statuses_meaning_absent",
+            "a listing request spends Docker Hub's anonymous rate limit although credentials are set",
+        ),
+    )
+    @patch("requests.Session.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
+    @patch("requests.Session.get")
+    def test_a_request_carries_the_bearer_token_the_credentials_are_exchanged_for(self, mock_get: Mock):
+        """Test that each Docker Hub API request carries the bearer token the credentials are exchanged for."""
+        requests_made = {
+            "push date": lambda: docker_hub.last_pushed("library/python", "3.14"),
+            "listing": lambda: docker_hub.tag_listing("library/python", "latest"),
+        }
+        for request, make_request in requests_made.items():
+            with self.subTest(request=request):
+                mock_get.return_value = mock_response({"results": [], "tag_last_pushed": "2026-01-01T00:00:00Z"})
+                make_request()
+                self.assertEqual(mock_get.call_args.kwargs.get("headers"), {"Authorization": "Bearer token"})
 
 
 class LastPushedTest(LoggingTestCase):
@@ -92,8 +136,8 @@ class TagListingTest(LoggingTestCase):
     @kills(
         Mutation(
             docker_hub._listing_page,
-            "if response is None:\n        return LookedUp(_ListingPage())",
-            "if response is None:\n        return LookedUp(None, absent=True)",
+            "if found.absent:",
+            "if found.value is None:",
             "a listing request that fails in transport reads as a repository Docker Hub does not serve",
         )
     )

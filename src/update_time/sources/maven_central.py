@@ -7,15 +7,16 @@ each version sits the pom it was published with, which may name the repository t
 
 import re
 from datetime import UTC, datetime
-from functools import cache
+from functools import cache, partial
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
-from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.dependency import NO_CHANGES, Archival, Changes, Project, Release
+from update_time.domain.dependency import NO_CHANGES, Archival, Changes, Project, ProjectGetter, Release
+from update_time.domain.source import Source
+from update_time.domain.vulnerability import Ecosystem
 from update_time.formats import xml
-from update_time.io.fetch import fetch
+from update_time.io.fetch import fetch, look_up
 from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.primitives.iterables import unique
@@ -47,7 +48,7 @@ _VERSION_ROW = re.compile(
 _PUBLISHED_FORMAT = "%Y-%m-%d %H:%M"
 
 
-@archival_reporting
+@partial(ProjectGetter, declares_archival=True)
 def project(artefact: DependencyName) -> Project:
     """Return the artefact's newest release on Maven Central, with the archival GitHub declares for its source."""
     return Project(newest=_newest_release(artefact), archival=_archival(artefact))
@@ -194,10 +195,10 @@ def _newest_release(artefact: DependencyName) -> Release | None:
     )
 
 
-def publication(artefact: DependencyName, version: VersionString) -> LookedUp[datetime]:
-    """Return the date Maven Central's listing gives the artefact's version."""
+def publication(artefact: DependencyName, version: VersionString) -> datetime | None:
+    """Return the date Maven Central's listing gives the artefact's version, or None where it does not list it."""
     rows = (row for row in _rows(artefact) if row["version"] == version)
-    return LookedUp(next((_published(row["published"]) for row in rows), None))
+    return next((_published(row["published"]) for row in rows), None)
 
 
 def versions_held_back(artefact: DependencyName, cooldown_days: int) -> tuple[str, ...]:
@@ -240,14 +241,12 @@ def _listing(artefact: DependencyName) -> LookedUp[str]:
     A project can depend on an artefact Maven Central does not serve, so a missing listing is reported at debug. Any
     other error warns, since the cooldown then held nothing back for an artefact Maven Central does have.
     """
-    response = fetch(f"{_artefact_url(artefact)}/", _LOG, require_ok=False)
-    if response is None:
-        return LookedUp(None)
-    if response.status_code == HTTPStatus.NOT_FOUND:
-        _LOG.unserved_listing(response)
+    url = f"{_artefact_url(artefact)}/"
+    found = look_up(url, _LOG, statuses_meaning_absent=(HTTPStatus.NOT_FOUND,))
+    if found.absent:
+        _LOG.unserved_listing(url, found.reason)
         return LookedUp(None, absent=True)
-    if not response.ok:
-        _LOG.response(response)
+    if (response := found.value) is None:
         return LookedUp(None)
     return LookedUp(response.text)
 
@@ -262,3 +261,6 @@ def _published(published: str) -> datetime | None:
         return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)
     except ValueError:
         return None
+
+
+SOURCE = Source(project=project, changes=get_changes, publication_date=publication, ecosystem=Ecosystem.MAVEN)

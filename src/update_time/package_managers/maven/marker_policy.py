@@ -6,9 +6,9 @@ Central decide which scopes are redundant. So these are functions over a pom's d
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Scope
 from update_time.io.log import get_logger
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Scope
 from update_time.package_managers.maven import versions_plugin
 from update_time.sources import maven_central
 
@@ -28,9 +28,9 @@ def report_markers(declared: list[pom_xml_manifest.Declaration], *, pom_names_ru
         reason = versions_plugin.reason_the_marker_steers_nothing(declaration, pom_names_rules=pom_names_rules)
         held_back = versions_plugin.range_held_back(declaration) if reason is None else ""
         marker = declaration.marker
-        _LOG.report_marker(declaration.dependency, marker, declaration.location, steers_the_update=reason is None)
+        _LOG.report_marker(declaration, steers_the_update=reason is None)
         if held_back is None and not marker.ignores(Scope.UPDATE):
-            _LOG.ignored(declaration.dependency, marker, declaration.location)
+            _LOG.ignored(declaration)
         elif held_back:
             _LOG.holding_back_range(declaration, held_back, marker.version_bound_directive)
         _report_redundant_directives(declaration, reason)
@@ -43,15 +43,11 @@ def _report_redundant_directives(declaration: pom_xml_manifest.Declaration, reas
         for steering in filter(None, (marker.bound_directive, marker.cooldown_directive)):
             _LOG.redundant_directive(declaration, steering, reason)
     else:
-        _LOG.warn_if_redundant_bound(declaration, marker)
+        _LOG.warn_if_redundant_bound(declaration)
     if yanked := marker.directive_for(Scope.YANKED):
         _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
-    _LOG.warn_if_the_opt_in_is_redundant(
-        declaration, marker, Scope.FLOATING_PIN, Reason.PIN_NOT_FLOATING, update_held_back=False
-    )
-    _LOG.warn_if_the_opt_in_is_redundant(
-        declaration, marker, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=False
-    )
+    _LOG.warn_if_the_opt_in_is_redundant(declaration, Scope.FLOATING_PIN, Reason.PIN_NOT_FLOATING)
+    _LOG.warn_if_the_opt_in_is_redundant(declaration, Scope.HASH_DRIFT, Reason.NO_HASH_PIN)
 
 
 def _report_scopes_checked_at_the_managing_declaration(left_to_another: list[pom_xml_manifest.Declaration]) -> None:

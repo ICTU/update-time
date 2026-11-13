@@ -13,57 +13,48 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import FloatingPin, Unserved
-from update_time.domain.image_lookup import why_image_not_looked_up, why_never_updated
-from update_time.domain.line import located_lines
-from update_time.domain.reference import DriftedPin, hash_drifted
+from update_time.domain.marker import Scope
+from update_time.domain.reference import hash_drifted
 from update_time.io.log import Logger
-from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
-from update_time.markers.marker import Scope, parse_marker
+from update_time.markers.parser import parse_marker
+from update_time.primitives.line import located_lines
 from update_time.primitives.text import rewrite_string
 from update_time.references.drift import adopts_drift
-from update_time.references.match import matched_dependency, matched_reference
+from update_time.references.match import matched_reference
 from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import DependencyVersion
-    from update_time.domain.line import Line
+    from update_time.domain.marker import Marker
     from update_time.domain.reference import Reference
-    from update_time.markers.directive import RedundancyReason
-    from update_time.markers.marker import Marker, ReferenceMarker
-    from update_time.primitives.location import Location
+    from update_time.domain.source import Source
+    from update_time.primitives.line import Line
 
 
-def _can_hold_a_digest(match: re.Match[str]) -> bool:
-    """Return whether the regexp that matched the reference has a place for a digest."""
-    return "sha" in match.re.groupindex
+def _lacks_a_hash_pin(reference: Reference) -> bool:
+    """Return whether the reference has a place for a hash pin, but records none."""
+    return reference.can_hold_a_hash_pin and not reference.current_sha
 
 
-def _lacks_a_digest(match: re.Match[str]) -> bool:
-    """Return whether the reference has a place for a digest, but records none."""
-    return _can_hold_a_digest(match) and match.group("sha") is None
+def _drifted(reference: Reference, latest: DependencyVersion) -> bool:
+    """Return whether the reference records a hash that its source no longer serves."""
+    return bool(reference.current_sha) and hash_drifted(latest.sha, reference.current_sha)
 
 
 @dataclass(frozen=True)
 class _Rewriter:
-    """Everything needed to rewrite one kind of reference in a file.
+    """Everything needed to rewrite one kind of reference in a file: how to resolve its version, and where to report."""
 
-    That is: how to resolve a new version, where to report, and what to call a reference whose regexp captures no
-    `dependency` group.
-    """
-
-    get_new_version: NewVersionGetter
+    source: Source
     logger: Logger
-    dependency: str = ""
 
-    def steers_the_update(self, match: re.Match[str], location: Location) -> bool:
+    def steers_the_update(self, reference: Reference) -> bool:
         """Return whether a marker steers the reference's update, as it does unless the image is never updated."""
-        reference = matched_reference(match, location, self.dependency)
-        return why_never_updated(self.get_new_version, reference.pinned) is None
+        return self.source.why_never_updated(reference.pinned) is None
 
-    def update_line(self, match: re.Match[str], location: Location, marker: Marker) -> str:
+    def update_line(self, match: re.Match[str], reference: Reference) -> str:
         """Update the matched reference's line with the new version (and digest) if any, or return it unchanged.
 
         Which version to update to — honouring the reference's `# update-time:` marker — is `latest_version`'s
@@ -71,112 +62,80 @@ class _Rewriter:
         tag serves. Digest drift is checked for every reference the source resolved, unless it moves to a newer
         version.
         """
-        reference = matched_reference(match, location, self.dependency)
-        latest = latest_version(reference, self.get_new_version, marker, self.logger)
-        self.logger.warn_if_the_opt_in_is_redundant(
-            reference,
-            marker,
-            Scope.HASH_DRIFT,
-            self._why_drift_is_never_adopted(match, reference),
-            update_held_back=marker.ignores(Scope.UPDATE),
-        )
+        latest = latest_version(reference, self.source, self.logger)
         if latest is None or self._report_why_the_source_left_it(reference, latest):
             return match.string
         if latest.floating is not None and latest.floating is not FloatingPin.RESOLVED:
-            return self._keep_unresolved_floating_reference(match, marker, latest, reference, latest.floating)
+            return self._keep_unresolved_floating_reference(match, latest, reference, latest.floating)
         if latest.floating is FloatingPin.RESOLVED:
-            return self._pin_floating_reference(match, marker, latest, reference)
-        pin_unpinned = _lacks_a_digest(match) and bool(latest.sha)
+            return self._pin_floating_reference(match, latest, reference)
+        pin_unpinned = _lacks_a_hash_pin(reference) and bool(latest.sha)
         if latest.version == reference.current_version and not pin_unpinned:
-            return self._handle_drift(match, marker, latest, reference)
+            return self._handle_drift(match, latest, reference)
         return self._apply_update(match, latest, reference, pin_unpinned=pin_unpinned)
 
     def _report_why_the_source_left_it(self, reference: Reference, latest: DependencyVersion) -> bool:
         """Log why the source left the reference as it is, and return whether it did."""
-        if latest.image_not_looked_up is not None:
-            self.logger.image_not_looked_up(reference, latest.image_not_looked_up)
+        if (image_not_looked_up := self.source.why_image_not_looked_up(reference.pinned)) is not None:
+            self.logger.image_not_looked_up(reference, image_not_looked_up)
             return True
         if latest.unserved is Unserved.REPOSITORY:
             self.logger.repository_not_served(reference)
             return True
         return False
 
-    def _why_drift_is_never_adopted(self, match: re.Match[str], reference: Reference) -> RedundancyReason | None:
-        """Return why the reference cannot adopt drift, whatever its marker says, or None where it can."""
-        if not _can_hold_a_digest(match):
-            return Reason.NO_HASH_PIN
-        if (image_not_looked_up := why_image_not_looked_up(self.get_new_version, reference.pinned)) is not None:
-            return ImageNotLookedUpReason(image_not_looked_up, Consequence.DIGEST_NEVER_CHECKED)
-        return None
-
-    def _pin_floating_reference(
-        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
-    ) -> str:
+    def _pin_floating_reference(self, match: re.Match[str], latest: DependencyVersion, reference: Reference) -> str:
         """Return the line for a reference whose pin floats, pinned to the version and digest its tag serves.
 
         A reference a marker keeps floating is left as it is. One that already records a digest is judged against
         what its tag serves now, so drift is warned about or adopted first; a reference kept floating then adopts
         the digest alone.
         """
-        drifted = self._drifted(match, latest)
-        if directive := marker.allow_directive(Scope.FLOATING_PIN):
+        drifted = _drifted(reference, latest)
+        if directive := reference.marker.allow_directive(Scope.FLOATING_PIN):
             if drifted:
-                return self._drifted_pin(match, marker, latest, reference)
+                return self._drifted_pin(match, latest, reference)
             self.logger.keeping_floating_tag(reference, latest, directive)
             return match.string
-        if drifted and not self._adopts_drift(match, marker, latest, reference):
+        if drifted and not self._adopts_drift(latest, reference):
             return match.string
-        return self._apply_update(match, latest, reference, pin_unpinned=_lacks_a_digest(match))
+        return self._apply_update(match, latest, reference, pin_unpinned=_lacks_a_hash_pin(reference))
 
     def _keep_unresolved_floating_reference(
-        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference, reason: FloatingPin
+        self, match: re.Match[str], latest: DependencyVersion, reference: Reference, reason: FloatingPin
     ) -> str:
         """Return the line for a reference whose floating tag the source could not replace by a version."""
-        if self._drifted(match, latest):
-            return self._drifted_pin(match, marker, latest, reference)
+        if _drifted(reference, latest):
+            return self._drifted_pin(match, latest, reference)
         self.logger.unpinned_floating_tag(reference, latest, reason)
         return match.string
 
-    @staticmethod
-    def _drifted(match: re.Match[str], latest: DependencyVersion) -> bool:
-        """Return whether the reference records a hash that its source no longer serves."""
-        current_sha = match.groupdict().get("sha")
-        return current_sha is not None and hash_drifted(latest.sha, current_sha)
-
-    def _handle_drift(
-        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
-    ) -> str:
+    def _handle_drift(self, match: re.Match[str], latest: DependencyVersion, reference: Reference) -> str:
         """Return the line for a reference that keeps its tag, adopting or warning about a re-pushed digest.
 
         A pinned reference whose digest changed at the registry (a re-pushed tag) has drifted, and one whose
         digest still matches is left as it is.
         """
-        if not self._drifted(match, latest):
+        if not _drifted(reference, latest):
             return match.string
-        return self._drifted_pin(match, marker, latest, reference)
+        return self._drifted_pin(match, latest, reference)
 
-    def _drifted_pin(
-        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
-    ) -> str:
+    def _drifted_pin(self, match: re.Match[str], latest: DependencyVersion, reference: Reference) -> str:
         """Return the line for a reference whose digest has drifted, adopting what its tag serves now or not.
 
         The digest alone is replaced, so the reference keeps the tag it names.
         """
-        if self._adopts_drift(match, marker, latest, reference):
+        if self._adopts_drift(latest, reference):
             return rewrite_string(match, {"sha": latest.sha})
         return match.string
 
-    def _adopts_drift(
-        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
-    ) -> bool:
+    def _adopts_drift(self, latest: DependencyVersion, reference: Reference) -> bool:
         """Report the reference's digest as drifted and return whether the digest the registry serves is adopted."""
-        dependency, version = matched_dependency(match, self.dependency), match.group("version")
-        drifted = DriftedPin(dependency, version, reference.location, match.group("sha"), new_sha=latest.sha)
         log = self.logger
         return adopts_drift(
             Logger.DIGEST_DRIFT,
-            drifted,
-            marker,
+            reference,
+            latest.sha,
             log,
             publication=latest.publication,
             report_undated=log.no_push_date,
@@ -192,76 +151,75 @@ class _Rewriter:
         served. A pin names the digest only where the regexp holds one. A reference that named no version gains the
         `:` attaching a tag to the image's name.
         """
-        if latest.version != match.group("version") and latest.floating is None:
+        if latest.version != reference.current_version and latest.floating is None:
             self.logger.new_version(reference, latest)
-        elif _can_hold_a_digest(match):
+        elif reference.can_hold_a_hash_pin:
             self.logger.pinned(reference, latest)
         else:
             self.logger.pinned_version(reference, latest)
-        version = f"{'' if match.group('version') else ':'}{latest.version}"
+        version = f"{'' if reference.current_version else ':'}{latest.version}"
         if pin_unpinned:
             # Append the digest to a previously unpinned reference, bumping the version too if one is available.
             return rewrite_string(match, {"version": f"{version}@{latest.sha}"})
         replacements = {"version": version}
-        if match.groupdict().get("sha") is not None:
+        if reference.current_sha:
             replacements["sha"] = latest.sha
         return rewrite_string(match, replacements)
 
 
-def _steers_every_update(_match: re.Match[str], _location: Location) -> bool:
-    """Return that a marker steers the update of the matched reference, as it does wherever the reference is updated."""
+def _steers_every_update(_reference: Reference) -> bool:
+    """Return that a marker steers the update of the reference, as it does wherever the reference is updated."""
     return True
 
 
 def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cannot be read from the line
     line: Line,
     match: re.Match[str],
-    update_line: Callable[[re.Match[str], Location, Marker], str],
+    update_line: Callable[[re.Match[str], Reference], str],
     logger: Logger,
     dependency: str = "",
     *,
     marker: Marker | None = None,
-    steers_the_update: Callable[[re.Match[str], Location], bool] = _steers_every_update,
+    steers_the_update: Callable[[Reference], bool] = _steers_every_update,
 ) -> str:
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
     It reads a marker written as a comment, on the reference's own line or above it, and takes one the file names
     elsewhere from the updater that read it, in `marker`. `Logger.report_marker` reports that marker, and
-    `steers_the_update` says whether the marker steers the update. `update_line` receives the marker as read, so
-    `latest_version` acts on its bound, its `allow` directives, and what it gets wrong.
+    `steers_the_update` says whether the marker steers the update. `update_line` receives the reference carrying the
+    marker as read, so `latest_version` acts on its bound, its `allow` directives, and what it gets wrong.
     """
     marker = parse_marker(line) if marker is None else marker
-    location = line.location
-    dependency = matched_dependency(match, dependency)
-    logger.report_marker(dependency, marker, location, steers_the_update=steers_the_update(match, location))
-    return update_line(match, location, marker)
+    reference = matched_reference(match, line.location, dependency, marker=marker)
+    logger.report_marker(reference, steers_the_update=steers_the_update(reference))
+    return update_line(match, reference)
 
 
 def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file cannot be read from the line
     lines: list[Line],
     regexp: str | re.Pattern[str],
-    update_line: Callable[[re.Match[str], Location, Marker], str],
+    update_line: Callable[[re.Match[str], Reference], str],
     logger: Logger,
     dependency: str = "",
     *,
-    reference_marker: ReferenceMarker | None = None,
-    steers_the_update: Callable[[re.Match[str], Location], bool] = _steers_every_update,
+    declared: Reference | None = None,
+    steers_the_update: Callable[[Reference], bool] = _steers_every_update,
 ) -> list[str]:
     """Return the lines with `update_line` applied to each line carrying a reference, honouring any marker.
 
     A line that carries no reference (no `regexp` match) is left untouched — a marker on it is for the line below. A
     line that does carry one goes to the shared `apply_marker` gate, which reads and logs its marker. The gate asks
     `steers_the_update` whether that marker can hold the update back, and runs `update_line`. `dependency` names
-    the reference for a regexp that captures none. `reference_marker` is the marker a file names for a reference of
-    its own, carrying where that reference sits. It limits the pass to that line and that column, so another match,
-    on that line or elsewhere, is left as it is.
+    the reference for a regexp that captures none. `declared` is a reference that a file declares away from its
+    marker, carrying that marker. It limits the pass to that reference's line and column, so another match, on that
+    line or elsewhere, is left as it is.
     """
-    marker = None if reference_marker is None else reference_marker.marker
+    marker = None if declared is None else declared.marker
     # A start position is something only a compiled pattern takes, and `re.compile` hands back one it is given.
     pattern = re.compile(regexp)
     result = []
     for line in lines:
-        match = _reference_match(pattern, line, reference_marker)
+        match = _reference_match(pattern, line, declared)
         if match is None:
             result.append(line.text)  # No reference to update here; a marker on this line applies to the one below.
             continue
@@ -272,28 +230,26 @@ def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file 
     return result
 
 
-def _reference_match(
-    pattern: re.Pattern[str], line: Line, reference_marker: ReferenceMarker | None
-) -> re.Match[str] | None:
+def _reference_match(pattern: re.Pattern[str], line: Line, declared: Reference | None) -> re.Match[str] | None:
     """Return the reference the pattern matches on the line, or None where the line carries none to update.
 
     A file that names a reference of its own is read at that reference alone, so another line is passed over, and
     so is a match sitting before it on its own line.
     """
-    if reference_marker is None:
+    if declared is None:
         return pattern.search(line.text)
-    if not reference_marker.reference_location.is_on_the_same_line_as(line.location):
+    if not declared.location.is_on_the_same_line_as(line.location):
         return None
-    return pattern.search(line.text, reference_marker.reference_location.column)
+    return pattern.search(line.text, declared.location.column)
 
 
 def update_references_in_lines(
     lines: list[Line],
     *regexps: str | re.Pattern[str],
-    get_new_version: NewVersionGetter,
+    source: Source,
     logger: Logger,
     dependency: str = "",
-    reference_marker: ReferenceMarker | None = None,
+    declared: Reference | None = None,
 ) -> list[str]:
     """Return the lines with each unpinned reference updated to its new version (and digest).
 
@@ -305,7 +261,7 @@ def update_references_in_lines(
     if not lines:
         return []
     path = lines[0].location.path
-    rewriter = _Rewriter(get_new_version, logger, dependency)
+    rewriter = _Rewriter(source, logger)
     for regexp in regexps:
         updated = updated_lines(
             lines,
@@ -313,7 +269,7 @@ def update_references_in_lines(
             rewriter.update_line,
             logger,
             dependency,
-            reference_marker=reference_marker,
+            declared=declared,
             steers_the_update=rewriter.steers_the_update,
         )
         lines = located_lines(path, updated)

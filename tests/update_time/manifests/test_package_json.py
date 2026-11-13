@@ -15,13 +15,13 @@ if TYPE_CHECKING:
     from unittest.mock import Mock
 
 
-class ReferenceMarkerTest(unittest.TestCase):
-    """Unit tests for reading the marker a package.json names for one entry, and where that entry sits."""
+class NodeEngineTest(unittest.TestCase):
+    """Unit tests for where a package.json declares its Node engine."""
 
     @staticmethod
     def location(path: Mock) -> Location:
         """Return where the package.json declares its Node engine."""
-        return package_json.PackageJson.read(path).node_engine_marker().reference_location
+        return package_json.PackageJson.read(path).node_engine().location
 
     def test_the_entry_the_section_declares(self):
         """Test that the entry is located at the line and the column the section declares it on."""

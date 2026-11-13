@@ -13,10 +13,10 @@ from urllib.parse import urlparse
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.io.log import Logger
 from update_time.manifests import package_json as package_json_module
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import node as node_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location

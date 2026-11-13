@@ -14,13 +14,12 @@ from rich.console import Console
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import cooldown_end
 from update_time.domain.dependency import tag_of
-from update_time.domain.reference import Reference, RefKind
+from update_time.domain.directive import Reason, opt_in_redundancy
+from update_time.domain.marker import Scope, spell
+from update_time.domain.reference import RefKind
 from update_time.domain.staleness import STALE_AFTER, stale_release
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL
 from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
-from update_time.markers.bound import spell
-from update_time.markers.directive import Reason, opt_in_redundancy
-from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
 from update_time.primitives.text import prose_list
@@ -40,10 +39,10 @@ if TYPE_CHECKING:
         Release,
         VersionString,
     )
-    from update_time.domain.reference import DriftedPin, ResolvedReference
+    from update_time.domain.directive import RedundancyReason
+    from update_time.domain.marker import Threshold
+    from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
-    from update_time.markers.directive import RedundancyReason
-    from update_time.markers.marker import Marker, Threshold
     from update_time.primitives.command import Command
 
 
@@ -280,7 +279,6 @@ class Logger:
     def _check_fields(
         cls,
         scope: Scope,
-        marker: Marker,
         resolved: ResolvedReference,
         warning_fields: dict[str, object] | None,
         redundancy_fields: Mapping[str, object] | None,
@@ -289,6 +287,7 @@ class Logger:
 
         `redundancy_fields` are what the redundancy warning adds, and None where the check did not answer.
         """
+        marker = resolved.marker
         if warning_fields is None:
             if redundancy_fields is None or not marker.ignores(scope):
                 return None
@@ -585,7 +584,7 @@ class Logger:
     )
     def report_staleness(self, resolved: ResolvedReference, threshold: int) -> dict[str, object] | None:
         """Warn that the reference's newest release is older than the threshold, where it is."""
-        if (newest := stale_release(resolved.release, threshold)) is None:
+        if (newest := stale_release(resolved.project, threshold)) is None:
             return None
         return self._reference_fields(
             resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
@@ -629,25 +628,25 @@ class Logger:
     @_warning(_redundant_directive("version %(version)s was not yanked"))
     @_debug(_ignoring("the yank warning"))
     @_warning("Yanked dependency %(dependency)s in %(location)s: version %(version)s was yanked (%(reason)s)")
-    def report_yank(self, resolved: ResolvedReference, marker: Marker) -> dict[str, object] | None:
+    def report_yank(self, resolved: ResolvedReference) -> dict[str, object] | None:
         """Report the version's yank, or the marker that silenced it or had nothing to silence."""
         release = resolved.release
         redundancy_fields = None if release.yank is None else {"version": release.version}
-        return self._check_fields(Scope.YANKED, marker, resolved, self._yank_fields(resolved), redundancy_fields)
+        return self._check_fields(Scope.YANKED, resolved, self._yank_fields(resolved), redundancy_fields)
 
     @_warning(_redundant_directive("the %(subject)s is not archived"))
     @_debug(_ignoring("the archival warning"))
     @_warning("Archived dependency %(dependency)s in %(location)s: the %(subject)s was archived%(reason)s")
-    def report_archival(self, resolved: ResolvedReference, marker: Marker) -> dict[str, object] | None:
+    def report_archival(self, resolved: ResolvedReference) -> dict[str, object] | None:
         """Report the reference's archival, or the marker that silenced it or had nothing to silence."""
-        if (archival := resolved.release.project.archival) is None:
+        if (archival := resolved.project.archival) is None:
             return None
         reason = f' ("{archival.reason}")' if archival.reason else ""
         warning_fields = (
             self._reference_fields(resolved, subject=archival.subject, reason=reason) if archival.archived else None
         )
         redundancy_fields = {"subject": archival.subject}
-        return self._check_fields(Scope.ARCHIVED, marker, resolved, warning_fields, redundancy_fields)
+        return self._check_fields(Scope.ARCHIVED, resolved, warning_fields, redundancy_fields)
 
     @_warning(
         "Could not score the CVSS vector of advisory %(advisory)s (%(error)s), so it is reported at unknown severity"
@@ -713,9 +712,9 @@ class Logger:
         return cls._reference_fields(reference, directive=directive, version=reference.current_version, **extra)
 
     @_warning(_redundant_directive("version %(version)s has no such vulnerability"))
-    def redundant_vulnerable_advisory(self, reference: Reference, marker: Marker) -> dict[str, object]:
+    def redundant_vulnerable_advisory(self, reference: Reference) -> dict[str, object]:
         """Warn that the advisory the marker names silences nothing."""
-        return self._redundant_suppression_fields(reference, marker.advisory_directives)
+        return self._redundant_suppression_fields(reference, reference.marker.advisory_directives)
 
     _SAME_VULNERABILITIES = "report the same vulnerabilities in version %(version)s"
 
@@ -729,14 +728,13 @@ class Logger:
             f"the risk level %(level)s and --vulnerability-level %(run_level)s {_SAME_VULNERABILITIES}"
         )
     )
-    def redundant_vulnerable_level(
-        self, reference: Reference, marker: Marker, level: str, run_level: str
-    ) -> dict[str, object]:
+    def redundant_vulnerable_level(self, reference: Reference, run_level: str) -> dict[str, object]:
         """Warn that the marker's risk level reports the same vulnerabilities as the run's level does."""
+        level = reference.marker.vulnerable
         return self._redundant_suppression_fields(
             reference,
-            marker.vulnerable.directive,
-            level=level,
+            level.directive,
+            level=level.value,
             **_run_setting_field("level", VULNERABILITY_LEVEL, run_level),
         )
 
@@ -817,43 +815,39 @@ class Logger:
         return self._file_fields(path, dependency=dependency)
 
     @_warning("Invalid %(bracket_item)r in the update-time marker for %(dependency)s in %(location)s")
-    def invalid_bracket_item(self, dependency: str, item: str, location: Location) -> dict[str, object]:
-        """Warn that a marker carries an invalid bracket item."""
-        return {"bracket_item": item, "dependency": dependency, "location": location}
+    def invalid_bracket_item(self, reference: Reference, item: str) -> dict[str, object]:
+        """Warn that the reference's marker carries an invalid bracket item."""
+        return self._reference_fields(reference, bracket_item=item)
 
-    def report_marker(self, dependency: str, marker: Marker, location: Location, *, steers_the_update: bool) -> None:
+    def report_marker(self, reference: Reference, *, steers_the_update: bool) -> None:
         """Report a reference's marker.
 
         It logs an `ignore[update]` as holding the update back only where the marker steers the update.
         """
+        marker = reference.marker
         for directive in marker.default_directives:
-            self.redundant_directive(Reference(dependency, "", location), directive, Reason.ASKS_FOR_THE_DEFAULT)
+            self.redundant_directive(reference, directive, Reason.ASKS_FOR_THE_DEFAULT)
         if marker.invalid_item is not None:
-            self.invalid_bracket_item(dependency, marker.invalid_item, location)
-        self.recognised_marker(dependency, marker, location)
+            self.invalid_bracket_item(reference, marker.invalid_item)
+        self.recognised_marker(reference)
         if steers_the_update and marker.ignores(Scope.UPDATE):
-            self.ignored(dependency, marker, location)
+            self.ignored(reference)
 
     def warn_if_the_opt_in_is_redundant(
-        self,
-        reference: Reference,
-        marker: Marker,
-        scope: Scope,
-        reason: RedundancyReason | None,
-        *,
-        update_held_back: bool,
+        self, reference: Reference, scope: Scope, reason: RedundancyReason | None
     ) -> None:
         """Warn when the marker's opt-in to the scope is redundant, saying why (see `opt_in_redundancy`)."""
-        if (redundancy := opt_in_redundancy(marker, scope, reason, update_held_back=update_held_back)) is not None:
+        marker = reference.marker
+        if (redundancy := opt_in_redundancy(marker, scope, reason)) is not None:
             self.redundant_directive(reference, marker.allow_directive(scope), redundancy)
 
     @_warning(_redundant_directive("this bound %(redundancy)s at version %(version)s"))
-    def warn_if_redundant_bound(self, reference: Reference, marker: Marker) -> dict[str, object] | None:
+    def warn_if_redundant_bound(self, reference: Reference) -> dict[str, object] | None:
         """Warn when the marker's version bound is redundant for the current version.
 
         The bound is redundant when it never has an effect or blocks every update (see `VersionBound.redundancy`).
         """
-        if (bound := marker.version_bound) == NO_BOUND:
+        if (bound := reference.marker.version_bound) == NO_BOUND:
             return None
         current_version = reference.current_version
         if (redundancy := bound.redundancy(current_version)) is None:
@@ -896,20 +890,20 @@ class Logger:
         )
 
     @_debug("Recognised update-time marker %(directives)s for %(dependency)s in %(location)s")
-    def recognised_marker(self, dependency: str, marker: Marker, location: Location) -> dict[str, object] | None:
+    def recognised_marker(self, reference: Reference) -> dict[str, object] | None:
         """Log that a reference's marker was recognised.
 
         The marker is echoed as the file spells it, so a user comparing the log line against their file sees their
         own marker.
         """
-        if not str(marker):
+        if not str(marker := reference.marker):
             return None
-        return {"directives": marker, "dependency": dependency, "location": location}
+        return {"directives": marker, "dependency": reference.dependency, "location": reference.location}
 
     @_debug(_ignoring("updates"))
-    def ignored(self, dependency: str, marker: Marker, location: Location) -> dict[str, object]:
+    def ignored(self, reference: Reference) -> dict[str, object]:
         """Log that a marker held a reference's update back."""
-        return self._ignored_fields(dependency, marker.bound_directive, location)
+        return self._ignored_fields(reference.dependency, reference.marker.bound_directive, reference.location)
 
     # --- File scanning and selection ---
 
@@ -1216,10 +1210,15 @@ class Logger:
         """Log that a changelog URL a project publishes is not served."""
         return self._response_fields(response)
 
-    @_debug("Could not fetch the version listing at %(url)s: HTTP %(status)s %(reason)s")
-    def unserved_listing(self, response: Response) -> dict[str, object]:
+    @_debug("Could not fetch the version listing at %(url)s (%(reason)s)")
+    def unserved_listing(self, url: str, reason: str) -> dict[str, object]:
         """Log that a repository does not serve a version listing for an artefact."""
-        return self._response_fields(response)
+        return {"url": url, "reason": reason}
+
+    @_warning("Could not read %(url)s: it is not valid JSON")
+    def invalid_json(self, url: str) -> dict[str, object]:
+        """Warn that a source answered a request with a body that is not JSON."""
+        return {"url": url}
 
     @staticmethod
     def _response_fields(response: Response) -> dict[str, object]:

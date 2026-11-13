@@ -96,3 +96,12 @@ class DelegatingDoubler(Doubler):
     def doubled(self, value: int) -> int:
         """Return the value doubled by the doubler this one extends."""
         return super().doubled(value)
+
+
+# What a multiple of five divides by, a module-level constant for a mutation to change.
+_FIVE = 5
+
+
+def is_multiple_of_five(value: int) -> bool:
+    """Return whether the value is a multiple of five, which the module's constant names."""
+    return not value % _FIVE

@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 
 from update_time.package_managers.uv import marker_policy, uv
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_redundant_directives
-from update_time.sources.osv import Ecosystem
-from update_time.sources.pypi import yank_state
+from update_time.sources import pypi
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -34,4 +33,4 @@ def warn_about_pins(
         warn_about_redundant_directives([declarations], log, policy)
         declared.append(declarations)
     served = [uv.pypi_served(declarations) for declarations in declared]
-    warn_about_delegated_checks(served, log, uv.pypi_projects, yank_state, Ecosystem.PYPI)
+    warn_about_delegated_checks(served, log, pypi.SOURCE)

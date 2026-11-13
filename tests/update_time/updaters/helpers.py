@@ -1,13 +1,14 @@
 """Test helpers the updater tests share: the files they update, their sources, the checks they skip, and uv lock."""
 
 import subprocess  # nosec
+import unittest
 from http import HTTPStatus
 from itertools import repeat
 from typing import TYPE_CHECKING, ClassVar, NoReturn
 from unittest.mock import ANY, DEFAULT, Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion, Project
+from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion, Project, ProjectGetter
 
 from tests.helpers import FakeFiles, mock_response
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
@@ -39,8 +40,6 @@ mock_docker_hub_auth = patch("requests.Session.post", Mock(return_value=mock_res
 # The pyproject.toml at the root of the scan.
 PYPROJECT_TOML = SCAN_ROOT / "pyproject.toml"
 
-# The default project for the versions a test builds without one.
-_NO_PROJECT = Project()
 
 # The upload times of the PyPI release metadata the uv updater tests answer with, with a changelog URL and without one.
 UPLOAD_TIME_WITH_CHANGELOG = "2026-05-30T12:07:03.123456Z"
@@ -65,9 +64,9 @@ def pypi_answer(url: str, *_arguments: object, **_options: object) -> Mock:
     return pypi_index("1.0") if "/simple/" in url else mock_response(_pypi_metadata_without_changelog())
 
 
-def github_version(version: str, project: Project = _NO_PROJECT, changes: Changes = NO_CHANGES) -> DependencyVersion:
+def github_version(version: str, changes: Changes = NO_CHANGES) -> DependencyVersion:
     """Return the version the GitHub source resolves to, pinned to the new commit and tagged with a `v` prefix."""
-    return DependencyVersion(version=version, changes=changes, sha=COMMIT_SHA2, tag_name=f"v{version}", project=project)
+    return DependencyVersion(version=version, changes=changes, sha=COMMIT_SHA2, tag_name=f"v{version}")
 
 
 def dated_pypi_index(*versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool | str = False) -> Mock:
@@ -195,6 +194,23 @@ def _asks_for_settings(command: Command) -> bool:
 def _failing_uv_lock(*_arguments: object, **_options: object) -> NoReturn:
     """Fail `uv lock` with the error uv gives for pins that contradict each other."""
     raise subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr=NO_SOLUTION)
+
+
+class GitHubProjectMixin(unittest.TestCase):
+    """Mix in to patch the project getter a GitHub reference resolves through, exposed as `self.get_project`.
+
+    The getter answers with an empty project unless a test sets `self.get_project.return_value`.
+    """
+
+    def setUp(self) -> None:
+        """Patch the project getter with one that asks `self.get_project`, for the duration of the test."""
+        super().setUp()
+        self.get_project = Mock(return_value=Project())
+        patcher = patch(
+            "update_time.references.github.project", ProjectGetter(self.get_project, declares_archival=True)
+        )
+        self.addCleanup(patcher.stop)
+        patcher.start()
 
 
 class UvLockTestCase(ExecutablesOnPathTestCase):

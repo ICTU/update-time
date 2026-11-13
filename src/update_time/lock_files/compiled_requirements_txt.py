@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from update_time.domain.dependency import PinnedDependency
-from update_time.domain.line import located_lines
+from update_time.domain.reference import Reference
 from update_time.manifests.requirements_txt import EXACT_PIN_REFERENCE
-from update_time.markers.reference import SteeredReference
 from update_time.primitives.command import Command
+from update_time.primitives.line import located_lines
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -176,12 +176,12 @@ class CompiledRequirementsTxt:
         """Return the sources the file names, each relative to the directory the file was compiled in."""
         return tuple(Path(os.path.normpath(self.compile_directory / name)) for name in self.source_names)
 
-    def pins_from(self, source_names: Iterable[str]) -> list[SteeredReference]:
+    def pins_from(self, source_names: Iterable[str]) -> list[Reference]:
         """Return the exact pins whose annotations name one of the sources, each at its line in the file."""
-        annotated: list[tuple[SteeredReference, set[str]]] = []
+        annotated: list[tuple[Reference, set[str]]] = []
         for line in located_lines(self.path, self.path.read_text().splitlines(keepends=True)):
             if pin := EXACT_PIN_REFERENCE.match(line.text):
-                annotated.append((SteeredReference(pin["dependency"], pin["version"], line.location), set()))
+                annotated.append((Reference(pin["dependency"], pin["version"], line.location), set()))
             if annotated and (annotation := _ANNOTATION.search(line.text)):
                 annotated[-1][1].update(_SOURCE_ANNOTATION.findall(annotation[1]))
         names = set(source_names)

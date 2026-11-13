@@ -1,17 +1,14 @@
-"""Which sources can observe a yanked version, and what they report for one."""
+"""A version's yank state, as the source reports it."""
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import Yank
-from update_time.primitives.capability import capability
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from update_time.domain.dependency import DependencyVersion, VersionString
-
-yank_reporting, reports_yanks = capability("reports_yanks")
 
 
 def with_yank_state(

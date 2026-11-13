@@ -2,12 +2,12 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.markers.marker import Scope
+from update_time.domain.marker import Scope
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from update_time.markers.marker import Marker
+    from update_time.domain.marker import Marker
 
 
 def report_drift(
@@ -16,7 +16,7 @@ def report_drift(
     """Report a drifted hash pin and return whether the reference adopts what it now points at.
 
     A reference whose marker does not opt into adopting drift is warned about and left as it is. One that does adopts
-    the new value once it is older than the cooldown, as an update would. Callback-driven so `markers` stays free of
+    the new value once it is older than the cooldown, as an update would. Callback-driven so `domain` stays free of
     I/O.
     """
     if not (directive := marker.allow_directive(Scope.HASH_DRIFT)):

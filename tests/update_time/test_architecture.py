@@ -5,6 +5,7 @@ import inspect
 import pathlib
 import re
 import unittest
+from functools import cache
 from typing import TYPE_CHECKING
 
 from archunitpython import assert_passes, project_files
@@ -143,6 +144,20 @@ def _reads_one_of(names: set[str]) -> CustomFileCondition:
     return reads_one_of
 
 
+@cache
+def _source_modules() -> list[pathlib.Path]:
+    """Return the tool's Python modules, in a fixed order."""
+    return sorted(pathlib.Path("src").rglob("*.py"))
+
+
+def _calls_json(source: str) -> bool:
+    """Return whether the source calls a `json()` method, as reading a response's body as JSON does."""
+    return any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "json"
+        for node in syntax_nodes(source)
+    )
+
+
 class DependenciesTest(unittest.TestCase):
     """Unit test for module dependencies within the tool, its own tooling, and the modules its tests share."""
 
@@ -202,7 +217,7 @@ class LayeringTest(unittest.TestCase):
     - `formats` read, write, and rewrite the text formats Update-time reads, such as the format of a manifest or a
       changelog, knowing nothing of dependencies.
     - `domain` is the pure, I/O-free core.
-    - `markers` parse the `# update-time:` language and decide what each directive steers.
+    - `markers` parse the `# update-time:` language into the marker that `domain` defines.
     - `io` wraps file, process, log, network, and command-line I/O.
     - `manifests` read, write, and parse the files that declare dependencies. They rank before `sources` because a
       registry serves such a file too: Maven Central serves the pom an artefact was published with.
@@ -264,6 +279,11 @@ class LayeringTest(unittest.TestCase):
         """Test that no layer but io imports `requests`, so all HTTP goes through `io.fetch`."""
         self.assert_only_io_imports("requests")
 
+    def test_json_bodies_are_read_through_io(self):
+        """Test that `io/fetch.py` alone reads a response's body as JSON, so a body that is not JSON is warned about."""
+        readers = [str(path) for path in _source_modules() if _calls_json(path.read_text())]
+        self.assertEqual(readers, ["src/update_time/io/fetch.py"])
+
     def test_process_access_goes_through_io(self):
         """Test that no layer but io imports `subprocess`, so every process runs through `io.process`."""
         self.assert_only_io_imports("subprocess")
@@ -297,26 +317,28 @@ class ConfigurationReadingTest(unittest.TestCase):
         settings are discovered from `src` alone, since the tests declare `EnvVar`s of their own to exercise the
         class, and those are not settings a run is configured with.
         """
-        settings = _setting_globals(sorted(pathlib.Path("src").rglob("*.py")))
+        settings = _setting_globals(_source_modules())
         self.assertIn("COOLDOWN", settings)
         return settings
 
     def test_sources_read_no_configuration_global(self):
         """Test that no source reads a setting, whether by naming it or by calling a function that reads it."""
         settings = self.settings()
-        readers = _setting_readers(sorted(pathlib.Path("src").rglob("*.py")), settings - {_LOGGING_SETTING})
+        readers = _setting_readers(_source_modules(), settings - {_LOGGING_SETTING})
         sources = project_files("src/").in_folder("sources")
         assert_passes(sources.should_not().adhere_to(_reads_one_of(settings | readers), _READS_A_SETTING))
 
-    def test_the_marker_parser_reads_no_configuration_global(self):
-        """Test that the marker parser reads no setting, so a marker means the same whatever a run is configured with.
+    def test_the_marker_and_its_parser_read_no_configuration_global(self):
+        """Test that the marker and its parser read no setting, so a marker means the same in every run.
 
-        `marker.py` imports `RISK_LEVELS` from the module that also defines `VULNERABILITY_LEVEL`, which puts a
+        `parser.py` imports `RISK_LEVELS` from the module that also defines `VULNERABILITY_LEVEL`, which puts a
         setting one import away.
         """
         settings = self.settings()
-        marker_parser = project_files("src/").with_name("marker.py")
-        assert_passes(marker_parser.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
+        for module in ("marker.py", "parser.py"):
+            with self.subTest(module=module):
+                marker_module = project_files("src/").with_name(module)
+                assert_passes(marker_module.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
 
     def test_a_module_reading_a_setting_is_reported(self):
         """Test that a module is reported whether it imports the setting, reads it off its module, or calls a reader.

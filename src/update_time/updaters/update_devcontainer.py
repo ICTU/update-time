@@ -17,7 +17,13 @@ _LOG = get_logger("devcontainer")
 def update_devcontainers() -> None:
     """Update the base image and feature references in the repository's devcontainer.json files."""
     for devcontainer in glob_for(DEVCONTAINER_CONFIGS):
-        update_file(devcontainer, BASE_IMAGE_REFERENCE, FEATURE_REFERENCE, get_new_version=TagGetter(), logger=_LOG)
+        update_file(
+            devcontainer,
+            BASE_IMAGE_REFERENCE,
+            FEATURE_REFERENCE,
+            source=TagGetter().source,
+            logger=_LOG,
+        )
 
 
 def main() -> None:  # pragma: no cover

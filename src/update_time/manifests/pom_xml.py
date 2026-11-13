@@ -11,19 +11,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from update_time.domain.dependency import PinnedDependency
-from update_time.domain.line import Line
+from update_time.domain.reference import Reference
 from update_time.formats import xml
-from update_time.markers.marker import parse_marker
-from update_time.markers.reference import SteeredReference
+from update_time.markers.parser import parse_marker
 from update_time.primitives.iterables import unique
+from update_time.primitives.line import Line
 from update_time.primitives.location import Location
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from update_time.domain.dependency import DependencyName
+    from update_time.domain.marker import Marker
     from update_time.formats.xml import XmlElement
-    from update_time.markers.marker import Marker
 
 # An element naming one of the pom's properties rather than holding its own value, such as `${spring.version}`.
 _PROPERTY_REFERENCE = re.compile(r"\$\{(?P<name>[^}]+)\}")
@@ -134,7 +134,7 @@ class _InputLocation:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Declaration(SteeredReference):
+class Declaration(Reference):
     """A dependency or plugin a pom declares, its marker, and where the version the declaration leaves out is managed.
 
     The input location is empty where the declaration declares a version, or where the effective pom, if any, does not

@@ -11,14 +11,14 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import normalized_python_name
+from update_time.domain.directive import WARNING_DIRECTIVES, Reason
 from update_time.domain.file_type import REQUIREMENTS_TXT
+from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference
 from update_time.io.filesystem import glob_for, is_scanned
 from update_time.io.log import get_logger
 from update_time.lock_files.compiled_requirements_txt import CompiledBy, CompiledRequirementsTxt, is_compiled
 from update_time.manifests import requirements_txt as requirements_txt_manifest
-from update_time.markers.directive import WARNING_DIRECTIVES, Reason
-from update_time.markers.marker import Scope
 from update_time.package_managers.pip_tools import PipCompile
 from update_time.package_managers.uv.uv import UvPipCompile
 from update_time.references.delegated import warn_about_pinned_versions
@@ -26,56 +26,47 @@ from update_time.references.file import update_file
 from update_time.references.match import reference_matches
 from update_time.references.resolve import report_project_checks
 from update_time.references.vulnerability import warn_about_vulnerable_references
-from update_time.sources.osv import Ecosystem
-from update_time.sources.pypi import get_latest_version, project, yank_state
+from update_time.sources import pypi
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
-    from update_time.domain.line import Line
-    from update_time.markers.marker import Marker
-    from update_time.markers.reference import SteeredReference
     from update_time.package_managers.requirements_compiler import RequirementsCompiler
+    from update_time.primitives.line import Line
 
 _LOG = get_logger("requirements.txt")
 
 
-def _warn_about_items_that_decide_nothing(
-    marker: Marker, reference: Reference, compiler: RequirementsCompiler | None
-) -> None:
+def _warn_about_items_that_decide_nothing(reference: Reference, compiler: RequirementsCompiler | None) -> None:
     """Warn about each item of the requirement's marker that steers an update and decides nothing.
 
     Where a compiler recompiles a file from the requirement's file, a bound and an `ignore[update]` steer the recompile.
     So does a cooldown, where the compiler takes the cooldown of a package.
     """
     if compiler is None:
-        _warn_about_items_that_need_a_version_to_update(marker, reference)
-    elif not compiler.package_cooldown_option and (cooldown := marker.directive_for(Scope.COOLDOWN)):
+        _warn_about_items_that_need_a_version_to_update(reference)
+    elif not compiler.package_cooldown_option and (cooldown := reference.marker.directive_for(Scope.COOLDOWN)):
         _LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)
     # Update-time never pins a requirement that does not pin a version, and the requirement does not carry a hash pin.
     # So each opt-in is redundant, whether or not the update is held back.
-    _LOG.warn_if_the_opt_in_is_redundant(
-        reference, marker, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED, update_held_back=False
-    )
-    _LOG.warn_if_the_opt_in_is_redundant(
-        reference, marker, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=False
-    )
+    _LOG.warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED)
+    _LOG.warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, Reason.NO_HASH_PIN)
 
 
-def _warn_about_items_that_need_a_version_to_update(marker: Marker, reference: Reference) -> None:
+def _warn_about_items_that_need_a_version_to_update(reference: Reference) -> None:
     """Warn about each item of the requirement's marker that steers an update, which needs a version to update."""
-    if bound_directive := marker.bound_directive:
+    if bound_directive := reference.marker.bound_directive:
         _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
-    if cooldown := marker.directive_for(Scope.COOLDOWN):
+    if cooldown := reference.marker.directive_for(Scope.COOLDOWN):
         _LOG.redundant_directive(reference, cooldown, Reason.NO_VERSION_TO_UPDATE)
 
 
-def _warn_about_items_that_need_a_version_to_check(marker: Marker, reference: Reference) -> None:
+def _warn_about_items_that_need_a_version_to_check(reference: Reference) -> None:
     """Warn about each item of the requirement's marker that steers a check, which needs a version to check."""
     for directive in WARNING_DIRECTIVES:
-        if directive.without_a_version is not None and (written := marker.directive_for(directive.scope)):
+        if directive.without_a_version is not None and (written := reference.marker.directive_for(directive.scope)):
             _LOG.redundant_directive(reference, written, directive.without_a_version)
 
 
@@ -86,13 +77,13 @@ def _check_loose_requirements(lines: list[Line], compiler: RequirementsCompiler 
     its marker that steer the update are reported here, whether or not those checks run.
     """
     for line, match, marker in reference_matches(lines, requirements_txt_manifest.LOOSE_REQUIREMENT_REFERENCE):
+        reference = Reference(match["dependency"], "", line.location, marker=marker)
         # No pass before this one reads these lines, so their markers are reported here.
-        _LOG.report_marker(match["dependency"], marker, line.location, steers_the_update=compiler is not None)
-        if requirements_txt_manifest.names_an_archive(dependency := match["dependency"]):
+        _LOG.report_marker(reference, steers_the_update=compiler is not None)
+        if requirements_txt_manifest.names_an_archive(reference.dependency):
             continue
-        reference = Reference(dependency, "", line.location)
-        _warn_about_items_that_decide_nothing(marker, reference, compiler)
-        report_project_checks(reference, marker, _LOG, project)
+        _warn_about_items_that_decide_nothing(reference, compiler)
+        report_project_checks(reference, _LOG, pypi.project)
 
 
 def _sources(compiled: CompiledRequirementsTxt) -> tuple[list[Path], list[str]]:
@@ -124,9 +115,9 @@ def _sources(compiled: CompiledRequirementsTxt) -> tuple[list[Path], list[str]]:
 def _update_pins(requirements_txt: Path, compiler: RequirementsCompiler | None) -> None:
     """Update the exact pins in a single requirements file, and check its other requirements."""
     exact_pin = requirements_txt_manifest.EXACT_PIN_REFERENCE
-    lines = update_file(requirements_txt, exact_pin, get_new_version=get_latest_version, logger=_LOG)
+    lines = update_file(requirements_txt, exact_pin, source=pypi.SOURCE, logger=_LOG)
     _check_loose_requirements(lines, compiler)
-    warn_about_vulnerable_references(lines, exact_pin, Ecosystem.PYPI, _LOG)
+    warn_about_vulnerable_references(lines, exact_pin, pypi.SOURCE, _LOG)
 
 
 def _compiler_for(compiled: CompiledRequirementsTxt) -> RequirementsCompiler:
@@ -145,7 +136,7 @@ def update_requirements_txts() -> None:
     """
     plain_files: dict[Path, None] = {}
     compiled_files: list[CompiledRequirementsTxt] = []
-    pins_from_missing_sources: list[SteeredReference] = []
+    pins_from_missing_sources: list[Reference] = []
     for requirements_txt in set(glob_for(REQUIREMENTS_TXT)):
         if not is_compiled(requirements_txt):
             plain_files[requirements_txt] = None
@@ -169,7 +160,7 @@ def update_requirements_txts() -> None:
 def _check_pinned_versions(
     requirements_files: Iterable[Path],
     compiled_files: Iterable[CompiledRequirementsTxt],
-    pins_from_missing_sources: list[SteeredReference],
+    pins_from_missing_sources: list[Reference],
 ) -> None:
     """Check the versions compiled files pin for requirements without an exact pin, and the pins of missing sources.
 
@@ -180,19 +171,19 @@ def _check_pinned_versions(
     batches = []
     for requirements_file in requirements_files:
         pins = pins_of.get(requirements_file, {})
-        pinned: list[SteeredReference] = []
+        pinned: list[Reference] = []
         for declaration in requirements_txt_manifest.declarations(requirements_file):
             if declaration.current_version or requirements_txt_manifest.names_an_archive(declaration.dependency):
                 continue
             if versions := pins.get(normalized_python_name(declaration.dependency)):
                 pinned.extend(replace(declaration, current_version=version) for version in sorted(versions))
             else:
-                _warn_about_items_that_need_a_version_to_check(declaration.marker, declaration)
+                _warn_about_items_that_need_a_version_to_check(declaration)
         batches.append(pinned)
     for pin in pins_from_missing_sources:
-        report_project_checks(pin, pin.marker, _LOG, project)
+        report_project_checks(pin, _LOG, pypi.project)
     batches.append(pins_from_missing_sources)
-    warn_about_pinned_versions(batches, _LOG, yank_state, Ecosystem.PYPI)
+    warn_about_pinned_versions(batches, _LOG, pypi.SOURCE)
 
 
 def _pins_by_source(

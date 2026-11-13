@@ -5,15 +5,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from update_time.domain import directive as directive_module
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.filesystem import _EXCLUDE_PATHS
 from update_time.io.log import Logger
 from update_time.lock_files import compiled_requirements_txt
 from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.manifests import requirements_txt as requirements_txt_manifest
-from update_time.markers import directive as directive_module
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
+from update_time.markers.parser import parse_directives
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.location import Location
 from update_time.references import vulnerability as vulnerability_module
@@ -1175,7 +1176,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             update_requirements_txt._check_pinned_versions,
-            "report_project_checks(pin, pin.marker, _LOG, project)",
+            "report_project_checks(pin, _LOG, pypi.project)",
             "pass",
             "the project of a missing source's pin is never checked for staleness or archival",
         )

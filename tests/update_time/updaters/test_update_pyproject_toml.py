@@ -4,13 +4,13 @@ from itertools import repeat
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, call, patch
 
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.io.log import Logger
 from update_time.lock_files import uv_lock
 from update_time.manifests import pyproject_config
 from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers.uv import lock, marker_policy, uv
 from update_time.primitives.location import Location
 from update_time.updaters import update_pyproject_toml, uv_pins

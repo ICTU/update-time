@@ -8,7 +8,7 @@ from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests import package_json as package_json_manifest
 from update_time.references.file import update_file
-from update_time.sources.oci import get_latest_tag
+from update_time.sources import oci
 
 _LOG = get_logger("node engine")
 
@@ -20,16 +20,16 @@ def _update_node_engine(package_json: package_json_manifest.PackageJson) -> None
     file's two readings disagree. A file declaring the section twice reads that way: the parse keeps the last
     section, and the entry is looked for in the first.
     """
-    engine_marker = package_json.node_engine_marker()
-    if engine_marker.reference_location.line_number is None:
+    engine = package_json.node_engine()
+    if engine.location.line_number is None:
         _LOG.no_entry(package_json_manifest.NODE_ENGINE, package_json.path)
         return
     update_file(
         package_json.path,
         package_json_manifest.NODE_ENGINE_REFERENCE,
-        get_new_version=get_latest_tag,
+        source=oci.SOURCE,
         logger=_LOG,
-        reference_marker=engine_marker,
+        declared=engine,
     )
 
 

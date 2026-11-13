@@ -5,10 +5,10 @@ import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Self
 
+from update_time.domain.marker import Marker
 from update_time.domain.reference import Reference
 from update_time.formats import json as json_format
-from update_time.markers.marker import Marker, ReferenceMarker, parse_directives
-from update_time.markers.reference import SteeredReference
+from update_time.markers.parser import parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.text import column, line_number
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
-    from update_time.domain.dependency import DependencyName
+    from update_time.domain.dependency import DependencyName, VersionString
 
 # The dependency sections whose entries Update-time checks. pnpm's `list --json` output splits its installed
 # dependencies over the same sections, so `package_managers.node` reads them from here too.
@@ -74,7 +74,7 @@ def _field_spelling(contents: dict) -> str:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Declaration(SteeredReference):
+class Declaration(Reference):
     """A dependency declared in a package.json section, and whether its spec names a release on the npm registry."""
 
     names_a_release: bool
@@ -103,14 +103,14 @@ class PackageJson(json_format.JsonFile):
                 report(path, error)
             return None
 
-    def node_engine_marker(self) -> ReferenceMarker:
-        """Return the entry declaring the Node engine, and the marker the package.json names for it.
+    def node_engine(self) -> Reference:
+        """Return the reference to the entry declaring the Node engine, steered by the marker the package.json names.
 
         The engine is the entry the `engines` section declares under `node`. A `node` version another section
         declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the
         engine's marker.
         """
-        return self._reference_marker(_ENGINES, NODE_ENGINE)
+        return self._entry_reference(_ENGINES, NODE_ENGINE)
 
     def declares_a_node_engine(self) -> bool:
         """Return whether the package.json declares a Node engine."""
@@ -140,12 +140,10 @@ class PackageJson(json_format.JsonFile):
                 names_a_release = _is_registry_spec(spec)
                 match = _EXACT_VERSION.fullmatch(spec) if names_a_release else None
                 version = match["version"] if match else ""
-                steered = self._reference_marker(section, name)
-                yield Declaration(
-                    name, version, steered.reference_location, marker=steered.marker, names_a_release=names_a_release
-                )
+                reference = self._entry_reference(section, name, version)
+                yield Declaration.from_reference(reference, names_a_release=names_a_release)
 
-    def undeclared_references(self) -> Iterator[SteeredReference]:
+    def undeclared_references(self) -> Iterator[Reference]:
         """Yield a reference to each name the `update-time` field gives under a section that does not declare it.
 
         Each reference is located at the line in the field that names it.
@@ -155,7 +153,7 @@ class PackageJson(json_format.JsonFile):
             for name in _section_markers(self.contents, section) or {}:
                 if name not in entries:
                     location = self._entry_location(_MARKER_FIELD, section, name)
-                    yield SteeredReference(name, "", location, marker=_marker(self.contents, section, name))
+                    yield Reference(name, "", location, marker=_marker(self.contents, section, name))
 
     def dependency_locations(self) -> dict[DependencyName, list[Location]]:
         """Return each direct registry dependency and the locations of the entries declaring it.
@@ -177,9 +175,11 @@ class PackageJson(json_format.JsonFile):
             if _is_registry_spec(spec)
         }
 
-    def _reference_marker(self, section: str, name: DependencyName) -> ReferenceMarker:
-        """Return where the section declares the name, and the marker the `update-time` field names for that entry."""
-        return ReferenceMarker(self._entry_location(section, name), _marker(self.contents, section, name))
+    def _entry_reference(self, section: str, name: DependencyName, version: VersionString = "") -> Reference:
+        """Return the reference to the entry declaring the name, steered by the marker the `update-time` field names."""
+        return Reference(
+            name, version, self._entry_location(section, name), marker=_marker(self.contents, section, name)
+        )
 
     def _entry_location(self, *keys: str) -> Location:
         """Return the location of the entry that the keys name, down to the column.

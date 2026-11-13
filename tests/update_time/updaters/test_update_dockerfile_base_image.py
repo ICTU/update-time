@@ -6,10 +6,10 @@ from unittest.mock import Mock, patch
 
 from update_time.domain import file_type
 from update_time.domain.dependency import DependencyVersion, ImageNotLookedUp
+from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.io import log
 from update_time.io.filesystem import glob_for
 from update_time.manifests import dockerfile as dockerfile_manifest
-from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.primitives.location import Location
 from update_time.updaters import update_dockerfile_base_image
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
@@ -334,9 +334,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_dockerfile_base_image._Refusal.__post_init__,
-            "explaining_skipped_lookups(self, lambda _pinned: self.reason)",
-            "pass",
+            update_dockerfile_base_image._refusal,
+            "Source(why_image_not_looked_up=lambda _pinned: reason)",
+            "Source()",
             "a refused reference does not say why it is never looked up, so a redundant marker names another reason",
         )
     )

@@ -1,13 +1,11 @@
-"""Unit tests for parsing a marker item into a version bound, and spelling a bound back as one."""
+"""Unit tests for parsing a marker item into a version bound."""
 
 import unittest
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 
 from update_time.domain.bound import NO_BOUND, UpdateLevel, Verb, VersionBound
-from update_time.markers.bound import parse_bound, spell
-
-from tests.update_time.helpers import bound
+from update_time.markers.bound import parse_bound
 
 
 class ParseBoundTest(unittest.TestCase):
@@ -63,28 +61,3 @@ class ParseLevelBoundTest(unittest.TestCase):
     def test_bare_update(self):
         """Test that a bare `update` item parses as the keep-all bound."""
         self.assertEqual(parse_bound(Verb.ALLOW, "update"), NO_BOUND)
-
-
-class SpellBoundTest(unittest.TestCase):
-    """Unit tests for spelling a version bound back as the marker directive that expresses it."""
-
-    def test_a_bound_is_spelled_as_its_item_was_written(self):
-        """Test that a bound parsed from a marker spells its item as the user wrote it, not normalised.
-
-        The specifier here is a compound one, which PEP 440 normalisation would reorder to `<3.13,>=3.10`.
-        """
-        self.assertEqual(spell(bound(Verb.ALLOW, "update>=3.10,<3.13")), "allow[update>=3.10,<3.13]")
-
-    def test_a_bound_is_spelled_as_the_directive_expressing_it(self):
-        """Test that a bound is spelled as the marker directive that expresses it, whichever verb it carries."""
-        cases = (
-            (VersionBound(Verb.ALLOW, SpecifierSet("<3.13"), item="update<3.13"), "allow[update<3.13]"),
-            (VersionBound(Verb.IGNORE, SpecifierSet(">=3.13"), item="update>=3.13"), "ignore[update>=3.13]"),
-        )
-        for version_bound, expected in cases:
-            with self.subTest(verb=version_bound.verb):
-                self.assertEqual(spell(version_bound), expected)
-
-    def test_the_keep_all_bound_is_spelled_as_the_no_op_directive(self):
-        """Test that the keep-all NO_BOUND is spelled as the no-op allow[update] directive."""
-        self.assertEqual(spell(NO_BOUND), "allow[update]")

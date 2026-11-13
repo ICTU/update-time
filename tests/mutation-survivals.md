@@ -43,3 +43,5 @@
 - 2026-11-10 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_failed_uv_lock_keeps_the_cooldown_the_run_wrote` — giving back a uv.lock that held nothing raises where uv did not write one either
 - 2026-11-11 `tests.update_time.updaters.test_update_package_json.MarkerTest.test_an_undeclared_marker_that_cannot_be_read_is_reported_as_invalid` — an unreadable item on an undeclared dependency is said to leave the reference unchanged
 - 2026-11-11 `tests.update_time.updaters.test_uv_pins.StaleDependencyTest.test_a_script_whose_block_does_not_parse_leaves_the_other_files_checked` — TOML that tomlkit rejects with the base error aborts the run instead of leaving the file out
+- 2026-11-12 `tests.update_time.sources.test_pypi.GetChangesTest.test_root_listing_is_fetched_once_per_repository` — a GitHub API URL is fetched again for every caller that asks for it
+- 2026-11-12 `tests.update_time.updaters.test_update_github_action.UpdateGitHubActionsThroughTheSourceTest.test_two_references_to_one_branch_ask_for_its_releases_and_commit_once` — a GitHub API URL is fetched again for every caller that asks for it

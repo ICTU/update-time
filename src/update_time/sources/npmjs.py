@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from update_time.domain.dependency import NO_CHANGES, Changes, Project, Release, Yank
-from update_time.io.fetch import fetch
+from update_time.domain.dependency import NO_CHANGES, Changes, Project, ProjectGetter, Release, Yank
+from update_time.domain.source import Source, every_dependency
+from update_time.domain.vulnerability import Ecosystem
+from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
 from update_time.sources.github import (
@@ -86,10 +88,9 @@ class _PackageSource:
 @cache
 def get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the package and version, or empty string if it can't be fetched or found."""
-    response = fetch(f"{_REGISTRY}/{package}/{version}", _LOG)
-    if response is None:
+    if (metadata := fetch_json(f"{_REGISTRY}/{package}/{version}", _LOG).value) is None:
         return NO_CHANGES
-    source = _PackageSource.from_metadata(response.json())
+    source = _PackageSource.from_metadata(metadata)
     return changes_from_release(source.repository, package, version) or changes_from_changelog_file(
         source.repository, version, source.directory
     )
@@ -97,9 +98,8 @@ def get_changes(package: str, version: str) -> Changes:
 
 @cache
 def _package_metadata(package: str) -> _PackageJSON | None:
-    """Get the npm registry's package document, or None if it can't be fetched."""
-    response = fetch(f"{_REGISTRY}/{package}", _LOG)
-    return response.json() if response is not None else None
+    """Get the npm registry's package document, or None if it can't be read."""
+    return fetch_json(f"{_REGISTRY}/{package}", _LOG).value
 
 
 def _package_metadata_or_empty(package: str) -> _PackageJSON:
@@ -130,6 +130,7 @@ def deprecation(package: str, version: str) -> Yank | None:
     return Yank(yanked=bool(deprecated), reason=deprecated if isinstance(deprecated, str) else "")
 
 
+@ProjectGetter
 def project(package: str) -> Project:
     """Return what the registry reports about the package: its newest release."""
     return Project(newest=newest_release(package))
@@ -146,3 +147,13 @@ def newest_release(package: str) -> Release | None:
         for version, time in times.items()
         if version not in _TIME_BOOKKEEPING_KEYS and (published := parse_timestamp(time)) is not None
     )
+
+
+SOURCE = Source(
+    project=project,
+    yank=deprecation,
+    changes=get_changes,
+    publication_date=get_publication_datetime,
+    ecosystem=Ecosystem.NPM,
+    dates_versions_of=every_dependency,
+)

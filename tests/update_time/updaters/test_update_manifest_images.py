@@ -4,10 +4,10 @@ import unittest
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
+from update_time.domain.directive import Consequence, ImageNotLookedUpReason
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
 from update_time.formats import yaml as yaml_format
 from update_time.manifests import docker_compose as docker_compose_manifest
-from update_time.markers.directive import Consequence, ImageNotLookedUpReason
 from update_time.primitives.location import Location
 from update_time.references import file as references_file
 from update_time.references import resolve as references_resolve
@@ -215,8 +215,8 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             references_resolve._why_the_pin_never_floats,
-            "if latest.image_not_looked_up is not None:\n"
-            "        return ImageNotLookedUpReason(latest.image_not_looked_up, Consequence.TAG_NEVER_PINNED)\n"
+            "if image_not_looked_up is not None:\n"
+            "        return ImageNotLookedUpReason(image_not_looked_up, Consequence.TAG_NEVER_PINNED)\n"
             "    return None",
             "return None",
             "the warning names a pin that does not float, where it should name the image the file does not pull",
@@ -260,8 +260,8 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             references_resolve._warn_about_redundant_update_directives,
-            "if never_updated is None:\n        log.warn_if_redundant_bound(reference, marker)\n        return",
-            "log.warn_if_redundant_bound(reference, marker)\n    if never_updated is None:\n        return",
+            "if never_updated is None:\n        log.warn_if_redundant_bound(reference)\n        return",
+            "log.warn_if_redundant_bound(reference)\n    if never_updated is None:\n        return",
             "a bound on an image never looked up is reported twice, once as never having an effect",
         )
     )

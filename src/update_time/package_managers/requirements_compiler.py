@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, ClassVar
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import is_valid, normalized_python_name
+from update_time.domain.reference import combined_marker
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files import compiled_requirements_txt
 from update_time.manifests import requirements_txt
-from update_time.markers.marker import Marker
 from update_time.package_managers.moved_versions import by_package, log_moved_versions
 from update_time.primitives.command import Command
 
@@ -18,11 +18,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from update_time.domain.dependency import DependencyName, PinnedDependency
+    from update_time.domain.marker import Marker
+    from update_time.domain.reference import Reference
     from update_time.io.log import Logger
     from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt
-    from update_time.markers.reference import SteeredReference
 
-type _ByPackage = Mapping[DependencyName, Sequence[SteeredReference]]
+type _ByPackage = Mapping[DependencyName, Sequence[Reference]]
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,7 @@ class RequirementsCompiler(ABC):
             word for name, days in cooldowns if days is not None for word in (option, f"{name}={self.duration(days)}")
         ]
 
-    def _report_moved_versions(self, executable: str, declarations: Iterable[SteeredReference]) -> None:
+    def _report_moved_versions(self, executable: str, declarations: Iterable[Reference]) -> None:
         """Report where the recompile moved a version, up or back: at each line in the sources declaring the package.
 
         A requirement pinning an exact version is left out, since its version moved in the source and was reported
@@ -141,19 +142,18 @@ class RequirementsCompiler(ABC):
                 upgrades.extend(("--upgrade-package", upgrade))
         return upgrades
 
-    def _warn_if_the_bound_is_redundant(self, declaration: SteeredReference, pin: PinnedDependency) -> None:
+    def _warn_if_the_bound_is_redundant(self, declaration: Reference, pin: PinnedDependency) -> None:
         """Warn where the bound on a requirement without an exact pin decides nothing at the version the file pins.
 
         The bound on an exact pin is judged where Update-time updates the pin.
         """
         if not declaration.current_version:
-            self.log.warn_if_redundant_bound(replace(declaration, current_version=pin.version), declaration.marker)
+            self.log.warn_if_redundant_bound(replace(declaration, current_version=pin.version))
 
 
 def _marker_of(pin: PinnedDependency, declarations: _ByPackage) -> Marker:
     """Return the markers of the declarations of the pin's package in the sources, combined into one."""
-    markers = [declaration.marker for declaration in declarations.get(normalized_python_name(pin.name), ())]
-    return Marker.combined(markers, pin.version, COOLDOWN.get())
+    return combined_marker(declarations.get(normalized_python_name(pin.name), ()), pin.version)
 
 
 def _upgrade(pin: PinnedDependency, marker: Marker) -> str:

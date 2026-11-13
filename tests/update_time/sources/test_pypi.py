@@ -23,7 +23,7 @@ from update_time.sources.pypi import (
     get_publication_datetime,
 )
 
-from tests.helpers import mock_response, patch_get, requested_urls
+from tests.helpers import mock_response, patch_get, requested_urls, unparsable_response
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import GITHUB_UNCACHED
 from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, bound, days_ago, message_of
@@ -930,7 +930,7 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("1.0", "2.0", files=files), pypi_release(fresh)]
         latest = get_latest_version("stale", "1.0")
         self.assertEqual(latest.version, "1.0")
-        self.assertEqual(Release("2.0", datetime.fromisoformat(fresh)), latest.project.newest)
+        self.assertEqual(Release("2.0", datetime.fromisoformat(fresh)), pypi.project("stale").newest)
 
     def test_bound_narrows_candidates(self, mock_get: Mock):
         """Test that a version bound drops out-of-bound candidates so a bounded version wins over a higher one."""
@@ -970,6 +970,15 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest.version, "1.0")
         self.assertIsNone(latest.yank)
         self.assert_could_not_fetch_logged()
+
+    def test_an_index_answer_that_is_not_json_leaves_the_yank_unknown(self, mock_get: Mock):
+        """Test that an Index API answer that is not JSON leaves the pin's yank state unknown, and is warned about."""
+        url = "https://pypi.org/simple/unreadable/"
+        mock_get.return_value = unparsable_response(ok=True, url=url)
+        latest = get_latest_version("unreadable", "1.0")
+        self.assertEqual(latest.version, "1.0")
+        self.assertIsNone(latest.yank)
+        self.assert_invalid_json_logged(url)
 
     def test_a_version_the_index_does_not_list_has_an_unknown_yank_state(self, mock_get: Mock):
         """Test that a version missing from the Index API's versions has an unknown yank state."""

@@ -7,20 +7,18 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import SEMVER
 from update_time.io.filesystem import is_scanned
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS, PackageJson
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Scope
 from update_time.package_managers.policy import ManagerPolicy
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.primitives.lookup import LookedUp
-from update_time.sources.npmjs import get_changes, get_publication_datetime
+from update_time.sources import npmjs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -236,9 +234,7 @@ class _ProjectUpdate:
                 for location in locations:
                     _LOG.version_moved_back(manager, Reference(package, current, location), new_version)
                 continue
-            changes = get_changes(package, new_version)
-            published = get_publication_datetime(package, new_version)
-            package_version = DependencyVersion(new_version, changes, publication=LookedUp(published))
+            package_version = npmjs.SOURCE.release(package, new_version)
             for location in locations:
                 _LOG.new_version(Reference(package, current, location), package_version)
 

@@ -7,11 +7,14 @@ run of Update-time, so a value one of them changed on its own would leave the tw
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import NO_PROJECT, NO_RELEASE
+from update_time.domain.marker import NO_MARKER
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.vulnerability import Vulnerability
 
 if TYPE_CHECKING:
-    from update_time.domain.dependency import DependencyVersion
+    from update_time.domain.dependency import DependencyVersion, Project
+    from update_time.domain.marker import Marker
     from update_time.primitives.location import Location
 
 # How old the sample stale dependency is, well past the default threshold so it is reported whatever that is set to.
@@ -23,14 +26,20 @@ VULNERABILITY = Vulnerability(
 )
 
 
-def reference(dependency: str, location: Location, version: str = "") -> Reference:
+def reference(dependency: str, location: Location, version: str = "", marker: Marker = NO_MARKER) -> Reference:
     """Return the reference a sample message names; the vulnerability and floating-tag messages render its version."""
-    return Reference(dependency, version, location)
+    return Reference(dependency, version, location, marker=marker)
 
 
-def resolved(dependency: str, location: Location, release: DependencyVersion) -> ResolvedReference:
+def resolved(
+    dependency: str,
+    location: Location,
+    release: DependencyVersion = NO_RELEASE,
+    project: Project = NO_PROJECT,
+    marker: Marker = NO_MARKER,
+) -> ResolvedReference:
     """Return the resolved reference a sample warning reports on."""
-    return ResolvedReference(dependency, "", location, release=release)
+    return ResolvedReference(dependency, "", location, release=release, project=project, marker=marker)
 
 
 def stale_publication_date() -> datetime:

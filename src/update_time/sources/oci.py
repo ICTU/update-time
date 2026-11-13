@@ -8,7 +8,7 @@ mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry'
 """
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date
 from functools import cache, cached_property, partial, total_ordering
 from http import HTTPStatus
@@ -29,15 +29,15 @@ from update_time.domain.dependency import (
     ImageNotLookedUp,
     PinnedDependency,
     Project,
+    ProjectGetter,
     Release,
     Unserved,
     VersionString,
     tag_of,
 )
-from update_time.domain.image_lookup import explaining_skipped_lookups
-from update_time.domain.publication import publication_date_reporting, reports_publication_dates
 from update_time.domain.reference import VARIABLE
-from update_time.io.fetch import fetch, next_page_url
+from update_time.domain.source import Source
+from update_time.io.fetch import fetch, fetch_json, json_body, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import DeferredLookup, LookedUp
 from update_time.sources import docker_hub
@@ -308,20 +308,14 @@ def _is_on_docker_hub(pinned: PinnedDependency) -> bool:
     return is_docker_hub_image(pinned.name)
 
 
-@partial(publication_date_reporting, when=_is_on_docker_hub)
 def get_latest_tag(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
-    """Return the tag to pin the reference to, carrying the image's newest release where one dates it.
+    """Return the tag to pin the reference to.
 
     Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). The digest comes
     back even when the current version is already the latest, so an unpinned reference can be pinned without
-    bumping its version. A reference whose tag the registry does not serve names no image in the repository, so
-    the image's newest release does not date the reference.
+    bumping its version.
     """
-    image = pinned.name
-    resolved = _resolved_tag(image, pinned.version, version_bound, cooldown_days)
-    if resolved.unserved is not None:
-        return resolved
-    return replace(resolved, project=Project(newest=_newest_release(image)))
+    return _resolved_tag(pinned.name, pinned.version, version_bound, cooldown_days)
 
 
 def _resolved_tag(
@@ -384,17 +378,20 @@ class TagGetter:
 
     image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None] = _pulled
 
-    def __post_init__(self) -> None:
-        """Register which references the getter dates the versions of, and which images it does not look up."""
-        publication_date_reporting(self, when=self._dates_the_versions_of)
-        explaining_skipped_lookups(self, self._image_not_looked_up)
+    @property
+    def source(self) -> Source:
+        """Return the source that resolves image tags through this getter."""
+        return Source(
+            project=_project,
+            new_version=self,
+            dates_versions_of=self._dates_the_versions_of,
+            why_image_not_looked_up=self._image_not_looked_up,
+        )
 
     def __call__(
         self, pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /
     ) -> DependencyVersion:
-        """Return the tag to pin the reference to, or the reference as it is where its image is not looked up."""
-        if (reason := self._image_not_looked_up(pinned)) is not None:
-            return DependencyVersion(version=pinned.version, image_not_looked_up=reason)
+        """Return the tag to pin the reference to."""
         return get_latest_tag(pinned, version_bound, cooldown_days)
 
     def _image_not_looked_up(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
@@ -405,7 +402,7 @@ class TagGetter:
 
     def _dates_the_versions_of(self, pinned: PinnedDependency) -> bool:
         """Return whether the pinned image's versions carry a date, which they do not when no registry is asked."""
-        return self._image_not_looked_up(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
+        return self._image_not_looked_up(pinned) is None and _is_on_docker_hub(pinned)
 
 
 @dataclass(frozen=True)
@@ -593,6 +590,12 @@ def _labels(tag: Tag) -> tuple[Tag, ...]:
     return tuple(Tag(name=part) for part in tag.name.split("-"))
 
 
+@ProjectGetter
+def _project(image: DependencyName) -> Project:
+    """Return what the image's registry reports about the image: its newest release, where the registry dates one."""
+    return Project(newest=_newest_release(image))
+
+
 def _newest_release(image: str) -> Release | None:
     """Return the image's newest release: the tag its registry pushed most recently, or None when it dates none.
 
@@ -682,7 +685,9 @@ def _tag_names(image: str) -> LookedUp[list[str]]:
         if not response.ok:
             _LOG.response(response)
             break
-        names.extend(response.json().get("tags") or [])
+        if (page := json_body(LookedUp(response), _LOG).value) is None:
+            break
+        names.extend(page.get("tags") or [])
         url = next_page_url(response)
     return LookedUp(names)
 
@@ -755,11 +760,10 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     params = dict(re.findall(r'\b(\w++)="([^"]*)"', challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
-    response = fetch(realm, _LOG, params=params, auth=credentials, require_ok=False)
-    if response is None or response.status_code == HTTPStatus.FORBIDDEN:
+    found = fetch_json(realm, _LOG, statuses_meaning_absent=(HTTPStatus.FORBIDDEN,), params=params, auth=credentials)
+    if (token := found.value) is None:
         return None
-    if not response.ok:
-        _LOG.response(response)
-        return None
-    token = response.json()
     return token.get("token") or token.get("access_token")
+
+
+SOURCE = Source(project=_project, new_version=get_latest_tag, dates_versions_of=_is_on_docker_hub)

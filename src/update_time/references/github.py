@@ -3,23 +3,21 @@
 import re
 from dataclasses import dataclass, replace
 from enum import Enum, auto
-from functools import partial, wraps
+from functools import partial
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
 from update_time.domain.dependency import DependencyVersion, Unserved, is_valid
-from update_time.domain.reference import DriftedPin, Reference, RefKind, hash_drifted
-from update_time.domain.vulnerability import reports_vulnerabilities, vulnerability_reporting
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Scope
+from update_time.domain.reference import RefKind, hash_drifted
+from update_time.domain.source import Source, every_dependency
 from update_time.io.log import Logger
-from update_time.markers.cooldown import cooldown_days
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Scope
 from update_time.primitives.digest import COMMIT_SHA, SHORT_COMMIT_SHA
 from update_time.primitives.lookup import DeferredLookup
 from update_time.primitives.text import replace_match
 from update_time.references.drift import adopts_drift
-from update_time.references.match import matched_dependency
 from update_time.references.resolve import (
     latest_version,
     report_directives_the_source_cannot_apply,
@@ -41,19 +39,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
-    from update_time.domain.bound import NewVersionGetter, VersionBound
-    from update_time.domain.dependency import PinnedDependency
+    from update_time.domain.reference import Reference
+    from update_time.domain.vulnerability import Ecosystem
     from update_time.io.log import Drift
-    from update_time.markers.marker import Marker
-    from update_time.primitives.location import Location
     from update_time.primitives.lookup import LookedUp, Lookup
-
-
-def github_reference(match: re.Match[str], location: Location, dependency: str) -> Reference:
-    """Return the GitHub reference the match captured."""
-    current_sha = match.group("sha") or ""
-    version = match.group("version") if current_sha else match.group("tag")
-    return Reference(dependency, version, location, current_sha)
 
 
 class _CommitSha(Enum):
@@ -119,28 +108,37 @@ def _ref_kind(reference: Reference) -> RefKind:
 _DRIFT = {drift.ref: drift for drift in (Logger.TAG_DRIFT, Logger.BRANCH_DRIFT, Logger.REF_DRIFT)}
 
 
-@vulnerability_reporting
-@wraps(get_latest_version, assigned=())
-def _get_latest_action_version(
-    pinned: PinnedDependency, version_bound: VersionBound, days: int, /
-) -> DependencyVersion:
-    """Return the latest version of the action, as `get_latest_version` does.
-
-    The getter carries the capabilities of `get_latest_version`, and reports vulnerabilities on top of them, since OSV
-    holds advisories for actions.
-    """
-    return get_latest_version(pinned, version_bound, days)
-
-
 @dataclass(frozen=True)
-class _PinResolver:
-    """Decide what a GitHub reference is pinned to, as its marker steers, reporting to the logger."""
+class PinUpdater:
+    """Decide what one kind of GitHub reference is pinned to, as its marker steers, and spell the pin on its line."""
 
-    marker: Marker
-    log: Logger
-    source: NewVersionGetter
+    spell: Callable[[Reference, str, str], str]  # The reference, the commit SHA, and the comment naming it, if any
+    logger: Logger
+    ecosystem: Ecosystem | None = None
 
-    def latest_pin(self, reference: Reference) -> DependencyVersion | None:
+    @property
+    def source(self) -> Source:
+        """Return the source this kind of reference resolves through."""
+        return Source(
+            project=project,
+            ecosystem=self.ecosystem,
+            new_version=get_latest_version,
+            dates_versions_of=every_dependency,
+        )
+
+    @staticmethod
+    def steers_the_update(reference: Reference) -> bool:
+        """Return whether a marker steers the reference's update, as it does unless it names a bare commit SHA."""
+        return not _names_a_full_sha(reference)
+
+    def update_line(self, match: re.Match[str], reference: Reference) -> str:
+        """Return the line with the reference (re)pinned, or the line as it is when the reference stays put."""
+        latest = self._latest_pin(reference)
+        if latest is None:
+            return match.string
+        return replace_match(match, self.spell(reference, latest.sha, latest.tag_name or latest.version))
+
+    def _latest_pin(self, reference: Reference) -> DependencyVersion | None:
         """Return the version or ref to pin the GitHub reference to, or None to leave the reference as it is."""
         current_sha = reference.current_sha
         commit_sha = _commit_sha(reference)
@@ -150,19 +148,16 @@ class _PinResolver:
         if not current_sha:
             version = version_at_tag(reference.dependency, reference.current_version)
             reference = replace(reference, current_version=version)
-        latest = latest_version(reference, self.source, self.marker, self.log)
-        self.log.warn_if_the_opt_in_is_redundant(
-            reference, self.marker, Scope.HASH_DRIFT, None, update_held_back=self.marker.ignores(Scope.UPDATE)
-        )
+        latest = latest_version(reference, self.source, self.logger)
         if latest is not None and latest.unserved is Unserved.RELEASES:
-            self.log.no_release_tagged(reference)
+            self.logger.no_release_tagged(reference)
             return None
         if latest is None or not latest.sha:
             return None
         if Version(latest.version) != Version(reference.current_version):
-            self.log.new_version(reference, latest)
+            self.logger.new_version(reference, latest)
         elif not current_sha:
-            self.log.pinned(reference, latest)
+            self.logger.pinned(reference, latest)
         elif not hash_drifted(latest.sha, current_sha):
             return None  # Already pinned and up to date
         else:
@@ -185,21 +180,16 @@ class _PinResolver:
 
     def _report_what_the_marker_decides(self, reference: Reference, *, names_a_commit: bool) -> None:
         """Report the directives that set nothing, the project checks, and a floating-pin opt-in that keeps nothing."""
-        marker, log = self.marker, self.log
-        report_directives_the_source_cannot_apply(marker, self.source, reference, log)
-        report_project_checks(reference, marker, log, project)
+        log = self.logger
+        report_directives_the_source_cannot_apply(reference, self.source, log)
+        report_project_checks(reference, log, project)
         pin_does_not_float = Reason.PIN_NOT_FLOATING if names_a_commit else None
-        log.warn_if_the_opt_in_is_redundant(
-            reference,
-            marker,
-            Scope.FLOATING_PIN,
-            pin_does_not_float,
-            update_held_back=marker.ignores(Scope.UPDATE),
-        )
+        log.warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, pin_does_not_float)
 
     def _comment_names_no_ref(self, reference: Reference) -> bool:
         """Return whether the comment beside a commit SHA does not name a tag or branch, which leaves the SHA bare."""
-        if not reference.current_sha or self.marker.ignores(Scope.UPDATE):  # A held-back reference asks GitHub nothing
+        # A held-back reference asks GitHub nothing.
+        if not reference.current_sha or reference.marker.ignores(Scope.UPDATE):
             return False
         return self._ref_commit(reference).absent
 
@@ -212,55 +202,53 @@ class _PinResolver:
         scope where the source reports vulnerabilities. A pin to a version tag has its bound and its `vulnerable`
         scope judged at that version instead.
         """
-        marker, log = self.marker, self.log
+        marker, log = reference.marker, self.logger
         if pin is not None and pin.tag_name:
-            log.warn_if_redundant_bound(replace(reference, current_version=pin.version), marker)
+            log.warn_if_redundant_bound(replace(reference, current_version=pin.version))
             return
         if names_a_commit and (cooldown := marker.cooldown_directive):
             log.redundant_directive(reference, cooldown, Reason.NO_COOLDOWN_FOR_A_COMMIT)
         no_drift = Reason.NO_DRIFT_FOR_A_COMMIT if names_a_commit else None
-        log.warn_if_the_opt_in_is_redundant(
-            reference, marker, Scope.HASH_DRIFT, no_drift, update_held_back=marker.ignores(Scope.UPDATE)
-        )
+        log.warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, no_drift)
         if bound := marker.version_bound_directive:
             reason = Reason.PINS_A_COMMIT if names_a_commit else Reason.FOLLOWS_A_BRANCH
             log.redundant_directive(reference, bound, reason)
-        if reports_vulnerabilities(self.source, reference.pinned) and (
+        if self.source.reports_vulnerabilities(reference.pinned) and (
             vulnerable := marker.directive_for(Scope.VULNERABLE)
         ):
             log.redundant_directive(reference, vulnerable, Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY)
 
     def _warn_if_the_hold_back_is_redundant(self, reference: Reference, commit_sha: _CommitSha) -> None:
         """Warn about an `ignore[update]` on a bare full commit SHA, which Update-time never updates."""
-        if commit_sha is _CommitSha.FULL and (hold_back := self.marker.scope_directive(Scope.UPDATE)):
-            self.log.redundant_directive(reference, hold_back, Reason.NO_UPDATE_FOR_A_COMMIT)
+        if commit_sha is _CommitSha.FULL and (hold_back := reference.marker.scope_directive(Scope.UPDATE)):
+            self.logger.redundant_directive(reference, hold_back, Reason.NO_UPDATE_FOR_A_COMMIT)
 
     def _ref_pin(self, reference: Reference, commit_sha: _CommitSha) -> DependencyVersion | None:
         """Return the ref's commit, named by a version tag or by the ref, or None to leave the reference as it is."""
         ref = reference.current_version
-        if self.marker.ignores(Scope.UPDATE):
+        if reference.marker.ignores(Scope.UPDATE):
             return None
         found = self._ref_commit(reference)
         if (pinned := found.value) is None:
             if found.reason:  # A branch without a commit older than the cooldown is held back without a report
                 self._report_unfetched_commit(reference, found, commit_sha)
             return None
-        kept_floating_by = "" if commit_sha.names_a_commit else self.marker.allow_directive(Scope.FLOATING_PIN)
+        kept_floating_by = "" if commit_sha.names_a_commit else reference.marker.allow_directive(Scope.FLOATING_PIN)
         if reference.current_sha and hash_drifted(pinned.sha, reference.current_sha):
             return self._moved_ref_pin(reference, pinned, kept_floating_by)
         if kept_floating_by:
-            self.log.keeping_ref(reference, pinned, kept_floating_by, _ref_kind(reference))
+            self.logger.keeping_ref(reference, pinned, kept_floating_by, _ref_kind(reference))
             return None
         if reference.current_sha and pinned.version == ref:
             return None  # Still pinned to the ref's commit
-        self.log.pinned(reference, pinned)
+        self.logger.pinned(reference, pinned)
         return pinned
 
     def _ref_commit(self, reference: Reference) -> LookedUp[DependencyVersion]:
         """Look up the commit to pin: a pinned branch's newest commit older than the cooldown, or the ref's commit."""
         dependency, ref = reference.dependency, reference.current_version
         if reference.current_sha and _ref_kind(reference) is RefKind.BRANCH:
-            return newest_commit_past_cooldown(dependency, ref, cooldown_days(self.marker))
+            return newest_commit_past_cooldown(dependency, ref, reference.cooldown_days)
         return pinned_ref(dependency, ref)
 
     def _moved_ref_pin(
@@ -278,14 +266,14 @@ class _PinResolver:
         pin = kept if kept_floating_by else moved
         adopted = self._drifted_pin(_DRIFT[kind], reference, pin, publication=moved.publication)
         if adopted is not None and adopted.tag_name:  # The reference comes to name a version rather than the ref
-            self.log.pinned(reference, adopted)
+            self.logger.pinned(reference, adopted)
         return adopted
 
     def _branch_moved_on(self, reference: Reference, moved: DependencyVersion) -> bool:
         """Return whether the branch moved on from its pin to the commit, reporting why when GitHub can't tell."""
         compared = moved_on(reference.dependency, reference.current_sha, moved.sha)
         if compared.reason:
-            self.log.unchecked_branch_drift(reference, moved.sha, compared.reason)
+            self.logger.unchecked_branch_drift(reference, moved.sha, compared.reason)
         return bool(compared.value)
 
     def _report_unfetched_commit(
@@ -293,10 +281,10 @@ class _PinResolver:
     ) -> None:
         """Report why the ref's commit could not be fetched, or that a commit SHA's comment names a missing ref."""
         if reference.current_sha and found.absent:
-            self.log.comment_naming_no_ref(reference)
+            self.logger.comment_naming_no_ref(reference)
         else:
             kind = RefKind.SHORT_COMMIT_SHA if commit_sha is _CommitSha.SHORT else _ref_kind(reference)
-            self.log.unpinned_ref(reference, found.reason, kind)
+            self.logger.unpinned_ref(reference, found.reason, kind)
 
     def _drifted_pin(
         self, kind: Drift, reference: Reference, pin: DependencyVersion, *, publication: Lookup[datetime]
@@ -305,35 +293,7 @@ class _PinResolver:
 
         The new commit is adopted only once it is older than the cooldown.
         """
-        drifted = DriftedPin.from_reference(reference, new_sha=pin.sha)
         adopted = adopts_drift(
-            kind, drifted, self.marker, self.log, publication=publication, report_undated=self.log.no_commit_date
+            kind, reference, pin.sha, self.logger, publication=publication, report_undated=self.logger.no_commit_date
         )
         return pin if adopted else None
-
-
-@dataclass(frozen=True)
-class PinUpdater:
-    """How one kind of GitHub reference is spelled, whether it is checked for vulnerabilities, and its logger."""
-
-    spell: Callable[[Reference, str, str], str]  # The reference, the commit SHA, and the comment naming it, if any
-    logger: Logger
-    checks_vulnerabilities: bool = False
-
-    @property
-    def _source(self) -> NewVersionGetter:
-        """Return the getter this kind of reference resolves through."""
-        return _get_latest_action_version if self.checks_vulnerabilities else get_latest_version
-
-    @staticmethod
-    def steers_the_update(match: re.Match[str], location: Location) -> bool:
-        """Return whether a marker steers the reference's update, as it does unless it names a bare commit SHA."""
-        return not _names_a_full_sha(github_reference(match, location, ""))
-
-    def update_line(self, match: re.Match[str], location: Location, marker: Marker, dependency: str = "") -> str:
-        """Return the line with the reference (re)pinned, or the line as it is when the reference stays put."""
-        reference = github_reference(match, location, matched_dependency(match, dependency))
-        latest = _PinResolver(marker, self.logger, self._source).latest_pin(reference)
-        if latest is None:
-            return match.string
-        return replace_match(match, self.spell(reference, latest.sha, latest.tag_name or latest.version))

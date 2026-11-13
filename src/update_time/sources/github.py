@@ -11,7 +11,6 @@ from urllib.parse import urlencode, urlparse
 
 from packaging.version import Version
 
-from update_time.domain.archival import archival_reporting
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import CooldownWalk, first_eligible, within_cooldown
 from update_time.domain.dependency import (
@@ -23,14 +22,14 @@ from update_time.domain.dependency import (
     DependencyVersion,
     PinnedDependency,
     Project,
+    ProjectGetter,
     Release,
     Unserved,
     VersionString,
     is_valid,
 )
-from update_time.domain.publication import publication_date_reporting
 from update_time.formats import markdown, restructured_text
-from update_time.io.fetch import Fetched, Response, failure_reason, fetch, next_page_url
+from update_time.io.fetch import Response, fetch, json_body, look_up, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import DeferredLookup, LookedUp
 from update_time.primitives.timestamp import parse_timestamp
@@ -311,16 +310,30 @@ def repository_of(dependency: DependencyName) -> GitHubRepository:
 
 
 @cache
-def _fetch_github(url: str, *, require_ok: bool = True) -> Fetched:
-    """Fetch a GitHub API URL once per run, authenticated where a token is set, or None when the request failed.
+def _look_up_github(url: str, statuses_meaning_absent: tuple[int, ...] = ()) -> LookedUp[Response]:
+    """Look up a GitHub API URL once per run, authenticated where a token is set.
 
     Omitting the authorization header or the cache spends rate limit rather than failing, which nothing but an
     exhausted run catches, so every API request goes through here.
     """
     headers = _github_headers()
+    on_response = _rate_limit_report(headers)
+    return look_up(url, _LOG, statuses_meaning_absent=statuses_meaning_absent, on_response=on_response, headers=headers)
+
+
+@cache
+def _github_json(found: LookedUp[Response]) -> LookedUp[Any]:
+    """Return the JSON body of the response a GitHub lookup found, read once per lookup, so a bad body is logged once.
+
+    `_look_up_github` caches each lookup, so the callers of one URL pass the same lookup.
+    """
+    return json_body(found, _LOG)
+
+
+def _rate_limit_report(headers: dict[str, str]) -> Callable[[Response], None]:
+    """Return what reports a used-up rate limit, naming the token where the headers carry one."""
     report = _LOG.github_token_rate_limit_used_up if "Authorization" in headers else _LOG.github_rate_limit_used_up
-    on_response = partial(_report_used_up_rate_limit, report=report)
-    return fetch(url, _LOG, headers=headers, require_ok=require_ok, on_response=on_response)
+    return partial(_report_used_up_rate_limit, report=report)
 
 
 def _report_used_up_rate_limit(response: Response, *, report: Callable[[int, datetime], None]) -> None:
@@ -342,15 +355,16 @@ def _log_used_up_rate_limit(report: Callable[[int, datetime], None], limit: int,
     report(limit, reset)
 
 
-def _list(repository: GitHubRepository, path: str, *, require_ok: bool = True) -> tuple[Any, ...] | None:
+def _list(
+    repository: GitHubRepository, path: str, statuses_meaning_absent: tuple[int, ...] = ()
+) -> tuple[Any, ...] | None:
     """Fetch a listing under the repository's API path: empty when it lists nothing, None when the fetch failed.
 
     The contents endpoint answers a path naming a file with that file's object, which lists nothing.
     """
-    response = _fetch_github(f"{_GITHUB_API}/{repository}/{path}", require_ok=require_ok)
-    if response is None or not response.ok:
+    found = _github_json(_look_up_github(f"{_GITHUB_API}/{repository}/{path}", statuses_meaning_absent))
+    if (listing := found.value) is None:
         return None
-    listing = response.json()
     return tuple(listing) if isinstance(listing, list) else ()
 
 
@@ -359,8 +373,7 @@ def _repository_metadata(repository: GitHubRepository) -> _RepositoryJSON | None
 
     GitHub answers 404 when the repository's URL ends in a slash.
     """
-    response = _fetch_github(f"{_GITHUB_API}/{repository}")
-    return response.json() if response is not None else None
+    return _github_json(_look_up_github(f"{_GITHUB_API}/{repository}")).value
 
 
 def _list_releases(repository: GitHubRepository) -> tuple[_ReleaseJSON, ...] | None:
@@ -376,9 +389,9 @@ def _list_tags(repository: GitHubRepository) -> tuple[_TagJSON, ...] | None:
 def _list_contents(repository: GitHubRepository, directory: str = "") -> tuple[_ContentJSON, ...] | None:
     """Fetch the entries in a directory of a repository, its root by default, or None when they can't be fetched.
 
-    A directory the repository does not serve is unremarkable, so only a failure to list the root is reported.
+    GitHub answers 404 for a directory the repository does not serve. That is unremarkable, so it goes unreported.
     """
-    return _list(repository, f"contents/{directory}", require_ok=not directory)
+    return _list(repository, f"contents/{directory}", (HTTPStatus.NOT_FOUND,) if directory else ())
 
 
 def _is_changelog_file(name: str) -> bool:
@@ -390,11 +403,7 @@ def _is_changelog_file(name: str) -> bool:
 def _get_commit(repository: GitHubRepository, ref: _GitRef) -> LookedUp[_CommitJSON]:
     """Fetch the commit a tag, branch, or commit SHA names."""
     commits_url = f"{_GITHUB_API}/{repository}/commits/{ref}"
-    response = _fetch_github(commits_url, require_ok=False)
-    if response is None or not response.ok:
-        absent = response is not None and response.status_code == _NO_COMMIT_BY_THAT_NAME
-        return LookedUp(None, failure_reason(response), absent=absent)
-    return LookedUp(response.json())
+    return _github_json(_look_up_github(commits_url, (_NO_COMMIT_BY_THAT_NAME,)))
 
 
 def pinned_ref(dependency: DependencyName, ref: _GitRef) -> LookedUp[DependencyVersion]:
@@ -420,13 +429,13 @@ def newest_commit_past_cooldown(
     url = f"{_GITHUB_API}/{repository}/commits?{query}"
     commits: list[_CommitJSON] = []
     for _page in range(_MAX_COMMIT_LISTING_PAGES):
-        response = _fetch_github(url, require_ok=False)
-        if response is not None and response.status_code == HTTPStatus.NOT_FOUND:
-            # GitHub answers 404 for a ref, or a repository, that does not exist.
-            return LookedUp(None, failure_reason(response), absent=True)
-        if response is None or not response.ok:
-            return LookedUp(None, failure_reason(response))
-        commits.extend(response.json())
+        # GitHub answers 404 for a ref, or a repository, that does not exist.
+        found = _look_up_github(url, (HTTPStatus.NOT_FOUND,))
+        if (response := found.value) is None:
+            return LookedUp(None, found.reason, absent=found.absent)
+        if (page := _github_json(found)).value is None:
+            return LookedUp(None, page.reason)
+        commits.extend(page.value)
         if (newest := _newest_on_the_line(commits, cooldown_days)) is not None:
             return LookedUp(_named_commit(repository, ref, newest))
         if (next_url := next_page_url(response)) is None:
@@ -456,10 +465,10 @@ def moved_on(dependency: DependencyName, pinned: str, commit: str) -> LookedUp[b
     repository = repository_of(dependency)
     # A comparison lists the commits between the two, which the answer needs none of.
     url = f"{_GITHUB_API}/{repository}/compare/{pinned}...{commit}?per_page=1"
-    response = _fetch_github(url, require_ok=False)
-    if response is None or not response.ok:
-        return LookedUp(None, failure_reason(response))
-    return LookedUp(response.json()["status"] in _MOVED_ON)
+    found = _github_json(_look_up_github(url))
+    if (comparison := found.value) is None:
+        return LookedUp(None, found.reason)
+    return LookedUp(comparison["status"] in _MOVED_ON)
 
 
 def _named_commit(repository: GitHubRepository, ref: _GitRef, commit: _CommitJSON) -> DependencyVersion:
@@ -491,18 +500,12 @@ def is_tag(dependency: DependencyName, ref: _GitRef) -> bool | None:
     return _looked_up_tag(repository, ref)
 
 
-@cache
 def _looked_up_tag(repository: GitHubRepository, ref: _GitRef) -> bool | None:
     """Return whether GitHub finds a tag of the ref's name once per run, or None when it refuses to say."""
-    response = _fetch_github(f"{_GITHUB_API}/{repository}/git/ref/tags/{ref}", require_ok=False)
-    if response is None:  # The fetch logged why
-        return None
-    if response.status_code == HTTPStatus.NOT_FOUND:
+    found = _look_up_github(f"{_GITHUB_API}/{repository}/git/ref/tags/{ref}", (HTTPStatus.NOT_FOUND,))
+    if found.absent:
         return False
-    if not response.ok:
-        _LOG.response(response)
-        return None
-    return True
+    return None if found.value is None else True
 
 
 def version_at_tag(dependency: DependencyName, version: VersionString) -> VersionString:
@@ -592,8 +595,6 @@ def _tagged_versions(repository: GitHubRepository) -> list[TaggedVersion] | None
     return tagged_versions
 
 
-@archival_reporting
-@publication_date_reporting
 @cache
 def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
     """Return the latest eligible version of the GitHub repository, or the current version unchanged.
@@ -605,13 +606,12 @@ def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, co
     """
     action, current_version = pinned.name, pinned.version
     repository = repository_of(action)
-    repository_project = project(action)
     tagged_versions = _tagged_versions(repository)
     if tagged_versions is None:  # Couldn't reach GitHub; the fetches already logged a warning.
-        return DependencyVersion(current_version, project=repository_project)
+        return DependencyVersion(current_version)
     valid_versions = [version for version in tagged_versions if version.is_candidate]
     if not valid_versions:
-        return DependencyVersion(current_version, project=repository_project, unserved=Unserved.RELEASES)
+        return DependencyVersion(current_version, unserved=Unserved.RELEASES)
     current = Version(current_version)
     own_tag = _own_tag(tagged_versions, current)
     candidates = [
@@ -623,14 +623,13 @@ def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, co
     ]
     changes_by_version = {version.version: version.body for version in valid_versions if version.body}
 
-    latest = first_eligible(
+    return first_eligible(
         candidates,
         lambda version, walk: _eligible_version(version, walk, changes_by_version, current_version),
         lambda version: version.version == current,
         current_version,
         cooldown_days,
     )
-    return replace(latest, project=repository_project)
 
 
 def _eligible_version(
@@ -679,7 +678,7 @@ def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None
     return newest_tag
 
 
-@archival_reporting
+@partial(ProjectGetter, declares_archival=True)
 def project(dependency: DependencyName) -> Project:
     """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
     repository = repository_of(dependency)
@@ -826,10 +825,9 @@ def _changes_from_tree(repository: GitHubRepository, directory: _ContentJSON, ve
 
 def _list_tree(git_url: str) -> tuple[str, ...]:
     """Fetch the paths of the files below the tree the URL names, or an empty tuple when they can't be fetched."""
-    response = _fetch_github(f"{git_url}?recursive=1")
-    if response is None:
+    if (listing := _github_json(_look_up_github(f"{git_url}?recursive=1")).value) is None:
         return ()
-    tree: list[_TreeEntryJSON] = response.json().get("tree", [])
+    tree: list[_TreeEntryJSON] = listing.get("tree", [])
     return tuple(entry["path"] for entry in tree if entry["type"] == "blob")
 
 

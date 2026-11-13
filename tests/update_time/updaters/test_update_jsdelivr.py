@@ -4,12 +4,14 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
+from update_time.domain.directive import Reason
 from update_time.io.log import Logger
-from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
+from update_time.sources import jsdelivr
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, HASH1, HASH2, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, days_ago
 from tests.update_time.sources.helpers import jsdelivr_versions, npm_registry
@@ -229,6 +231,25 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3))
+
+    @kills(
+        Mutation(
+            jsdelivr.version_getter,
+            "return DependencyVersion(version=pinned.version, unserved=Unserved.VERSION)",
+            "return DependencyVersion(version=pinned.version)",
+            "a URL whose version is not PEP 440 is looked up at the npm registry and checked for staleness",
+        )
+    )
+    def test_a_url_whose_version_is_not_pep_440_is_not_checked_for_staleness(self, mock_get: Mock, mock_glob: Mock):
+        """Test that a URL on a version such as `1.` is left alone, and the npm registry is not asked about it."""
+        stale = npm_registry({"1.0": STALE_DATE.isoformat()})
+        mock_get.side_effect = lambda url, **_options: stale if "registry.npmjs.org" in url else _served(HASH1)
+        mock_conf = self.update(_conf(_entry(_URL.replace("2.0.11", "1."), _INTEGRITY)), mock_glob)
+        mock_conf.write_text.assert_not_called()
+        requested = [request.args[0] for request in mock_get.call_args_list]
+        self.assertNotEqual(requested, [])  # The hash check asks jsDelivr, so the assertion below examines a request.
+        self.assertEqual([url for url in requested if "registry.npmjs.org" in url], [])
+        self.assert_no_warnings_logged()
 
     def test_deprecated_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr URL left on a deprecated version is warned about, without rewriting the URL."""

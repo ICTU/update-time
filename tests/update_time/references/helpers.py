@@ -1,6 +1,5 @@
-"""Test helpers the reference tests share: the logger, and the getters and resolvers a decision is handed."""
+"""Test helpers the reference tests share: the logger, and the getters a decision is handed."""
 
-from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
@@ -11,7 +10,6 @@ from update_time.io.log import Logger
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import VersionString
-    from update_time.domain.reference import ResolvedReference
 
 
 def mock_logger() -> Mock:
@@ -28,14 +26,8 @@ def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGette
 
 
 def _mock_callable(answer: object) -> Mock:
-    """Return a mock callable answering with the answer, which records nothing a function does not.
-
-    A bare `Mock` grows any attribute it is asked for, so it would claim every capability a caller reads off a
-    getter (see `primitives.capability`), and say why it does not look an image up (see `domain.image_lookup`).
-    Specifying it against a callable keeps it callable and lets those reads answer as they do for a function that
-    records nothing.
-    """
-    return Mock(spec=Callable, return_value=answer)
+    """Return a mock callable answering with the answer."""
+    return Mock(return_value=answer)
 
 
 def mock_new_version_getter(release: DependencyVersion) -> Mock:
@@ -43,11 +35,8 @@ def mock_new_version_getter(release: DependencyVersion) -> Mock:
     return _mock_callable(release)
 
 
-def mock_project_getter() -> Mock:
+def mock_project_getter(*, declares_archival: bool = False) -> Mock:
     """Return a mock project getter answering with an empty project (see `_mock_callable`)."""
-    return _mock_callable(Project())
-
-
-def mock_reference_resolver(*resolved: ResolvedReference) -> Mock:
-    """Return a mock reference resolver answering with the resolved references (see `_mock_callable`)."""
-    return _mock_callable(list(resolved))
+    get_project = _mock_callable(Project())
+    get_project.declares_archival = declares_archival
+    return get_project

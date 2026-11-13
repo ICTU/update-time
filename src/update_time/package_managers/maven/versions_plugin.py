@@ -11,12 +11,11 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.dependency import DependencyVersion
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference
 from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_manifest
-from update_time.markers.cooldown import cooldown_days
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Scope
 from update_time.package_managers.maven.plugins import VERSIONS_ARTEFACT, VERSIONS_PLUGIN
 from update_time.package_managers.maven.version_range import maven_range
 from update_time.primitives.iterables import unique
@@ -214,7 +213,7 @@ def _artefact_rule(artefact: DependencyName, declarations: list[pom_xml_manifest
     if None in held_back_ranges:
         return _rule(artefact, _EVERY_VERSION)
     range_elements = (f'<ignoreVersion type="range">{held_back}</ignoreVersion>' for held_back in held_back_ranges)
-    days = max(cooldown_days(declaration.marker) for declaration in declarations)
+    days = max(declaration.cooldown_days for declaration in declarations)
     ignored = unique((*range_elements, *_variant_versions(declarations), *_cooldown_versions(artefact, days)))
     return _rule(artefact, *ignored) if ignored else ""
 
@@ -333,8 +332,7 @@ def _new_version(update: _Update) -> DependencyVersion:
     artefact, version = update.effective.dependency, update.new.current_version
     if not pom_xml_manifest.fully_resolved(update.effective.pinned):
         return DependencyVersion(version)
-    changes = maven_central.get_changes(artefact, version)
-    return DependencyVersion(version, changes, publication=maven_central.publication(artefact, version))
+    return maven_central.SOURCE.release(artefact, version)
 
 
 def _unreportable_updates(updates: list[_Update]) -> list[_Update]:

@@ -4,12 +4,11 @@ from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import Yank
+from update_time.domain.directive import Reason
 from update_time.formats import toml as toml_module
 from update_time.io.log import Logger, get_logger
 from update_time.manifests.inline_script import InlineScript
 from update_time.manifests.pyproject_toml import PyprojectToml
-from update_time.markers.directive import Reason
-from update_time.package_managers.uv import uv as uv_module
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
 from update_time.updaters.uv_pins import warn_about_pins
@@ -349,14 +348,6 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2), among_others=True)
         self.assert_archived_dependency_logged("package", Location(file.path, 2), among_others=True)
 
-    @kills(
-        Mutation(
-            uv_module,
-            "@archival_reporting\ndef pypi_projects(",
-            "def pypi_projects(",
-            "the resolver reports no archival, so a switched-off staleness check skips the file it reads",
-        ),
-    )
     @staleness_disabled
     def test_staleness_disabled_still_warns_about_an_archived_project(self, get: Mock):
         """Test that an archived project is warned about when the staleness check is switched off."""
@@ -373,15 +364,6 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
         self.assertEqual(get.call_count, 1)
 
-    @kills(
-        Mutation(
-            uv_module.pypi_projects,
-            "yield SteeredResolvedReference.from_reference(declaration, release=release)",
-            "if release.project.newest is not None:\n"
-            "            yield SteeredResolvedReference.from_reference(declaration, release=release)",
-            "a declaration whose package the index lists no release for is dropped, archival and all",
-        )
-    )
     def test_archived_project_the_index_lists_no_release_for_warned(self, get: Mock):
         """Test that an archived project is warned about although the index lists no release for it."""
         get.return_value = pypi_index(archived=True)

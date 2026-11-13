@@ -2,24 +2,19 @@
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.directive import Reason
 from update_time.domain.file_type import PACKAGE_JSON
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.package_json import PackageJson
-from update_time.markers.directive import Reason
 from update_time.package_managers import node
 from update_time.package_managers.policy import report_markers
 from update_time.primitives.text import prose_list
-from update_time.references.delegated import (
-    project_resolver,
-    warn_about_delegated_checks,
-    warn_about_redundant_directives,
-)
+from update_time.references.delegated import warn_about_delegated_checks, warn_about_redundant_directives
 from update_time.sources import npmjs
-from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
-    from update_time.markers.reference import SteeredReference
+    from update_time.domain.reference import Reference
 
 _LOG = get_logger("package.json")
 
@@ -62,9 +57,7 @@ def _warn_about_dependencies(checked: list[node.CheckedPackageJson]) -> None:
         [declaration for declaration in file_declarations if declaration.names_a_release]
         for file_declarations in declarations
     ]
-    warn_about_delegated_checks(
-        registry_declarations, _LOG, project_resolver(npmjs.project), npmjs.deprecation, Ecosystem.NPM
-    )
+    warn_about_delegated_checks(registry_declarations, _LOG, npmjs.SOURCE)
 
 
 def _report_undeclared_references(files: list[PackageJson]) -> None:
@@ -74,10 +67,10 @@ def _report_undeclared_references(files: list[PackageJson]) -> None:
             _report_undeclared_reference(reference)
 
 
-def _report_undeclared_reference(reference: SteeredReference) -> None:
+def _report_undeclared_reference(reference: Reference) -> None:
     """Report the marker of a dependency its section does not declare, and as redundant where it reads every item."""
     marker = reference.marker
-    _LOG.report_marker(reference.dependency, marker, reference.location, steers_the_update=False)
+    _LOG.report_marker(reference, steers_the_update=False)
     if marker.invalid_item is None and marker.raw:
         _LOG.redundant_directive(reference, marker.raw, Reason.UNDECLARED_DEPENDENCY)
 

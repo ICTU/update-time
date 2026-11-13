@@ -4,16 +4,16 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import normalized_python_name
-from update_time.markers.directive import Reason
+from update_time.domain.directive import Reason
 from update_time.package_managers.policy import ManagerPolicy, report_markers
 from update_time.package_managers.uv.uv import declarations_of
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import VersionString
+    from update_time.domain.marker import Scope
     from update_time.io.log import Logger
     from update_time.lock_files.uv_lock import RecordedVersions
     from update_time.manifests.python_dependency_toml import Declaration, PythonDependencyToml
-    from update_time.markers.marker import Scope
 
 
 def report_file_markers(

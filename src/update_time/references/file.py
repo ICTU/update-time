@@ -6,9 +6,9 @@ every file of a kind that `io.filesystem` discovers.
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.line import located_lines
 from update_time.formats import yaml as yaml_format
 from update_time.io.filesystem import glob_for
+from update_time.primitives.line import located_lines
 from update_time.references.rewrite import update_references_in_lines
 from update_time.sources.oci import ImagesNotPulled, TagGetter
 
@@ -17,13 +17,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import ImageNotLookedUp
     from update_time.domain.file_type import FileType
-    from update_time.domain.line import Line
+    from update_time.domain.reference import Reference
+    from update_time.domain.source import Source
     from update_time.formats.yaml import Document
     from update_time.io.log import Logger
-    from update_time.markers.marker import ReferenceMarker
+    from update_time.primitives.line import Line
 
 
 def rewrite_file(path: Path, transform: Callable[[list[Line]], list[str]], logger: Logger) -> list[Line]:
@@ -47,28 +47,28 @@ def rewrite_file(path: Path, transform: Callable[[list[Line]], list[str]], logge
 def update_file(
     path: Path,
     *regexps: str | re.Pattern[str],
-    get_new_version: NewVersionGetter,
+    source: Source,
     logger: Logger,
     dependency: str = "",
-    reference_marker: ReferenceMarker | None = None,
+    declared: Reference | None = None,
 ) -> list[Line]:
     """Update the references in the file, write it back if the new lines differ from the old ones, and return them.
 
     Multiple regexps are applied in turn to the same content, so a file that pins more than one kind of reference (a
     devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp. A regexp that
-    captures no `dependency` group — a `.python-version` entry is a bare version — names it in `dependency`. A
-    format that holds no comment beside its reference names the marker elsewhere, and passes it in
-    `reference_marker`. That marker carries where its reference sits, so the pass rewrites that entry and no other.
+    captures no `dependency` group — a `.python-version` entry is a bare version — names it in `dependency`. Where a
+    format cannot hold a comment beside its reference, it names the marker elsewhere and passes the reference in
+    `declared`, carrying that marker. The pass then rewrites that reference alone.
     """
     return rewrite_file(
         path,
         lambda lines: update_references_in_lines(
             lines,
             *regexps,
-            get_new_version=get_new_version,
+            source=source,
             logger=logger,
             dependency=dependency,
-            reference_marker=reference_marker,
+            declared=declared,
         ),
         logger,
     )
@@ -89,4 +89,4 @@ def update_yaml_files(
             logger.invalid_file(path, yaml_format.FORMAT)
         else:
             get_new_version = TagGetter(ImagesNotPulled(find_images(document), reason))
-            update_file(path, regexp, get_new_version=get_new_version, logger=logger)
+            update_file(path, regexp, source=get_new_version.source, logger=logger)

@@ -2,6 +2,7 @@
 
 import itertools
 from datetime import timedelta
+from http import HTTPStatus
 from logging import ERROR, WARNING
 from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, patch
@@ -11,16 +12,16 @@ import requests
 from update_time.domain.bound import NO_BOUND, Verb, VersionBound, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Changes, DependencyVersion, PinnedDependency, Project, Release
+from update_time.domain.directive import Reason
 from update_time.domain.reference import DriftedPin, RefKind
-from update_time.io.log import Drift, Logger
+from update_time.io.log import Drift, Logger, LogMessage
 from update_time.manifests import github_workflow as github_workflow_manifest
-from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
 from update_time.sources import github as sources_github
 from update_time.updaters.update_github_action import update_github_actions
 
-from tests.helpers import mock_path
+from tests.helpers import mock_path, unparsable_response
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
@@ -54,6 +55,7 @@ from tests.update_time.sources.helpers import (
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import (
     OSV_BATCH_URL,
+    GitHubProjectMixin,
     full_commit_sha,
     github_commit_listing_queries,
     github_fresh_line,
@@ -112,7 +114,7 @@ def _commits_url(ref: str, dependency: str = "actions/checkout") -> str:
 @patch("update_time.references.github.get_latest_version", autospec=True)
 @no_other_version_at_the_tag
 @patch("pathlib.Path.glob")
-class UpdateGitHubActionsTest(LoggingTestCase):
+class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
     """Unit tests for the GitHub Actions updater, with the GitHub source's getters patched."""
 
     @staticmethod
@@ -234,7 +236,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that an action whose newest release is old is warned about, even when it is up to date."""
         newest = Release("1.2", STALE_DATE)
         project = Project(newest=newest)
-        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA, project=project)
+        self.get_project.return_value = project
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
@@ -317,7 +320,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[update]` leaves the action's pin unchanged but still warns when it is stale."""
         newest = Release("1.2", STALE_DATE)
-        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, project=Project(newest=newest))
+        self.get_project.return_value = Project(newest=newest)
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
@@ -341,7 +345,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     def test_stale_after_zero_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `set[stale-after=0]` repins the action but skips the staleness check even for an old release."""
         newest = Release("1.2", STALE_DATE)
-        mock_latest.return_value = github_version("1.1", Project(newest=newest))
+        self.get_project.return_value = Project(newest=newest)
+        mock_latest.return_value = github_version("1.1")
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: set[stale-after=0]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
@@ -447,7 +452,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github._PinResolver._report_redundant_directives,
+            references_github.PinUpdater._report_redundant_directives,
             "if names_a_commit and (cooldown := ",
             "if (cooldown := ",
             "a cooldown on a branch is reported as redundant, although it holds the branch's drift back",
@@ -495,8 +500,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             github_workflow_manifest,
-            r'r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"',
-            r'r"uses: (?P<dependency>[\w\d\./-]+)@"',
+            r"(?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@",
+            r"(?P<dependency>[\w\d\./-]+)@",
             "a reference naming no repository is read as one, ending the run over that single line",
             raises="ValueError: not enough values to unpack (expected at least 2, got 1)",
         )
@@ -593,26 +598,39 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github._PinResolver._report_unfetched_commit,
+            references_github.PinUpdater._report_unfetched_commit,
             "reference.current_sha and found.absent",
             "found.absent",
             "a reference to a branch that is not in the repository is left as it is without an error",
         ),
+        Mutation(
+            sources_github._get_commit,
+            "(_NO_COMMIT_BY_THAT_NAME,)",
+            "()",
+            "an unknown branch is warned about as a refused request",
+        ),
     )
     def test_branch_whose_commit_cannot_be_fetched_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
-        """Test that a branch whose commit cannot be fetched is left as it is, the reason logged as an error."""
+        """Test that a branch whose commit cannot be fetched is left as it is, the reason logged as an error.
+
+        A refused request is a warning of its own. An unknown branch does not get one.
+        """
         unknown = "HTTP 422, No commit found for SHA: pinned"
-        cases = {
-            "branch": ("main", "main", github_rate_limited(), GITHUB_RATE_LIMITED_REASON),
-            "pinned branch": (f"{OLD_SHA} # main", "main", github_rate_limited(), GITHUB_RATE_LIMITED_REASON),
-            "unknown branch": ("pinned", "pinned", github_unknown_ref("pinned"), unknown),
+        rate_limited = github_rate_limited(), GITHUB_RATE_LIMITED_REASON, True
+        cases = {  # The ref, the branch, the commit, the reason, and whether the request was refused
+            "branch": ("main", "main", *rate_limited),
+            "pinned branch": (f"{OLD_SHA} # main", "main", *rate_limited),
+            "unknown branch": ("pinned", "pinned", github_unknown_ref("pinned"), unknown, False),
         }
-        for case, (ref, branch, commit, reason) in cases.items():
+        for case, (ref, branch, commit, reason, refused) in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{ref}\n")
                 workflow_yml.write_text.assert_not_called()
                 self.assert_unpinned_ref_logged("actions/checkout", branch, Location(workflow_yml, 1), reason)
-                self.assert_no_warnings_logged()
+                if refused:
+                    self.assert_could_not_fetch_logged(status=HTTPStatus.FORBIDDEN)
+                else:
+                    self.assert_no_warnings_logged()
 
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA, date=FRESH_DATE + timedelta(days=1)))
     def test_branch_under_a_zero_day_cooldown_moves_to_its_head_whatever_its_date(self, mock_glob: Mock):
@@ -625,33 +643,42 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             sources_github.newest_commit_past_cooldown,
-            "if response is None or not response.ok:",
-            "if response is None or not (response.ok or commits):",
-            "a page after the first that GitHub refuses ends the run rather than being reported",
-            raises="TypeError: string indices must be integers, not 'str'",
-        )
+            "return LookedUp(None, page.reason)",
+            "return LookedUp(None)",
+            "a branch whose commit listing is not JSON is left as it is without saying why",
+        ),
+        Mutation(
+            sources_github,
+            "@cache\ndef _github_json(",
+            "def _github_json(",
+            "a GitHub answer that is not JSON is warned about once for every caller that reads it",
+        ),
     )
     def test_pinned_branch_whose_commits_cannot_be_listed_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
         """Test that a pinned branch whose commits cannot be listed is left as it is, the reason logged as an error."""
         commit = github_commits_json(NEW_SHA, date=FRESH_DATE)
         past = github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE, parents=[OLD_SHA])
         beyond = "the branch's newest commit older than the cooldown is not among the 500 newest commits examined"
-        # Each case names the listing, the reason the branch stays put, and the number of pages the run requests.
-        cases: dict[str, tuple[list | Mock, str, int]] = {
-            "rate limited": (github_rate_limited(), GITHUB_RATE_LIMITED_REASON, 1),
+        refused, not_json = message_of(Logger.response), message_of(Logger.invalid_json)
+        # Each case names the listing, the reason the branch stays put, the number of pages the run requests, and
+        # the warnings the listing gives, such as one about a request GitHub refused.
+        cases: dict[str, tuple[list | Mock, str, int, list[LogMessage]]] = {
+            "rate limited": (github_rate_limited(), GITHUB_RATE_LIMITED_REASON, 1, [refused]),
             "second page rate limited": (
                 [*github_fresh_line(100, PAST_COOLDOWN_SHA), github_rate_limited()],
                 GITHUB_RATE_LIMITED_REASON,
                 2,
+                [refused],
             ),
-            "line beyond the pages examined": ([*github_fresh_line(500, PAST_COOLDOWN_SHA), past], beyond, 5),
+            "page that is not JSON": (unparsable_response(ok=True), "the response is not valid JSON", 1, [not_json]),
+            "line beyond the pages examined": ([*github_fresh_line(500, PAST_COOLDOWN_SHA), past], beyond, 5, []),
         }
-        for case, (listed_commits, reason, pages) in cases.items():
+        for case, (listed_commits, reason, pages, warnings) in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit, listed_commits=listed_commits):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
                 workflow_yml.write_text.assert_not_called()
                 self.assert_unpinned_ref_logged("actions/checkout", "main", Location(workflow_yml, 1), reason)
-                self.assert_no_warnings_logged()
+                self.assertEqual([record.args[0] for record in self.records(WARNING)], warnings)
                 self.assertEqual(len(github_commit_listing_queries()), pages)
 
     @patch_github(releases=None, tags=None, commit=github_rate_limited())
@@ -762,8 +789,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github._PinResolver._branch_moved_on,
-            "self.log.unchecked_branch_drift(reference, moved.sha, compared.reason)",
+            references_github.PinUpdater._branch_moved_on,
+            "self.logger.unchecked_branch_drift(reference, moved.sha, compared.reason)",
             "pass",
             "a branch whose drift could not be checked is left as it is without an error",
         )
@@ -787,7 +814,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             new_sha=PAST_COOLDOWN_SHA,
             reason=GITHUB_RATE_LIMITED_REASON,
         )
-        self.assert_no_warnings_logged()
+        self.assert_could_not_fetch_logged(status=HTTPStatus.FORBIDDEN)
 
     @kills(
         Mutation(
@@ -825,20 +852,6 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         drifted = _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA)
         self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, _ALLOW_HASH_DRIFT)
 
-    @kills(
-        Mutation(
-            sources_github._looked_up_tag,
-            "_LOG.response(response)",
-            "pass",
-            "a ref GitHub refuses to look up as a tag is reported as a ref without the refusal being logged",
-        ),
-        Mutation(
-            sources_github,
-            "@cache\ndef _looked_up_tag(",
-            "def _looked_up_tag(",
-            "a refused tag lookup is logged once for every time the run asks what kind of ref the reference names",
-        ),
-    )
     def test_moved_tag_naming_no_version_warned_as_tag_drift_or_else_as_ref_drift(self, mock_glob: Mock):
         """Test that a moved tag is warned about as tag drift, or as ref drift when GitHub refuses to say it is a tag.
 
@@ -1061,9 +1074,9 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v1.0{marker}\n")
         workflow_yml.write_text.assert_not_called()
-        self.assert_no_warnings_logged()
         drifted = _drifted(workflow_yml, version="1.0")
         self.assert_undated_commit_logged(Logger.TAG_DRIFT, drifted, GITHUB_RATE_LIMITED_REASON)
+        self.assert_could_not_fetch_logged(status=HTTPStatus.FORBIDDEN)
 
     @patch_github(
         releases=[github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE)],
@@ -1227,8 +1240,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github._PinResolver._comment_names_no_ref,
-            "if not reference.current_sha or self.marker.ignores(Scope.UPDATE):",
+            references_github.PinUpdater._comment_names_no_ref,
+            "if not reference.current_sha or reference.marker.ignores(Scope.UPDATE):",
             "if not reference.current_sha:",
             "a pinned branch held back by `ignore[update]` still lists its commits",
         ),
@@ -1267,7 +1280,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github._PinResolver._report_redundant_directives,
+            references_github.PinUpdater._report_redundant_directives,
             "Reason.NO_DRIFT_FOR_A_COMMIT if",
             "None if",
             "an `allow[hash-drift]` beside a commit SHA, which cannot drift, goes unreported",
@@ -1587,14 +1600,6 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
         self.assert_archived_repository_logged("actions/checkout", Location(workflow_yml, 1))
 
-    @kills(
-        Mutation(
-            sources_github,
-            "@archival_reporting\ndef project(dependency: DependencyName) -> Project:",
-            "def project(dependency: DependencyName) -> Project:",
-            "the source claims to report no archival, so switching the staleness check off leaves it unasked",
-        )
-    )
     @patch_github(
         releases=[github_release_json("v1.0", published_at=FRESH_DATE)],
         tags=[],

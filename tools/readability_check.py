@@ -64,6 +64,10 @@ _BESIDE_THE_SUBJECT = frozenset({"IN", "TO", "CC", ","})
 _EXISTENTIAL = "EX"
 _EXISTENTIAL_REACH = 2
 
+# The forms of `have` that a negation may follow, as in `has no message to include`: that is how plain prose says
+# the subject lacks something.
+_HAVE = frozenset({"has", "have", "had", "having"})
+
 # A parenthesised aside without an aside of its own, so repeating the substitution reaches the nested ones too.
 _ASIDE = re.compile(r"\([^()]*\)")
 
@@ -330,15 +334,26 @@ def _negates_a_noun_phrase(tagged: list[tuple[str, str]]) -> bool:
     """Return whether the sentence hangs a negation on a noun phrase rather than on the verb it belongs to.
 
     Reported: `reports no publication date`, `asked about no artefact whose coordinates name a property`.
-    Left alone: `does not report a publication date`, `no artefact is asked about`, `there is no new version`.
+    Left alone: `does not report a publication date`, `no artefact is asked about`, `there is no new version`,
+    `has no message to include`.
     """
     seen_verb = False
     for index, (word, tag) in enumerate(tagged):
         if tag.startswith(_VERB_PREFIX):
             seen_verb = True
-        elif seen_verb and tag == _DETERMINER and word.lower() == "no" and not _denies_existence(tagged, index):
+        elif seen_verb and tag == _DETERMINER and word.lower() == "no" and not _is_plain(tagged, index):
             return True
     return False
+
+
+def _is_plain(tagged: list[tuple[str, str]], index: int) -> bool:
+    """Return whether the negation at the index is how plain prose says it, denying existence or possession."""
+    return _denies_existence(tagged, index) or _denies_possession(tagged, index)
+
+
+def _denies_possession(tagged: list[tuple[str, str]], index: int) -> bool:
+    """Return whether the negation at the index denies that the subject has something, as `has no message` does."""
+    return tagged[index - 1][0].lower() in _HAVE
 
 
 def _denies_existence(tagged: list[tuple[str, str]], index: int) -> bool:
@@ -370,7 +385,7 @@ def _faults(sentence: str, limits: _Limits) -> str:
     if _subject_is_split(tagged):
         faults.append("subject split from its verb")
     if _negates_a_noun_phrase(tagged):
-        faults.append("negation in a noun phrase (put the negation on the verb, as in 'does not have a release')")
+        faults.append("negation in a noun phrase (put the negation on the verb, as in 'does not report a date')")
     return " and ".join(faults)
 
 

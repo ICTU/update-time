@@ -566,6 +566,14 @@ class VersionsHeldBackTest(LoggingTestCase):
         with patch_get(text=maven_central_listing(past_cooldown, fresh)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.1-jre",))
 
+    @kills(
+        Mutation(
+            maven_central._listing,
+            "_LOG.unserved_listing(url, found.reason)",
+            "pass",
+            "an artefact Maven Central does not serve is passed over without a word at debug",
+        )
+    )
     def test_an_unserved_listing_holds_no_version_back(self):
         """Test that an unserved listing is reported at debug, and that the run holds nothing back."""
         # The repository serves this error page beside the status. A run that read it as a listing would find nothing.
@@ -577,16 +585,8 @@ class VersionsHeldBackTest(LoggingTestCase):
         # Asserting the request was made, so holding nothing back says something about the answer rather than
         # about a request that was never sent.
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
-        self.assert_logged(message_of(Logger.unserved_listing), url=_GUAVA_LISTING, status=404, reason="Not Found")
+        self.assert_logged(message_of(Logger.unserved_listing), url=_GUAVA_LISTING, reason="HTTP 404")
 
-    @kills(
-        Mutation(
-            maven_central._listing,
-            "    if not response.ok:\n        _LOG.response(response)\n        return LookedUp(None)\n",
-            "",
-            "the repository fails without a word, so the cooldown is lost for an artefact it does serve",
-        )
-    )
     def test_an_error_other_than_a_missing_listing_is_warned_about(self):
         """Test that a repository answering with a server error warns, and that nothing is held back."""
         answer = mock_response(ok=False, status_code=503, reason="Service Unavailable", url=_GUAVA_LISTING, text="")
@@ -678,15 +678,10 @@ class ServesTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._listing,
-            "_LOG.response(response)\n        return LookedUp(None)",
-            "_LOG.response(response)\n        return LookedUp(None, absent=True)",
-            "a server error reads as an artefact the repository lacks, so its scopes are reported as redundant",
-        ),
-        Mutation(
-            maven_central._listing,
-            "if response is None:\n        return LookedUp(None)",
-            "if response is None:\n        return LookedUp(None, absent=True)",
-            "a request that fails reads as an artefact the repository lacks, so its scopes are reported as redundant",
+            "is None:\n        return LookedUp(None)",
+            "is None:\n        return LookedUp(None, absent=True)",
+            "a server error or a failed request reads as an artefact the repository lacks, so its scopes are reported "
+            "as redundant",
         ),
     )
     def test_an_artefact_is_unserved_only_where_the_repository_lacks_its_listing(self):
@@ -732,7 +727,7 @@ class PublicationTest(LoggingTestCase):
         }
         for case, (rows, expected) in cases.items():
             with self.subTest(case=case), patch_get(text=maven_central_listing(*rows)) as mock_get:
-                self.assertEqual(maven_central.publication(GUAVA, "33.7.1-jre").value, expected)
+                self.assertEqual(maven_central.publication(GUAVA, "33.7.1-jre"), expected)
                 self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
 
 

@@ -15,9 +15,9 @@ from urllib.parse import parse_qs, urlparse
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp
+from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
-from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.primitives.location import Location
 from update_time.references import resolve, rewrite
 from update_time.sources import docker_hub, oci
@@ -548,8 +548,8 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             docker_hub._listing_page,
-            "if response.status_code == HTTPStatus.NOT_FOUND:",
-            "if False:",
+            "statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)",
+            "statuses_meaning_absent=()",
             "a repository Docker Hub does not serve is warned about, and its floating tag reported as not listed",
         ),
         Mutation(

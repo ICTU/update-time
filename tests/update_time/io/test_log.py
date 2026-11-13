@@ -4,6 +4,7 @@ import contextlib
 import logging
 import re
 import signal
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -25,7 +26,9 @@ from update_time.domain.dependency import (
     Release,
     Yank,
 )
-from update_time.domain.reference import DriftedPin, RefKind
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope
+from update_time.domain.reference import DriftedPin, Reference, RefKind
 from update_time.io import log as log_module
 from update_time.io.console import (
     CHANGES,
@@ -37,8 +40,7 @@ from update_time.io.log import (
     LogMessage,
     get_logger,
 )
-from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, parse_directives
+from update_time.markers.parser import parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
@@ -598,9 +600,9 @@ class LoggerTests(TestCase):
         reported `(> 90)` can only have come from the argument.
         """
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
-        version = DependencyVersion("4.15.0", project=Project(newest=Release("5.0.0", published)))
+        project = Project(newest=Release("5.0.0", published))
         location = create_location("requirements.txt", 9)
-        _new_logger().report_staleness(resolved_reference("humanize", location, version), 90)
+        _new_logger().report_staleness(resolved_reference("humanize", location, project=project), 90)
         self.assert_message(
             mock_log,
             message_of(Logger.report_staleness, "days"),
@@ -638,8 +640,8 @@ class LoggerTests(TestCase):
         the warning is logged only when the given threshold is the one applied.
         """
         published = datetime.now(UTC) - timedelta(days=100, hours=1)
-        version = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", published)))
-        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
+        project = Project(newest=Release("4.15.0", published))
+        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), project=project)
         _new_logger().report_staleness(resolved, 90)
         mock_log.assert_called_once_with(
             message_of(Logger.report_staleness).level, message_of(Logger.report_staleness), ANY
@@ -681,7 +683,7 @@ class LoggerTests(TestCase):
         }.items():
             with self.subTest(case=case):
                 version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason=reason))
-                _new_logger().report_yank(resolved_reference("humanize", location, version), Marker())
+                _new_logger().report_yank(resolved_reference("humanize", location, version))
                 self.assert_message(
                     mock_log,
                     message,
@@ -699,8 +701,8 @@ class LoggerTests(TestCase):
         }.items():
             with self.subTest(case=case):
                 archival = Archival(archived=True, reason=reason)
-                version = DependencyVersion("4.15.0", project=Project(archival=archival))
-                _new_logger().report_archival(resolved_reference("humanize", location, version), Marker())
+                project = Project(archival=archival)
+                _new_logger().report_archival(resolved_reference("humanize", location, project=project))
                 self.assert_message(
                     mock_log,
                     message,
@@ -715,8 +717,8 @@ class LoggerTests(TestCase):
         location = create_location("requirements.txt", 9)
         for subject in ArchivedSubject:
             with self.subTest(subject=subject):
-                version = DependencyVersion("4.15.0", project=Project(archival=Archival(subject=subject)))
-                _new_logger().report_archival(resolved_reference("humanize", location, version), marker)
+                project = Project(archival=Archival(subject=subject))
+                _new_logger().report_archival(resolved_reference("humanize", location, marker=marker, project=project))
                 self.assert_message(
                     mock_log,
                     message,
@@ -728,7 +730,7 @@ class LoggerTests(TestCase):
     def test_an_invalid_item_is_warned_about_naming_the_item(self, mock_log: Mock):
         """Test that an item the marker language cannot read is warned about at warning level, naming it alone."""
         location = create_location("Dockerfile", 2)
-        _new_logger().invalid_bracket_item("python", "@@@", location)
+        _new_logger().invalid_bracket_item(reference("python", location), "@@@")
         self.assert_message(
             mock_log,
             message_of(Logger.invalid_bracket_item),
@@ -748,7 +750,7 @@ class LoggerTests(TestCase):
             directive = f"{verb.value}[{item}]"
             with self.subTest(bound=directive):
                 marker = Marker(version_bound=bound(verb, item))
-                _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
+                _new_logger().warn_if_redundant_bound(Reference("python", "3.12", location, marker=marker))
                 self.assert_message(
                     mock_log,
                     message_of(Logger.warn_if_redundant_bound),
@@ -767,7 +769,7 @@ class LoggerTests(TestCase):
         for case, marker in markers.items():
             with self.subTest(case=case):
                 location = create_location("Dockerfile", 6)
-                _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
+                _new_logger().warn_if_redundant_bound(Reference("python", "3.12", location, marker=marker))
                 mock_log.assert_not_called()
 
     def test_recognised_marker(self, mock_log: Mock):
@@ -776,7 +778,7 @@ class LoggerTests(TestCase):
         raw = "ignore[update] set[stale-after=0] allow[update<3.13, hash-drift]"
         marker = parse_directives(raw)
         location = create_location("Dockerfile", 6)
-        _new_logger().recognised_marker("python", marker, location)
+        _new_logger().recognised_marker(Reference("python", "", location, marker=marker))
         self.assert_message(
             mock_log,
             message_of(Logger.recognised_marker),
@@ -786,14 +788,14 @@ class LoggerTests(TestCase):
 
     def test_recognised_marker_does_nothing_without_marker(self, mock_log: Mock):
         """Test that nothing is logged for a reference without a marker."""
-        _new_logger().recognised_marker("python", Marker(), create_location("Dockerfile", 6))
+        _new_logger().recognised_marker(Reference("python", "", create_location("Dockerfile", 6)))
         mock_log.assert_not_called()
 
     def test_ignored(self, mock_log: Mock):
         """Test that a held-back reference names the directive that held it back, not the ones written beside it."""
         marker = parse_directives("ignore[update] set[stale-after=0] allow[hash-drift]")
         location = create_location("Dockerfile", 6)
-        _new_logger().ignored("python", marker, location)
+        _new_logger().ignored(Reference("python", "", location, marker=marker))
         self.assert_message(
             mock_log,
             message_of(Logger.ignored),
@@ -804,26 +806,25 @@ class LoggerTests(TestCase):
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
         """Test that a recent release is not reported, and an undated one is not either."""
         newest = Release("4.15.0", FRESH_DATE)
-        recent = DependencyVersion("4.15.0", project=Project(newest=newest))
-        undated = DependencyVersion("4.15.0")
+        recent = Project(newest=newest)
+        undated = Project()
         logger = _new_logger()
         location = create_location("requirements.txt", 9)
-        logger.report_staleness(resolved_reference("humanize", location, recent), 90)
-        logger.report_staleness(resolved_reference("humanize", location, undated), 90)
+        logger.report_staleness(resolved_reference("humanize", location, project=recent), 90)
+        logger.report_staleness(resolved_reference("humanize", location, project=undated), 90)
         mock_log.assert_not_called()
 
     def test_report_yank(self, mock_log: Mock):
         """Test that a yank is reported as a warning, or as the marker that silences it."""
         version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
-        _new_logger().report_yank(resolved, Marker())
+        _new_logger().report_yank(resolved)
         mock_log.assert_called_once_with(
             message_of(Logger.report_yank, "reason").level, message_of(Logger.report_yank, "reason"), ANY
         )
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         _new_logger().report_yank(
-            resolved,
-            parse_directives("ignore[update] ignore[yanked] allow[hash-drift]"),
+            replace(resolved, marker=parse_directives("ignore[update] ignore[yanked] allow[hash-drift]"))
         )
         self.assert_message(
             mock_log,
@@ -836,8 +837,10 @@ class LoggerTests(TestCase):
     def test_report_yank_warns_about_an_ignore_yanked_on_a_version_never_yanked(self, mock_log: Mock):
         """Test that an `ignore[yanked]` on a version its source answered was not yanked is reported as redundant."""
         version = DependencyVersion("4.15.0", yank=Yank())
-        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
-        _new_logger().report_yank(resolved, Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]"))
+        marker = Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]")
+        _new_logger().report_yank(
+            resolved_reference("humanize", create_location("requirements.txt", 9), version, marker=marker)
+        )
         self.assert_message(
             mock_log,
             message_of(Logger.report_yank, "directive", "version"),
@@ -849,7 +852,7 @@ class LoggerTests(TestCase):
     def test_report_yank_does_nothing_for_an_unmarked_version_never_yanked(self, mock_log: Mock):
         """Test that an unmarked version that was not yanked is not reported."""
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), DependencyVersion("4.15.0"))
-        _new_logger().report_yank(resolved, Marker())
+        _new_logger().report_yank(resolved)
         mock_log.assert_not_called()
 
     @kills(
