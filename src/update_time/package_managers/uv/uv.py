@@ -6,6 +6,7 @@ uv also recompiles a requirements file it compiled, as `UvPipCompile`.
 import os
 import re
 from dataclasses import replace
+from graphlib import CycleError, TopologicalSorter
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ClassVar, override
 
@@ -22,7 +23,7 @@ from update_time.package_managers.requirements_compiler import RequirementsCompi
 from update_time.primitives.command import Command
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Collection, Iterable, Mapping
 
     from update_time.domain.dependency import DependencyName
     from update_time.io.log import Logger
@@ -78,7 +79,7 @@ def manages(pyproject_toml: Path, config: PyprojectConfig) -> bool:
     `managed = false`. The project's own `config`, already parsed, serves where the project is its own workspace root.
     """
     root = _workspace_root(pyproject_toml)
-    root_config = config if root == pyproject_toml else pyproject_config.read(root) or PyprojectConfig()
+    root_config = config if root == pyproject_toml else _config(root)
     if not root_config.uv.managed:
         _LOG.project_marked_unmanaged(pyproject_toml, root)
         return False
@@ -206,8 +207,12 @@ def _workspace_table(pyproject_toml: Path) -> UvWorkspace | None:
     A missing (probing an ancestor) or malformed pyproject.toml reads back as None, so resolution keeps walking up
     rather than aborting.
     """
-    config = pyproject_config.read(pyproject_toml)
-    return None if config is None else config.uv.workspace
+    return _config(pyproject_toml).uv.workspace
+
+
+def _config(pyproject_toml: Path) -> PyprojectConfig:
+    """Return the config of the pyproject.toml, or an empty config where the file cannot be read or is not valid."""
+    return pyproject_config.read(pyproject_toml) or PyprojectConfig()
 
 
 def _workspace_includes(root_dir: Path, workspace: UvWorkspace, project_dir: Path) -> bool:
@@ -230,12 +235,68 @@ def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
     return [declaration for declaration in declarations if declaration.names_a_release]
 
 
-def by_workspace(pyproject_tomls: Iterable[PyprojectToml]) -> dict[Path, list[PyprojectToml]]:
-    """Return the projects, grouped by the pyproject.toml of the uv workspace root governing each."""
+def by_workspace(pyproject_tomls: Iterable[PyprojectToml]) -> list[dict[Path, list[PyprojectToml]]]:
+    """Return the projects by the pyproject.toml of the uv workspace root governing each, in groups of workspaces.
+
+    A group holds the workspaces whose projects source each other by path in a cycle, or else one workspace. Each
+    group comes after the groups whose projects its projects source by path.
+    """
     workspaces: dict[Path, list[PyprojectToml]] = {}
     for pyproject_toml in pyproject_tomls:
         workspaces.setdefault(_workspace_root(pyproject_toml.path), []).append(pyproject_toml)
-    return workspaces
+    return _ordered_workspaces(workspaces)
+
+
+def _ordered_workspaces(workspaces: Mapping[Path, list[PyprojectToml]]) -> list[dict[Path, list[PyprojectToml]]]:
+    """Return the workspaces in groups, each after the groups holding a project its projects source by path.
+
+    The workspaces in a cycle of path sources form one group, in the order the scan found them in.
+    """
+    sourced_roots = {root: _path_sourced_roots(projects) & workspaces.keys() for root, projects in workspaces.items()}
+    group_of = {root: frozenset({root}) for root in workspaces}
+    while True:
+        sourced_groups = {
+            group: {group_of[sourced] for root in group for sourced in sourced_roots[root]} - {group}
+            for group in dict.fromkeys(group_of.values())
+        }
+        try:
+            order = list(TopologicalSorter(sourced_groups).static_order())
+        except CycleError as error:
+            cycle = frozenset(root for group in error.args[1] for root in group)
+            _LOG.path_source_cycle(root for root in workspaces if root in cycle)
+            group_of |= dict.fromkeys(cycle, cycle)
+            continue
+        return [{root: projects for root, projects in workspaces.items() if root in group} for group in order]
+
+
+def _path_sourced_roots(projects: Iterable[PyprojectToml]) -> set[Path]:
+    """Return the workspace root of each project that the projects source by path.
+
+    uv passes over a source for a dependency that no project of the workspace declares, and so does the order.
+    """
+    pyproject_tomls = {path for project in projects for path in _sourcing_files(project.path)}
+    declared = {
+        normalized_python_name(declaration.dependency)
+        for pyproject_toml in pyproject_tomls
+        for declaration in PyprojectToml(pyproject_toml).declarations()
+    }
+    return {
+        _workspace_root(path)
+        for pyproject_toml in pyproject_tomls
+        for path in _path_sourced_projects(pyproject_toml, declared)
+    }
+
+
+def _path_sourced_projects(pyproject_toml: Path, declared: Collection[DependencyName]) -> list[Path]:
+    """Return the pyproject.toml of each project the `[tool.uv] sources` of the project resolve from a path.
+
+    A source counts where its dependency is one of the dependencies declared.
+    """
+    return [
+        Path(os.path.normpath(pyproject_toml.parent / source.path)) / "pyproject.toml"
+        for source in _config(pyproject_toml).uv.path_sources
+        if source.dependency in declared
+    ]
 
 
 def declarations_of(file: PythonDependencyToml) -> list[Declaration]:
@@ -243,7 +304,7 @@ def declarations_of(file: PythonDependencyToml) -> list[Declaration]:
 
     `uv lock --script` locks a script on its own, so a script does not inherit the sources of a workspace root.
     """
-    inherited = _workspace_sources(file.path) if isinstance(file, PyprojectToml) else frozenset()
+    inherited = _applying_sources(file.path) if isinstance(file, PyprojectToml) else frozenset()
     return [
         replace(declaration, uv_sourced=True)
         if normalized_python_name(declaration.dependency) in inherited
@@ -252,10 +313,14 @@ def declarations_of(file: PythonDependencyToml) -> list[Declaration]:
     ]
 
 
-def _workspace_sources(pyproject_toml: Path) -> frozenset[DependencyName]:
-    """Return the names of the dependencies that the `[tool.uv] sources` of the workspace root resolve.
+def _applying_sources(pyproject_toml: Path) -> frozenset[DependencyName]:
+    """Return the names of the dependencies that the `[tool.uv] sources` applying to the project resolve."""
+    return frozenset().union(*(_config(path).uv.sources for path in _sourcing_files(pyproject_toml)))
 
-    A workspace member inherits these sources from the root.
+
+def _sourcing_files(pyproject_toml: Path) -> set[Path]:
+    """Return the pyproject.toml whose `[tool.uv] sources` apply to the project: its own and its workspace root's.
+
+    A workspace member inherits the sources of the root.
     """
-    config = pyproject_config.read(_workspace_root(pyproject_toml)) or PyprojectConfig()
-    return config.uv.sources
+    return {pyproject_toml, _workspace_root(pyproject_toml)}

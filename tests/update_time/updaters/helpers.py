@@ -191,7 +191,7 @@ def _asks_for_settings(command: Command) -> bool:
     return "--show-settings" in command
 
 
-def _failing_uv_lock(*_arguments: object, **_options: object) -> NoReturn:
+def failing_uv_lock(*_arguments: object, **_options: object) -> NoReturn:
     """Fail `uv lock` with the error uv gives for pins that contradict each other."""
     raise subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr=NO_SOLUTION)
 
@@ -260,7 +260,7 @@ class UvLockTestCase(ExecutablesOnPathTestCase):
                     fake_files[self.lock_file] = lock_as_written
                 return DEFAULT
             if (lock := next(locks_after)) is None:
-                _failing_uv_lock()
+                failing_uv_lock()
             fake_files[self.lock_file] = lock
             return DEFAULT
 
@@ -275,7 +275,7 @@ class UvLockTestCase(ExecutablesOnPathTestCase):
     def updated_with_failing_lock(self, run: Mock, glob: Mock, contents: str) -> FakeFiles:
         """Update the manifest holding the contents, with every uv lock failing, and return the files."""
         files = FakeFiles({self.manifest: contents})
-        run.side_effect = self._answering_settings(_failing_uv_lock)
+        run.side_effect = self._answering_settings(failing_uv_lock)
         glob.return_value = [self.manifest]
         with files.patched():
             self.update()

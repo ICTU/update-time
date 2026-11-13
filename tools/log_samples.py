@@ -470,6 +470,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_range_rewrites(log, capture),
         **_versions_moved_back(log, capture),
         **_pin_with_environment_marker(log, capture),
+        **_path_source_cycle(log, capture),
         **_unserved_new_version(log, capture),
         **_requires_python_reports(log, capture),
         **_uv_cooldown_not_set(log, capture),
@@ -576,6 +577,15 @@ def _pin_with_environment_marker(log: Logger, capture: _Capture) -> dict[str, st
     """Log that a pin with an environment marker is left as it is, and pair the line."""
     log.pin_with_environment_marker_left_as_is(reference("humanize", Location(Path("pyproject.toml"), 3), "4.15.0"))
     return {"@@PIN_WITH_ENVIRONMENT_MARKER@@": capture.take()}
+
+
+def _path_source_cycle(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that the workspaces of two projects that source each other by path are updated together, and rolled back."""
+    lib, app = Path("lib/pyproject.toml"), Path("app/pyproject.toml")
+    log.path_source_cycle([lib, app])
+    cycle = capture.take()
+    log.rolled_back_with_cycle(lib, [app])
+    return {"@@PATH_SOURCE_CYCLE@@": cycle, "@@ROLLED_BACK_WITH_CYCLE@@": capture.take()}
 
 
 def _unserved_new_version(log: Logger, capture: _Capture) -> dict[str, str]:

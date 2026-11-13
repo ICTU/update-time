@@ -17,10 +17,11 @@ from update_time.package_managers.uv.uv import (
     pypi_served,
 )
 from update_time.primitives.command import Command
+from update_time.primitives.location import Location
 
-from tests.helpers import mock_path, patch_environ
+from tests.helpers import FakeFiles, mock_path, patch_environ
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import declaration, message_of, pyproject
+from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, declaration, message_of, pyproject, uv_path_source
 from tests.update_time.package_managers.helpers import (
     CONFIGURED_EXCLUDE_NEWER,
     MANAGED_BY_COMMENT,
@@ -230,6 +231,73 @@ class WorkspaceTableTest(unittest.TestCase):
         ):
             with self.subTest(case):
                 self.assertIsNone(_workspace_table(mock_path(contents)))
+
+
+class ByWorkspaceTest(LoggingTestCase):
+    """Unit tests for grouping the projects by uv workspace, in the order uv locks the workspaces."""
+
+    LIB = SCAN_ROOT / "lib/pyproject.toml"
+    APP = SCAN_ROOT / "app/pyproject.toml"
+    MEMBER = SCAN_ROOT / "app/member/pyproject.toml"
+
+    def groups(self, files: dict[Path, str], projects: list[Path]) -> list[list[Path]]:
+        """Return the workspace roots of each group `by_workspace` returns for the projects, found in that order."""
+        with FakeFiles(files).patched():
+            return [list(group) for group in uv.by_workspace(PyprojectToml(path) for path in projects)]
+
+    @kills(
+        Mutation(
+            uv._path_sourced_roots,
+            "for path in _sourcing_files(project.path)}",
+            "for path in [project.path]}",
+            "the order passes over the path sources of a workspace root, which its members inherit",
+        ),
+        Mutation(
+            uv._path_sourced_projects,
+            "\n        if source.dependency in declared",
+            "",
+            "the order counts a source that uv passes over, so it finds a cycle uv does not have",
+        ),
+        Mutation(
+            uv._ordered_workspaces,
+            "_LOG.path_source_cycle(root for root in workspaces if root in cycle)",
+            "pass",
+            "a cycle of path sources has its workspaces updated together without saying why",
+        ),
+    )
+    def test_a_workspace_comes_after_the_workspaces_it_sources_by_path(self):
+        """Test that each group comes after the groups it sources by path, and that a cycle forms one group."""
+        workspace = '[tool.uv.workspace]\nmembers = ["member"]\n'
+        cases = {
+            "a member inheriting the source of its workspace root": (
+                {self.LIB: pyproject(), self.APP: workspace + uv_path_source("lib"), self.MEMBER: pyproject("lib")},
+                [self.MEMBER, self.LIB],
+                [[self.LIB], [self.APP]],
+                (),
+            ),
+            "projects sourcing each other": (
+                {
+                    self.LIB: pyproject("app") + uv_path_source("app"),
+                    self.APP: pyproject("lib") + uv_path_source("lib"),
+                },
+                [self.LIB, self.APP],
+                [[self.LIB, self.APP]],
+                (self.LIB, self.APP),
+            ),
+            "a project sourcing a dependency it does not declare": (
+                {self.LIB: pyproject() + uv_path_source("app"), self.APP: pyproject("lib") + uv_path_source("lib")},
+                [self.APP, self.LIB],
+                [[self.LIB], [self.APP]],
+                (),
+            ),
+        }
+        message = message_of(Logger.path_source_cycle)
+        for case, (files, projects, groups, cycle) in cases.items():
+            with self.subTest(case):
+                self.assertEqual(self.groups(files, projects), groups)
+                logged = self.records_of(message, workspace_roots=tuple(Location(root) for root in cycle))
+                self.assertEqual(self.records_of(message), logged if cycle else [])
+                self.assertEqual(len(logged), 1 if cycle else 0)
 
 
 class PypiServedDependenciesTest(unittest.TestCase):

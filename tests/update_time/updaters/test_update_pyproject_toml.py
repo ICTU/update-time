@@ -1,8 +1,13 @@
 """Unit tests for the pyproject.toml updater (discovery and orchestration of the uv package manager)."""
 
+import tomllib
 from itertools import repeat
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, call, patch
+
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
@@ -36,6 +41,7 @@ from tests.update_time.updaters.helpers import (
     UPLOAD_TIME_WITH_CHANGELOG,
     UPLOAD_TIME_WITHOUT_CHANGELOG,
     UvLockTestCase,
+    failing_uv_lock,
     locked_package,
     no_vulnerabilities,
     pypi_answer,
@@ -44,9 +50,10 @@ from tests.update_time.updaters.helpers import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
     from contextlib import AbstractContextManager
-    from pathlib import Path
 
+    from update_time.primitives.command import Command
     from update_time.sources.pypi import ReleaseMetadata
 
 
@@ -136,6 +143,55 @@ def _scan_from_the_member() -> AbstractContextManager[Mock]:
 
 # A uv.lock before the run that leaves out `package`, since it locks another package.
 _LOCK_WITHOUT_THE_PACKAGE = _uv_lock("1.0", "other")
+
+# Two projects, each the root of a workspace of its own. `app` sources `lib` by path, and both pin `package` exactly.
+_LIB = SCAN_ROOT / "lib/pyproject.toml"
+_APP = SCAN_ROOT / "app/pyproject.toml"
+_LIB_AND_APP = {
+    _LIB: pyproject("package==1.0"),
+    _LIB.with_name("uv.lock"): _uv_lock("1.0"),
+    _APP: pyproject("lib", "package==1.0") + uv_path_source("lib"),
+    _APP.with_name("uv.lock"): _uv_lock("1.0"),
+}
+
+
+def _uv_lock_resolving_path_sources(
+    files: FakeFiles, locks: list[tuple[Command, dict[Path, str]]], unreachable_index: Path | None
+) -> Callable[..., object]:
+    """Return a stub of uv lock that locks `package` at a version every pin on it admits, as uv does.
+
+    A lock admits what the pins of each project the locked project declares admit as well, since these tests source
+    `lib` and `app` by path. Where the pins do not admit a version, the lock fails. With `--upgrade` the lock takes
+    the newest version admitted, and without it the version locked before, where that is still admitted. A lock with
+    `--upgrade` in the directory `unreachable_index` fails, as uv fails where it cannot reach the index. Each lock is
+    added to `locks`, with the files as they were when it ran.
+    """
+    sourced_manifests = {"lib": _LIB, "app": _APP}
+
+    def requirements(manifest: Path) -> list[Requirement]:
+        return [Requirement(spec) for spec in tomllib.loads(files[manifest])["project"]["dependencies"]]
+
+    def stub(command: Command, *_arguments: object, **_options: object) -> object:
+        locks.append((command, dict(files)))
+        directory = Path(command[command.index("--directory") + 1])
+        locked_manifest = directory / "pyproject.toml"
+        names = [requirement.name for requirement in requirements(locked_manifest)]
+        declared_manifests = [sourced_manifests[name] for name in names if name in sourced_manifests]
+        specifier = SpecifierSet()
+        for manifest in [locked_manifest, *declared_manifests]:
+            for requirement in requirements(manifest):
+                if requirement.name == "package":
+                    specifier &= requirement.specifier
+        admitted = list(specifier.filter(["1.0", "1.1"]))
+        if not admitted or (directory == unreachable_index and "--upgrade" in command):
+            failing_uv_lock()
+        lock = directory / "uv.lock"
+        locked = tomllib.loads(files[lock])["package"][1]["version"]
+        version = locked if locked in admitted and "--upgrade" not in command else admitted[-1]
+        files[lock] = _uv_lock(version)
+        return Mock(stdout="", stderr="")
+
+    return stub
 
 
 def _discovered_pyproject_toml(glob: Mock, contents: str) -> Mock:
@@ -626,14 +682,6 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                     (message_of(Logger.lock_not_read), {"location": Location(other_lock), "error": str(error)})
                 )
 
-    @kills(
-        Mutation(
-            lock._LockUpdate.update,
-            "self._restore()\n            return",
-            "self._restore()",
-            "a failed uv lock is followed by reports of versions the lock did not move",
-        ),
-    )
     def test_a_uv_lock_that_cannot_be_written_back_is_reported_and_the_pyproject_toml_is_written_back(
         self, run: Mock, get: Mock, glob: Mock
     ):
@@ -780,6 +828,113 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 ]
                 self.assertEqual([len(records) for records in logged], [1] * len(roots))
                 get.assert_not_called()
+
+    def test_a_dependent_found_first_moves_the_pin_it_shares_with_its_path_dependency_along_with_it(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a dependent found before a project it sources by path moves the pin they share along with it."""
+        files = self.updated_lib_and_app(run, get, glob, {}, [_APP, _LIB])
+        self.assertEqual(files[_LIB], pyproject("package==1.1"))
+        self.assertEqual(files[_APP], pyproject("lib", "package==1.1") + uv_path_source("lib"))
+
+    @kills(
+        Mutation(
+            lock._update_together,
+            "lock_update.relax()",
+            "pass",
+            "each workspace of a cycle upgrades while the others still pin the version they share, so none moves",
+        ),
+        Mutation(
+            lock._update_together,
+            "steps += [(lock_update, lock_update.relock) for lock_update in lock_updates[:-1]]",
+            "steps += []",
+            "an earlier workspace of a cycle keeps a lock that records the others' pins from before they moved",
+        ),
+    )
+    def test_workspaces_whose_projects_source_each_other_by_path_move_the_pin_they_share_together(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that projects sourcing each other by path move a shared pin together, and that each lock records it."""
+        lib = pyproject("app", "package==1.0") + uv_path_source("app")
+        files = self.updated_lib_and_app(run, get, glob, {_LIB: lib}, [_LIB, _APP])
+        app = pyproject("lib", "package==1.1") + uv_path_source("lib")
+        self.assertEqual(files[_LIB], lib.replace("package==1.0", "package==1.1"))
+        self.assertEqual(files[_APP], app)
+        last_lock_of_lib = [locked for command, locked in self.locks if str(_LIB.parent) in command][-1]
+        self.assertEqual(last_lock_of_lib[_APP], app)
+
+    def test_a_cycle_of_path_sources_is_rolled_back_where_a_later_workspace_cannot_be_locked(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a workspace whose cycle partner cannot be locked gets its files back and is reported."""
+        lib = pyproject("app", "package==1.0") + uv_path_source("app")
+        changed = {_LIB: lib}
+        files = self.updated_lib_and_app(run, get, glob, changed, [_LIB, _APP], unreachable_index=_APP.parent)
+        self.assertEqual(dict(files), {**_LIB_AND_APP, **changed})
+        self.assert_no_new_version_logged()
+        self.assert_errors_logged(
+            (message_of(Logger.uv_dependencies_not_updated), {"location": Location(_APP), "tool": "uv lock"}),
+            (message_of(Logger.rolled_back_with_cycle), {"location": Location(_LIB), "failed": (Location(_APP),)}),
+        )
+
+    @kills(
+        Mutation(
+            lock._LockUpdate.move_pins,
+            "if not self.lock_as_written_succeeded:\n            return False",
+            "if not self.lock_as_written_succeeded:\n            return True",
+            "a workspace of a cycle whose files as written uv cannot lock keeps the requirements relaxed for the cycle",
+        )
+    )
+    def test_a_cycle_of_path_sources_whose_files_as_written_cannot_be_locked_stays_as_it_was(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a cycle stays as it was where uv cannot lock the files of its workspaces as written."""
+        changed = {
+            _LIB: pyproject("app", "package==1.0") + uv_path_source("app"),
+            _APP: pyproject("lib", "package==1.1") + uv_path_source("lib"),
+        }
+        files = self.updated_lib_and_app(run, get, glob, changed, [_LIB, _APP])
+        self.assertEqual(dict(files), {**_LIB_AND_APP, **changed})
+        not_updated = message_of(Logger.uv_dependencies_not_updated)
+        self.assert_errors_logged(
+            (not_updated, {"location": Location(_LIB), "tool": "uv lock"}),
+            (not_updated, {"location": Location(_APP), "tool": "uv lock"}),
+            (message_of(Logger.rolled_back_with_cycle), {"location": Location(_APP), "failed": (Location(_LIB),)}),
+        )
+
+    def test_a_dependent_holding_back_the_pin_its_path_dependency_moves_is_reported_as_not_updated(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that where a dependent's marker keeps a pin its path dependency moves, uv cannot lock the dependent."""
+        app = pyproject("lib", "package==1.0", marker="ignore[update]") + uv_path_source("lib")
+        files = self.updated_lib_and_app(run, get, glob, {_APP: app}, [_LIB, _APP])
+        self.assertEqual(files[_LIB], pyproject("package==1.1"))
+        self.assertEqual(files[_APP], app)
+        self.assert_uv_dependencies_not_updated_logged(_APP, "uv lock")
+
+    def updated_lib_and_app(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
+        self,
+        run: Mock,
+        get: Mock,
+        glob: Mock,
+        changed: Mapping[Path, str],
+        discovered: list[Path],
+        *,
+        unreachable_index: Path | None = None,
+    ) -> FakeFiles:
+        """Update `lib` and `app`, with the changed files replacing theirs, and return the files.
+
+        The scan finds the files in the order `discovered` gives. The uv stub fails to upgrade the lock in the
+        directory `unreachable_index`, and records each lock in `locks`.
+        """
+        files = FakeFiles({**_LIB_AND_APP, **changed})
+        self.locks = []
+        run.side_effect = _uv_lock_resolving_path_sources(files, self.locks, unreachable_index)
+        get.side_effect = pypi_answer
+        glob.return_value = discovered
+        with files.patched():
+            update_pyproject_tomls()
+        return files
 
     def test_a_bound_that_cannot_narrow_the_requirement_holds_the_declaration_on_its_current_version(
         self, run: Mock, get: Mock, glob: Mock
@@ -1537,7 +1692,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
 
     @kills(
         Mutation(
-            lock._LockSnapshot.update,
+            lock._LockSnapshot.steered_update,
             "self.target.uv_lock.recorded_versions(member.project_directory) if locked else None",
             "self.target.uv_lock.recorded_versions(member.project_directory)",
             "without uv, a directive is judged by a lock uv did not write for the files as they are",

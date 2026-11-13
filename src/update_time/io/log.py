@@ -26,7 +26,7 @@ from update_time.primitives.text import prose_list
 from update_time.primitives.timestamp import days_since, utc_date_and_time
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -996,6 +996,13 @@ class Logger:
         """Log that a uv command failed for a file."""
         return self._file_fields(path, tool=tool)
 
+    @_error(
+        "Could not update the dependencies in %(location)s: they move together with %(failed)s, which uv could not lock"
+    )
+    def rolled_back_with_cycle(self, path: Path, failed: Iterable[Path]) -> dict[str, object]:
+        """Log that a file got its text back, since uv could not lock a file in its cycle of path sources."""
+        return self._file_fields(path, failed=tuple(Location(failed_path) for failed_path in failed))
+
     @_error("Could not give %(location)s back the text it held before the run (%(error)s)")
     def file_not_restored(self, path: Path, error: OSError) -> dict[str, object]:
         """Log that a file the run rewrote cannot be given back its text."""
@@ -1076,6 +1083,11 @@ class Logger:
     def workspace_root_outside_the_scan(self, path: Path, manager: str, root: Path) -> dict[str, object]:
         """Log that the package manager does not run for a file whose workspace root lies outside the scan root."""
         return self._file_fields(path, manager=manager, root=Location(root))
+
+    @_debug("Updating the uv workspaces of %(workspace_roots)s together: their projects source each other by path")
+    def path_source_cycle(self, workspace_roots: Iterable[Path]) -> dict[str, object]:
+        """Log that the workspaces whose projects source each other by path are updated together."""
+        return {"workspace_roots": tuple(Location(root) for root in workspace_roots)}
 
     @_warning("Skipping %(location)s: it is not valid %(format)s")
     def invalid_file(self, path: Path, file_format: str) -> dict[str, object]:
