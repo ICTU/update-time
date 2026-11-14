@@ -3,10 +3,10 @@
 from typing import TYPE_CHECKING
 
 from update_time.domain.file_type import PRE_COMMIT_CONFIG
+from update_time.io.file import rewrite_file
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.pre_commit_config import REPOSITORY_KEY, REV_REFERENCE, spell_rev
-from update_time.references.file import rewrite_file
 from update_time.references.github import PinUpdater
 from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_repository

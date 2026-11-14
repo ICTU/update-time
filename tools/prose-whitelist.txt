@@ -26,7 +26,6 @@ A dependency and the version a file pins it to, which is what a source is asked 
 A dependency's name and versions, and what a source resolves for one.
 A dictionary that declares no hash gains one there, which pins a URL that was loading whatever the CDN served; a URL declared without a dictionary at all has nowhere to hold a hash, so it is reported rather than pinned.
 A file location needs no entry: it reuses Rich's built-in `repr.filename`.
-A file names no marker by leaving any of the three out.
 A file with no upload time is passed over, and so is one whose name holds no version, such as the `.egg` and `.exe` files PyPI stopped accepting.
 A flag rather than a plain enum, so the scopes a marker steers combine into one value: `Scope.STALE` is one scope and `Scope.STALE | Scope.YANKED` two.
 A floating tag's labels are kept where an alias carries them, so an alias carrying more of them outranks one carrying fewer, and a tag whose labels no single alias carries together still lands on one carrying some.

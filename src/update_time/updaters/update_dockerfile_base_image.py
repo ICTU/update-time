@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKERFILES
 from update_time.domain.source import Source
+from update_time.io.file import rewrite_file
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.dockerfile import (
@@ -17,7 +18,6 @@ from update_time.manifests.dockerfile import (
     pins_a_digest_beside_a_variable,
 )
 from update_time.markers.parser import parse_marker
-from update_time.references.file import rewrite_file
 from update_time.references.match import matched_reference
 from update_time.references.rewrite import update_references_in_lines
 from update_time.sources.oci import TagGetter

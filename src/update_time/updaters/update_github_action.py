@@ -8,10 +8,10 @@ from packaging.version import Version
 
 from update_time.domain.file_type import GITHUB_WORKFLOWS
 from update_time.domain.vulnerability import Ecosystem
+from update_time.io.file import rewrite_file
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.github_workflow import ACTION_REFERENCE, spell_action
-from update_time.references.file import rewrite_file
 from update_time.references.github import PinUpdater, names_a_version
 from update_time.references.match import matched_reference, reference_matches
 from update_time.references.rewrite import updated_lines

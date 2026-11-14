@@ -8,7 +8,7 @@ from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import FileType
 from update_time.domain.source import Source
 from update_time.references import file as file_module
-from update_time.references.file import rewrite_file, update_file, update_yaml_files
+from update_time.references.file import update_file, update_yaml_files
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
@@ -17,28 +17,6 @@ from tests.update_time.references.helpers import mock_logger, new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
-    from update_time.primitives.line import Line
-
-
-def _rewrite_second_line(lines: list[Line]) -> list[str]:
-    """Return the lines with `second` replaced by `third`, standing in for a transform that rewrites a reference."""
-    return [line.text.replace("second", "third") for line in lines]
-
-
-class RewriteFileTest(unittest.TestCase):
-    """Unit tests for `rewrite_file`'s read/transform/write cycle."""
-
-    def test_crlf_line_endings_preserved(self):
-        """Test that a file's CRLF line endings survive a rewrite."""
-        mock_file = mock_path("first\r\nsecond\r\n")
-        rewrite_file(mock_file, _rewrite_second_line, Mock())
-        mock_file.write_text.assert_called_once_with("first\r\nthird\r\n")
-
-    def test_missing_final_newline_preserved(self):
-        """Test that a file without a final newline does not gain one in a rewrite."""
-        mock_file = mock_path("first\nsecond")
-        rewrite_file(mock_file, _rewrite_second_line, Mock())
-        mock_file.write_text.assert_called_once_with("first\nthird")
 
 
 class UpdateFileTest(unittest.TestCase):

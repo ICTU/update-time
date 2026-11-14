@@ -34,6 +34,7 @@ REQUIREMENTS_TXT = FileType(
 )
 INLINE_SCRIPT_METADATA = FileType("PEP 723 inline script metadata", ("*.py",))
 PACKAGE_JSON = FileType("package.json", ("package.json",))
+PNPM_WORKSPACE_YAML = FileType("pnpm-workspace.yaml", ("pnpm-workspace.yaml",))
 POM_XML = FileType("pom.xml", ("pom.xml",))
 PYTHON_VERSION_FILE = FileType(".python-version", (".python-version",))
 # Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a

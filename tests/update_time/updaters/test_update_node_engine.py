@@ -234,8 +234,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             package_json_manifest._marker,
-            '{name}", spelling=_field_spelling(contents))',
-            '{name}")',
+            "name)), spelling=_field_spelling(contents))",
+            "name)))",
             "no Recognised line names a field of the wrong shape",
         ),
         Mutation(

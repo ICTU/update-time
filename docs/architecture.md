@@ -15,6 +15,7 @@ flowchart TD
   lock_files --> primitives
   manifests --> domain
   manifests --> formats
+  manifests --> io
   manifests --> markers
   manifests --> primitives
   markers --> domain

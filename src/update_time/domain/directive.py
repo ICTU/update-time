@@ -95,6 +95,8 @@ class Reason(StrEnum):
     CHECKED_AT_THE_MANAGING_DECLARATION = (
         "Update-time checks this dependency at the declaration that manages its version"
     )
+    CHECKED_AT_THE_CATALOG = "Update-time checks this dependency at the catalog that names its version"
+    CATALOG_ENTRY_NOT_FOUND = "Update-time does not find a catalog entry that names this dependency's version"
     PIN_NOT_FLOATING = "this reference's pin does not float"
     RANGE_NEVER_PINNED = "this reference names a range, which Update-time never pins"
     NEVER_PINNED = "this reference's update is held back, so it is never pinned"

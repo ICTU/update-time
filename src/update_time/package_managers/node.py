@@ -2,7 +2,7 @@
 
 import os
 import posixpath
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,7 +17,9 @@ from update_time.io.filesystem import is_scanned
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files import bun_lock
+from update_time.manifests.npm_declaration import Catalogs
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS, PackageJson
+from update_time.manifests.pnpm_workspace_yaml import PnpmWorkspaceYaml
 from update_time.package_managers.policy import ManagerPolicy
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
@@ -25,10 +27,11 @@ from update_time.primitives.timestamp import MINUTES_PER_DAY, SECONDS_PER_DAY
 from update_time.sources import npmjs
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from update_time.domain.dependency import DependencyName, VersionString
-    from update_time.manifests.package_json import Declaration
+    from update_time.manifests.npm_declaration import CatalogEntry, Declaration
+
 
 _LOG = get_logger("package.json")
 _BUN_LOCK = "bun.lock"  # The lock bun writes as text, which Update-time reads
@@ -41,9 +44,13 @@ _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 _NPM_LIST = Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS, "--package-lock-only")
 _PNPM_LIST = Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only")
 
-# The path of the workspace root relative to itself. The locked versions of each project are keyed by the project's
-# path relative to the workspace root, as npm's list command reports them and bun's lock records them.
-_WORKSPACE_ROOT = Path()
+# The path of the root project relative to the workspace root. The locked versions of each project are keyed by the
+# project's path relative to the workspace root, as the list commands of npm and pnpm report them and bun's lock
+# records them.
+_ROOT_PROJECT = Path()
+
+# The file that marks the root of a pnpm workspace.
+_PNPM_WORKSPACE_FILE = "pnpm-workspace.yaml"
 
 # The top-level versions of each project that a lock file records, keyed by the path of the project.
 type _LockedVersions = dict[Path, dict[DependencyName, VersionString]]
@@ -63,7 +70,7 @@ def _npm_locked_versions(directory: Path) -> _LockedVersions:
     """
     listed = run(_NPM_LIST, directory).json
     dependencies = listed.get("dependencies", {}) if isinstance(listed, dict) else {}
-    projects = {_WORKSPACE_ROOT: _versions(dependencies)}
+    projects = {_ROOT_PROJECT: _versions(dependencies)}
     for name, info in dependencies.items():
         if (resolved := info.get("resolved", "")).startswith("file:"):
             link_folder = posixpath.dirname(f"node_modules/{name}")
@@ -73,17 +80,22 @@ def _npm_locked_versions(directory: Path) -> _LockedVersions:
 
 
 def _pnpm_locked_versions(directory: Path) -> _LockedVersions:
-    """Return the top-level versions that `pnpm list` reports in the directory.
+    """Return the top-level versions that `pnpm list` reports in the directory, per project.
 
-    pnpm reports a list of projects (one per workspace package, so just this project here) and splits its dependencies
-    over `dependencies`, `devDependencies`, and `optionalDependencies`, unlike npm's single `dependencies` object.
+    At the root of a workspace, pnpm lists each project of the workspace, naming the project's directory as its `path`.
+    A project listed without one is the project in the directory. pnpm splits the dependencies of a project over
+    `dependencies`, `devDependencies`, and `optionalDependencies`, unlike npm's single `dependencies` object.
     """
     listed = run(_PNPM_LIST, directory).json
-    versions: dict[DependencyName, VersionString] = {}
+    projects: _LockedVersions = {}
     for project in listed if isinstance(listed, list) else []:
+        path = project.get("path")
+        listed_path = Path(os.path.relpath(path, directory.resolve())) if isinstance(path, str) else _ROOT_PROJECT
+        versions: dict[DependencyName, VersionString] = {}
         for section in DEPENDENCY_SECTIONS:
             versions |= _versions(project.get(section, {}))
-    return {_WORKSPACE_ROOT: versions}
+        projects[listed_path] = versions
+    return projects
 
 
 def _npm_workspace_root(directory: Path) -> Path:
@@ -98,6 +110,15 @@ def _bun_workspace_root(directory: Path) -> Path:
     bun keeps one lock at the workspace root, and locks a project outside a workspace in the project's own directory.
     """
     return next((ancestor for ancestor in directory.parents if _declares_member(ancestor, directory)), directory)
+
+
+def _pnpm_workspace_root(directory: Path) -> Path:
+    """Return the nearest directory, from the directory upwards, that holds a pnpm-workspace.yaml, else the directory.
+
+    pnpm locks a project outside a workspace in the project's own directory.
+    """
+    roots = (ancestor for ancestor in (directory, *directory.parents) if (ancestor / _PNPM_WORKSPACE_FILE).exists())
+    return next(roots, directory)
 
 
 def _declares_member(root: Path, directory: Path) -> bool:
@@ -181,98 +202,139 @@ class _ConfiguredCooldown:
 
 
 @dataclass(frozen=True)
+class _Workspace:
+    """A workspace of a Node package manager, and its root, where the workspace's lock and catalogs sit.
+
+    A project outside a workspace is a workspace of its own, rooted in the project's directory.
+    """
+
+    manager: _PackageManager
+    root: Path
+
+    def has_a_lock(self) -> bool:
+        """Return whether a lock file that Update-time reads sits at the root."""
+        return any((self.root / name).exists() for name in self.manager.lock_files)
+
+    def catalogs(self) -> Catalogs:
+        """Return the catalogs the file at the root holds, or none where the manager has no catalogs."""
+        read = self.manager.catalogs
+        return Catalogs() if read is None else read(self.root)
+
+    def root_file(self) -> Path:
+        """Return the file at the root that names the members: the manager's workspace file, else the package.json."""
+        return self.root / (self.manager.workspace_file or "package.json")
+
+    def policy_for_a_project_left_as_it_is(self, path: Path) -> ManagerPolicy[Declaration] | None:
+        """Return the policy for the markers of a package.json the manager does not run for, or None where it runs.
+
+        The manager runs only where the scan reaches the root and a lock file that Update-time reads sits there,
+        since the update would otherwise write one, or leave its versions unread.
+        """
+        manager = self.manager
+        if not is_scanned(self.root):
+            _LOG.workspace_root_outside_the_scan(path, manager.name, self.root_file())
+            return _WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY
+        if self.has_a_lock():
+            return None
+        lock = self.root / manager.lock_files[0]
+        if manager.binary_lock is not None and (binary_lock := self.root / manager.binary_lock).exists():
+            _LOG.binary_lock(path, binary_lock, lock)
+            return _BINARY_LOCK_POLICY
+        _LOG.no_lock_file(path, manager.name, lock)
+        return _NO_LOCK_FILE_POLICY
+
+    def update(self, package_json: PackageJson | None) -> PackageJson | None:
+        """Update the workspace's projects at its root, log what moved, and return the root's package.json as left.
+
+        A pnpm workspace root can hold a pnpm-workspace.yaml without a package.json.
+        """
+        manager = self.manager
+        path = self.root_file() if package_json is None else package_json.path
+        directory = path.parent
+        cooldown = manager.cooldown_options(path)
+        listed_before = manager.locked_versions(directory)
+        catalogs_before = self.catalogs()
+        root_path = directory / "package.json"
+        snapshots = [_ProjectSnapshot(_ROOT_PROJECT, root_path, package_json, listed_before.get(_ROOT_PROJECT, {}))]
+        for member, locked in listed_before.items():
+            if member != _ROOT_PROJECT:
+                member_path = directory / member / "package.json"
+                snapshots.append(_ProjectSnapshot(member, member_path, PackageJson.readable(member_path), locked))
+        run(Command(*manager.update, *cooldown), cwd=directory)
+        listed_after = manager.locked_versions(directory)
+        updates = [_ProjectUpdate.of(snapshot, listed_after) for snapshot in snapshots]
+        _log_updates(manager.name, updates, catalogs_before, self.catalogs())
+        return updates[0].after
+
+
+@dataclass(frozen=True)
 class _PackageManager:
     """A supported Node package manager, the commands Update-time runs for it, and how Update-time reads its lock.
 
-    The executables, flags, lock files, and cooldown options differ across managers.
+    The executables, flags, lock files, cooldown options, and the file holding the catalogs differ across managers.
     """
 
     name: str
     update: Command
-    # Find the workspace root of the project in a directory. The manager runs there, for the members below as well.
-    workspace_root: Callable[[Path], Path]
+    find_workspace_root: Callable[[Path], Path]  # Find the root of the workspace the project in a directory belongs to
     lock_files: tuple[str, ...]
     binary_lock: str | None  # Update-time cannot read this lock, which the manager may write instead
     workspace_file: str | None
-    reads_workspaces_field: bool
     cooldown_setting: Callable[[Path], str | None]  # The setting that holds the project's own cooldown, if one does
     cooldown_option: Callable[[int], str]
     locked_versions: Callable[[Path], _LockedVersions]
+    catalogs: Callable[[Path], Catalogs] | None  # Read the catalogs that the file at the workspace root holds
 
     def files(self) -> tuple[str, ...]:
         """Return the names of the files that name this manager: its locks, and its workspace file if it has one."""
         return tuple(name for name in (*self.lock_files, self.binary_lock, self.workspace_file) if name is not None)
 
-    def _lock_root(self, directory: Path, workspace_root: Path) -> Path:
-        """Return the root of the workspace whose lock file locks the project in the directory.
+    def roots_a_workspace(self, package_json: PackageJson) -> bool:
+        """Return whether the package.json roots a workspace whose members the manager updates from it.
 
-        For npm and bun, that root is the workspace root. pnpm marks it with its workspace file instead, and locks a
-        project outside a workspace in the project's own directory.
+        A manager with a workspace file of its own takes the members from that file, beside the package.json, and does
+        not read the package.json `workspaces` field. pnpm creates its file from that field instead.
         """
         if self.workspace_file is None:
-            return workspace_root
-        roots = (ancestor for ancestor in (directory, *directory.parents) if (ancestor / self.workspace_file).exists())
-        return next(roots, directory)
+            return package_json.declares_workspaces()
+        return (package_json.path.parent / self.workspace_file).exists()
 
-    def _cooldown_options(self, path: Path) -> list[str]:
+    def checked_catalogs(self, package_json: PackageJson) -> Catalogs:
+        """Return the catalogs of the package.json's workspace, or none where the scan does not reach its root."""
+        if self.catalogs is None:
+            return Catalogs()
+        workspace = self.workspace_of(package_json.path.parent)
+        return workspace.catalogs() if is_scanned(workspace.root) else Catalogs()
+
+    def workspace_of(self, directory: Path) -> _Workspace:
+        """Return the workspace that the project in the directory belongs to."""
+        return _Workspace(self, self.find_workspace_root(directory))
+
+    def cooldown_options(self, path: Path) -> list[str]:
         """Return the option that applies Update-time's cooldown, or log the project's own and return nothing."""
         if (setting := self.cooldown_setting(path.parent)) is None:
             return [self.cooldown_option(COOLDOWN.get())]
         _LOG.project_cooldown(path, f"{self.name} {setting}", COOLDOWN.get())
         return []
 
-    def _policy_for_a_project_left_as_it_is(self, path: Path, lock_root: Path) -> ManagerPolicy[Declaration] | None:
-        """Return the policy for the markers of a package.json the manager does not run for, or None where it runs.
-
-        The manager runs only where the scan reaches the lock root and a lock file that Update-time reads sits there,
-        since the update would otherwise write one, or leave its versions unread.
-        """
-        if not is_scanned(lock_root):
-            root = lock_root / (self.workspace_file or "package.json")
-            _LOG.workspace_root_outside_the_scan(path, self.name, root)
-            return _WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY
-        if any((lock_root / name).exists() for name in self.lock_files):
-            return None
-        lock = lock_root / self.lock_files[0]
-        if self.binary_lock is not None and (binary_lock := lock_root / self.binary_lock).exists():
-            _LOG.binary_lock(path, binary_lock, lock)
-            return _BINARY_LOCK_POLICY
-        _LOG.no_lock_file(path, self.name, lock)
-        return _NO_LOCK_FILE_POLICY
-
     def update_package_json(self, package_json: PackageJson) -> CheckedPackageJson | None:
         """Update the package.json and its lockfile using this package manager, and log what it moved and rewrote.
 
-        The update moves the dependencies of the package.json's project, and those of the workspace members below, so
-        a member is left to the run for its workspace root. Without the package manager on the path, the package.json
-        gets an error and stays as it is.
+        The update moves the dependencies of the workspace's members as well, so a member is left to the run for its
+        workspace root. Without the package manager on the path, the package.json gets an error and stays as it is.
         """
         path = package_json.path
         if not is_installed(executable := self.update.executable):
             _LOG.package_manager_not_on_path(path, executable)
             return CheckedPackageJson(package_json, MARKER_POLICY)
         directory = path.parent
-        workspace_root = self.workspace_root(directory)
-        lock_root = self._lock_root(directory, workspace_root)
-        if (policy := self._policy_for_a_project_left_as_it_is(path, lock_root)) is not None:
+        workspace = self.workspace_of(directory)
+        if (policy := workspace.policy_for_a_project_left_as_it_is(path)) is not None:
             return CheckedPackageJson(package_json, policy)
-        if workspace_root.resolve() != directory.resolve():
-            _LOG.updated_by_the_workspace_root(path, self.name, workspace_root / "package.json")
+        if workspace.root.resolve() != directory.resolve():
+            _LOG.updated_by_the_workspace_root(path, self.name, workspace.root_file())
             return CheckedPackageJson(package_json, MARKER_POLICY)
-        cooldown = self._cooldown_options(path)
-        listed_before = self.locked_versions(directory)
-        snapshots = [_ProjectSnapshot(_WORKSPACE_ROOT, path, package_json, listed_before.get(_WORKSPACE_ROOT, {}))]
-        for member, locked in listed_before.items():
-            if member != _WORKSPACE_ROOT:
-                member_path = directory / member / "package.json"
-                snapshots.append(_ProjectSnapshot(member, member_path, PackageJson.readable(member_path), locked))
-        run(Command(*self.update, *cooldown), cwd=directory)
-        listed_after = self.locked_versions(directory)
-        updates = [_ProjectUpdate.of(snapshot, listed_after) for snapshot in snapshots]
-        for update in updates:
-            update.log_moved_versions(self.name)
-            update.log_range_rewrites(self.name)
-        after = updates[0].after  # The package.json of the project in the directory, as the update left it
+        after = workspace.update(package_json)
         return None if after is None else CheckedPackageJson(after, MARKER_POLICY)
 
 
@@ -310,12 +372,18 @@ class _ProjectUpdate:
         """Return each version that differs from the locked one."""
         return _moved_versions(self.before.locked, self.locked_after)
 
-    def log_moved_versions(self, manager: str) -> None:
-        """Log each moved version, up or back, at the lines declaring its dependency, or else at the package.json."""
-        declarations = {} if self.after is None else self.after.dependency_locations()
+    def log_moved_versions(self, manager: str, catalogs: Catalogs, reported: set[Location]) -> None:
+        """Log each moved version, up or back, at the lines declaring its dependency, or else at the package.json.
+
+        Skip the locations already in `reported`, and add the ones logged, so that a catalog entry several projects
+        take their version from is logged once.
+        """
+        declarations = {} if self.after is None else self.after.dependency_locations(catalogs)
         for package, new_version in self.moved_versions.items():
             current = self.before.locked[package]
-            locations = declarations.get(package, [Location(self.before.path)])
+            declared = declarations.get(package, [Location(self.before.path)])
+            locations = [location for location in declared if location not in reported]
+            reported.update(locations)
             if SEMVER.is_downgrade(current, new_version):
                 for location in locations:
                     _LOG.version_moved_back(manager, Reference(package, current, location), new_version)
@@ -328,22 +396,72 @@ class _ProjectUpdate:
         """Log each rewrite of a range in the package.json, for a dependency with an unmoved locked version."""
         if self.before.package_json is None or self.after is None:
             return
+        ranges_after = self.after.declared_ranges()
+        dependencies = {key: reference.dependency for key, reference in ranges_after.items()}
+        versions_before = _versions_of(dependencies, self.before.locked)
+        versions_after = _versions_of(dependencies, self.locked_after)
         ranges_before = self.before.package_json.declared_ranges()
-        moved_versions = self.moved_versions
-        for key, range_after in self.after.declared_ranges().items():
-            range_before = ranges_before.get(key)
-            if range_before is None or range_before.current_version == range_after.current_version:
-                continue
-            if range_after.dependency not in self.locked_after or range_after.dependency in moved_versions:
-                continue
-            reference = Reference(range_after.dependency, range_before.current_version, range_after.location)
-            version_before = self.before.locked.get(range_after.dependency, "")
-            _LOG.range_rewrite(manager, reference, range_after.current_version, version_before)
+        _log_range_rewrites(manager, ranges_before, ranges_after, versions_before, versions_after)
 
 
-def _moved_versions(
-    locked: dict[DependencyName, VersionString], versions: dict[DependencyName, VersionString]
-) -> dict[DependencyName, VersionString]:
+def _log_updates(
+    manager: str, updates: list[_ProjectUpdate], catalogs_before: Catalogs, catalogs_after: Catalogs
+) -> None:
+    """Log each moved version and each rewritten range, in the projects and in the catalogs."""
+    reported: set[Location] = set()
+    for update in updates:
+        update.log_moved_versions(manager, catalogs_after, reported)
+        update.log_range_rewrites(manager)
+    _log_catalog_range_rewrites(manager, catalogs_before, catalogs_after, updates)
+
+
+def _versions_of[KeyT](
+    dependencies: dict[KeyT, DependencyName], locked: dict[DependencyName, VersionString]
+) -> dict[KeyT, VersionString]:
+    """Return the locked version of each dependency the lock records, keyed as the dependency is."""
+    return {key: locked[dependency] for key, dependency in dependencies.items() if dependency in locked}
+
+
+def _log_catalog_range_rewrites(
+    manager: str, catalogs_before: Catalogs, catalogs_after: Catalogs, updates: list[_ProjectUpdate]
+) -> None:
+    """Log each rewrite of a range in the catalogs, for an entry with an unmoved locked version.
+
+    An entry's locked version is the version that each project taking its version from the entry locks.
+    """
+    versions_before: dict[CatalogEntry, VersionString] = {}
+    versions_after: dict[CatalogEntry, VersionString] = {}
+    for update in updates:
+        entries = [] if update.after is None else update.after.catalog_dependencies()
+        dependencies = {entry: entry.dependency for entry in entries}
+        versions_before |= _versions_of(dependencies, update.before.locked)
+        versions_after |= _versions_of(dependencies, update.locked_after)
+    ranges_before, ranges_after = catalogs_before.ranges(), catalogs_after.ranges()
+    _log_range_rewrites(manager, ranges_before, ranges_after, versions_before, versions_after)
+
+
+def _log_range_rewrites[KeyT](
+    manager: str,
+    ranges_before: dict[KeyT, Reference],
+    ranges_after: dict[KeyT, Reference],
+    versions_before: dict[KeyT, VersionString],
+    versions_after: dict[KeyT, VersionString],
+) -> None:
+    """Log each rewritten range of a dependency that the lock records at an unmoved version."""
+    moved_versions = _moved_versions(versions_before, versions_after)
+    for key, range_after in ranges_after.items():
+        range_before = ranges_before.get(key)
+        if range_before is None or range_before.current_version == range_after.current_version:
+            continue
+        if key not in versions_after or key in moved_versions:
+            continue
+        reference = Reference(range_after.dependency, range_before.current_version, range_after.location)
+        _LOG.range_rewrite(manager, reference, range_after.current_version, versions_before.get(key, ""))
+
+
+def _moved_versions[KeyT](
+    locked: dict[KeyT, VersionString], versions: dict[KeyT, VersionString]
+) -> dict[KeyT, VersionString]:
     """Return each version that differs from the locked one.
 
     A package that the lock file did not record before the update counts as unmoved.
@@ -351,15 +469,19 @@ def _moved_versions(
     return {package: version for package, version in versions.items() if locked.get(package, version) != version}
 
 
+def _catalogs_of(catalog_file: PackageJson | PnpmWorkspaceYaml | None) -> Catalogs:
+    """Return the catalogs the file holds, or none where the file could not be read."""
+    return Catalogs() if catalog_file is None else catalog_file.catalogs()
+
+
 _NPM = _PackageManager(
     name="npm",
     update=Command("npm", "update", "--save", *_COMMON_NPM_OPTIONS),
     # Inside a workspace member, `npm prefix` reports the workspace root, and the run there updates the member too.
-    workspace_root=_npm_workspace_root,
+    find_workspace_root=_npm_workspace_root,
     lock_files=("package-lock.json", "npm-shrinkwrap.json"),  # The first is the one npm writes where neither exists.
     binary_lock=None,
     workspace_file=None,
-    reads_workspaces_field=True,  # npm takes the members of a workspace from the root package.json's `workspaces`.
     cooldown_setting=_ConfiguredCooldown(
         Command("npm", "config", "get"),
         # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
@@ -369,20 +491,18 @@ _NPM = _PackageManager(
     ).setting,
     cooldown_option=lambda days: f"--min-release-age={days}",
     locked_versions=_npm_locked_versions,
+    catalogs=None,  # npm has no catalogs
 )
 _PNPM = _PackageManager(
     name="pnpm",
-    # Deliberately without `--latest`, which would cross the version ranges declared in package.json; without it,
-    # pnpm stays within the declared ranges, like `npm update` does.
-    update=Command("pnpm", "update"),
-    # `pnpm config get` reads the workspace root's config inside a workspace member as well, and `pnpm list` reports
-    # the project in the directory alone.
-    workspace_root=lambda directory: directory,
+    # `-r` updates every project of the workspace, and rewrites the ranges of its catalogs, from the root. Deliberately
+    # without `--latest`, which would cross the version ranges declared in package.json; without it, pnpm stays within
+    # the declared ranges, like `npm update` does.
+    update=Command("pnpm", "update", "-r"),
+    find_workspace_root=_pnpm_workspace_root,
     lock_files=("pnpm-lock.yaml",),
     binary_lock=None,
-    workspace_file="pnpm-workspace.yaml",
-    # pnpm takes the members of a workspace from pnpm-workspace.yaml, and creates that file from a `workspaces` field.
-    reads_workspaces_field=False,
+    workspace_file=_PNPM_WORKSPACE_FILE,
     cooldown_setting=_ConfiguredCooldown(
         Command("pnpm", "config", "get"),
         keys=("minimumReleaseAge",),
@@ -390,20 +510,21 @@ _PNPM = _PackageManager(
     ).setting,
     cooldown_option=lambda days: f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",
     locked_versions=_pnpm_locked_versions,
+    catalogs=lambda root: _catalogs_of(PnpmWorkspaceYaml.readable(root / _PNPM_WORKSPACE_FILE)),
 )
 _BUN = _PackageManager(
     name="bun",
     # `-r` updates every workspace, from the root and from a member alike, as `npm update` does. Deliberately without
     # `--latest`, which would cross the version ranges declared in package.json.
     update=Command("bun", "update", "-r"),
-    workspace_root=_bun_workspace_root,
+    find_workspace_root=_bun_workspace_root,
     lock_files=(_BUN_LOCK,),
     binary_lock=_BUN_BINARY_LOCK,
     workspace_file=None,
-    reads_workspaces_field=True,  # bun takes the members of a workspace from the root package.json's `workspaces`.
     cooldown_setting=_bun_cooldown_setting,
     cooldown_option=lambda days: f"--minimum-release-age={days * SECONDS_PER_DAY}",
     locked_versions=_bun_locked_versions,
+    catalogs=lambda root: _catalogs_of(PackageJson.readable(root / "package.json")),
 )
 # The managers Update-time can update, keyed by name. The updater resolves a detected manager name against this
 # catalog and skips a project whose manager isn't here (yarn) rather than mishandling it by running npm (which
@@ -420,10 +541,13 @@ def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
     """Return each warning scope that Update-time leaves unchecked for the declaration, with the reason.
 
     The npm registry does not signal archival, so that scope is always among them. Where the declaration does not
-    name a release, Update-time leaves every warning scope unchecked.
+    name a release, Update-time leaves every warning scope unchecked. A version that a catalog names is checked at
+    the catalog's entry instead.
     """
     if declaration.names_a_release:
         return {Scope.ARCHIVED: Reason.NO_ARCHIVAL_SIGNAL}
+    if declaration.catalog is not None:
+        return ManagerPolicy.every_warning_scope(Reason.CHECKED_AT_THE_CATALOG)
     return ManagerPolicy.every_warning_scope(Reason.NO_NPM_RELEASE)
 
 
@@ -454,12 +578,52 @@ _WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY = MARKER_POLICY.policy_for_files_left_as
 )
 
 
+def update_pnpm_workspace(workspace_file: Path) -> ManagerPolicy[Declaration]:
+    """Update the pnpm workspace the file roots, and return the policy for the markers of the file's catalogs.
+
+    The run for the package.json at the root updates a workspace whose root holds one. Each member reports a pnpm that
+    is not on the path.
+    """
+    policy = _catalog_policy(workspace_file)
+    workspace = _PNPM.workspace_of(workspace_file.parent)
+    if (
+        policy is MARKER_POLICY
+        and not (workspace.root / "package.json").exists()
+        and is_installed(_PNPM.update.executable)
+    ):
+        workspace.update(None)
+    return policy
+
+
+def _catalog_policy(workspace_file: Path) -> ManagerPolicy[Declaration]:
+    """Return the policy for the markers of a pnpm-workspace.yaml, by whether pnpm runs for the workspace it roots."""
+    directory = workspace_file.parent
+    choice = _choice_in(directory, _declared_manager_in(directory))
+    if choice is not None and choice.names_more_than_one_manager():
+        return MORE_THAN_ONE_MANAGER_POLICY
+    if not _PNPM.workspace_of(directory).has_a_lock():
+        return _NO_LOCK_FILE_POLICY
+    return MARKER_POLICY
+
+
 @dataclass(frozen=True)
 class CheckedPackageJson:
     """A package.json to check, as its package manager left it, with the policy its markers are judged by."""
 
     package_json: PackageJson
     policy: ManagerPolicy[Declaration]
+
+    def judged_by(self, catalogs: Catalogs) -> CheckedPackageJson:
+        """Return the package.json, with a policy checking a `catalog:` dependency where the catalogs hold its entry."""
+        policy = self.policy
+
+        def unchecked_scopes(declaration: Declaration) -> Mapping[Scope, Reason]:
+            """Return the scopes the policy leaves unchecked, or every one where the catalogs do not hold the entry."""
+            if declaration.catalog is not None and catalogs.location_of(declaration) is None:
+                return ManagerPolicy.every_warning_scope(Reason.CATALOG_ENTRY_NOT_FOUND)
+            return policy.unchecked_scopes(declaration)
+
+        return CheckedPackageJson(self.package_json, replace(policy, unchecked_scopes=unchecked_scopes))
 
 
 @dataclass(frozen=True)

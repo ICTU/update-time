@@ -294,6 +294,17 @@ class LayeringTest(unittest.TestCase):
         assert_passes(updaters.should_not().depend_on_files().with_name("fetch.py"))
         assert_passes(updaters.should_not().depend_on_files().in_path(_package_init("io")))
 
+    def test_manifests_use_no_io_but_reading_a_file(self):
+        """Test that the manifests use `io/file.py` alone of io, so a manifest does not log, fetch, or run a process."""
+        manifests = project_files("src/").in_folder("manifests")
+        modules = sorted(
+            path.name for path in pathlib.Path("src/update_time/io").glob("*.py") if path.name != "file.py"
+        )
+        self.assertIn("log.py", modules)  # An empty list would pass the check below without checking anything.
+        for module in modules:
+            with self.subTest(module=module):
+                assert_passes(manifests.should_not().depend_on_files().in_path(f"*/update_time/io/{module}"))
+
     def test_manifest_parsing_goes_through_the_format_layers(self):
         """Test that the manifest parsers are confined to the formats layer, so every other layer reads through it."""
         for layer in (name for name in _LAYERS if name != _FORMAT_LAYER):

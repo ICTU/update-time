@@ -9,10 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Update and check the dependencies of a `package.json` that bun manages, rather than skipping it or running npm for it. Closes [#519](https://github.com/ICTU/update-time/issues/519).
+- Check the versions a bun or pnpm catalog names, and report a range that bun or pnpm rewrites in a catalog. Closes [#557](https://github.com/ICTU/update-time/issues/557).
 
 ### Changed
 
 - Run npm once for a workspace, at its root, rather than again for each member the root's run updated already. Part of [#519](https://github.com/ICTU/update-time/issues/519).
+- Run pnpm once for a workspace, at its root, rather than for each member, also where the root holds a `pnpm-workspace.yaml` without a `package.json`. Part of [#557](https://github.com/ICTU/update-time/issues/557).
+
+### Fixed
+
+- Check the other sections of a `package.json` whose dependency section is not an object, rather than stopping the run. Part of [#557](https://github.com/ICTU/update-time/issues/557).
+- Warn about and skip a YAML file holding a value that reads as a date that does not exist, such as `2023-13-45`, rather than stopping the run. Part of [#557](https://github.com/ICTU/update-time/issues/557).
 
 ## 0.0.58 - 2026-11-13
 
