@@ -31,13 +31,17 @@ def parse(text: str) -> dict | None:
         return None
 
 
+def load(path: Path) -> dict:
+    """Return the parsed TOML, raising an `OSError` or a `ValueError` that says why the file cannot be read as TOML."""
+    return tomllib.loads(path.read_text())
+
+
 def read(path: Path) -> dict | None:
     """Return the parsed TOML, or None when the file can't be read, isn't UTF-8, or isn't valid TOML."""
     try:
-        text = path.read_text()
-    except OSError, UnicodeDecodeError:
+        return load(path)
+    except OSError, ValueError:
         return None
-    return parse(text)
 
 
 def parse_document(text: str) -> tomlkit.TOMLDocument | None:

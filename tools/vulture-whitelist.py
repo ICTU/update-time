@@ -1,4 +1,4 @@
-_.trail  # unused attribute (src/update_time/formats/toml.py:133)
+_.trail  # unused attribute (src/update_time/formats/toml.py:137)
 _.StartElementHandler  # unused attribute (src/update_time/formats/xml.py:117)
 _.CharacterDataHandler  # unused attribute (src/update_time/formats/xml.py:118)
 _.EndElementHandler  # unused attribute (src/update_time/formats/xml.py:119)

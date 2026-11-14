@@ -1,4 +1,4 @@
-"""Read YAML files (CI configs and manifests) into documents to look values up in.
+"""Read YAML files into documents to look values up in.
 
 Note: `import yaml` below resolves to the third-party PyYAML package, not this module — imports are absolute.
 """
@@ -36,9 +36,17 @@ class Document:
         """Return this node's value where it is a string."""
         return self._value if isinstance(self._value, str) else None
 
+    def __iter__(self) -> Iterator[str]:
+        """Return an iterator over the keys of this node where it is a mapping."""
+        return iter(self._value if isinstance(self._value, dict) else [])
+
     def values(self) -> list[Document]:
         """Return the values of this node where it is a mapping."""
         return [Document(value) for value in self._value.values()] if isinstance(self._value, dict) else []
+
+    def elements(self) -> list[Document]:
+        """Return the elements of this node where it is a sequence."""
+        return [Document(element) for element in self._value] if isinstance(self._value, list) else []
 
     def nodes(self) -> Iterator[Document]:
         """Return this node and every node under it, each mapping and sequence once however many aliases name it."""
@@ -80,8 +88,15 @@ _Loader.add_multi_constructor("!", _value_under_unknown_tag)
 
 
 def read(path: Path) -> Document | None:
-    """Return the parsed YAML document, or None when the YAML does not parse."""
-    loader = _Loader(path.read_text())
+    """Return the parsed YAML document, or None when the YAML does not parse.
+
+    Building the loader already refuses a character that YAML does not allow, such as a control character.
+    """
+    text = path.read_text()
+    try:
+        loader = _Loader(text)
+    except yaml.YAMLError:
+        return None
     try:
         return Document(loader.get_single_data())
     except yaml.YAMLError:

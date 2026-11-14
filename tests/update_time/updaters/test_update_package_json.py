@@ -1,6 +1,7 @@
 """Unit tests for the package.json updater (discovery and orchestration of the node package managers)."""
 
 import json
+import os
 import posixpath
 import subprocess  # nosec
 import unittest
@@ -20,10 +21,11 @@ from update_time.manifests import package_json as package_json_module
 from update_time.package_managers import node as node_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
+from update_time.primitives.timestamp import MINUTES_PER_DAY, SECONDS_PER_DAY
 from update_time.updaters import update_package_json as update_package_json_module
 from update_time.updaters.update_package_json import update_package_jsons
 
-from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
+from tests.helpers import FakeFiles, mock_path, mock_response, patch_environ, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import (
@@ -34,6 +36,7 @@ from tests.update_time.helpers import (
     published_version,
     staleness_disabled,
 )
+from tests.update_time.lock_files.helpers import bun_lock_contents
 from tests.update_time.sources.helpers import github_release_json, npm_registry
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
@@ -45,7 +48,8 @@ if TYPE_CHECKING:
     from update_time.io.log import LogMessage
 
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
-_PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
+_PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * MINUTES_PER_DAY}"  # pnpm's
+_BUN_COOLDOWN_OPTION = f"--minimum-release-age={COOLDOWN.default * SECONDS_PER_DAY}"  # bun's
 _NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the key is not set
 _NPM_PREFIX = "/\n"  # what `npm prefix` prints for a package.json in the root directory, outside a workspace
 _PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints when the key is not set
@@ -123,6 +127,12 @@ def _npm_workspace_lock(*members: dict) -> Mock:
     return Mock(stdout=json.dumps({"name": "root", "dependencies": entries}))
 
 
+def _bun_lock(**versions: str) -> str:
+    """Return a bun.lock whose root declares the packages as ^1.0.0 dependencies, locked at the versions."""
+    root = {"dependencies": dict.fromkeys(versions, "^1.0.0")}
+    return bun_lock_contents({"": root}, {name: f"{name}@{version}" for name, version in versions.items()})
+
+
 def _pnpm_lock(section: str = "dependencies", **versions: str) -> Mock:
     """Return what `pnpm list` prints for a lock file holding the versions in the section."""
     project = {"name": "root", section: {name: {"version": version} for name, version in versions.items()}}
@@ -144,6 +154,9 @@ _LEFT_PAD_PINNED = '{\n  "name": "app",\n  "dependencies": {\n    "left-pad": "1
 
 # A package.json naming pnpm as its package manager, and declaring clipboard with the range ^2.0.11, on line 4.
 _PNPM_CLIPBOARD = '{\n  "packageManager": "pnpm@9.15.0",\n  "dependencies": {\n    "clipboard": "^2.0.11"\n  }\n}\n'
+
+# A package.json declaring package with the range ^1.0.0, on line 3.
+_PACKAGE_RANGE = '{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n'
 
 # A package.json declaring minimatch with the range ^3.1.2, on line 3.
 _MINIMATCH_RANGE = '{\n  "dependencies": {\n    "minimatch": "^3.1.2"\n  }\n}\n'
@@ -251,14 +264,14 @@ class _PackageJsonFilesTestCase(ExecutablesOnPathTestCase):
         self.assert_none_logged(message_of(Logger.range_rewrite, *_RANGE_REWRITE_FIELDS), "range rewrite")
         self.assert_none_logged(message_of(Logger.range_rewrite, *_RANGE_REWRITE_FIELDS, "version"), "range rewrite")
 
-    def update_stub(self, package_json: Path, saved: str, results: list) -> Callable[..., Mock]:
-        """Return a `subprocess.run` stub that answers with the results and saves the package.json on an update."""
+    def update_stub(self, path: Path, saved: str, results: list) -> Callable[..., Mock]:
+        """Return a `subprocess.run` stub that answers with the results and saves the file on an update."""
         answers = iter(results)
 
         def run(command: Command, **_kwargs: object) -> Mock:
-            """Answer the next run, raising an error as the run's answer, and save the package.json on an update."""
+            """Answer the next run, raising an error as the run's answer, and save the file on an update."""
             if command[1] == "update":
-                self.files[package_json] = saved
+                self.files[path] = saved
             if isinstance(answer := next(answers), BaseException):
                 raise answer
             return answer
@@ -325,17 +338,17 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         for case, files in cases.items():
             with self.subTest(case):
                 workspace_file = {SCAN_ROOT / "pnpm-workspace.yaml": "packages:\n  - a/b\n"}
-                self.files.replace_all({**workspace_file, **self.lock_file(SCAN_ROOT), **files})
+                self.files.replace_all({**workspace_file, **self.lock_file(SCAN_ROOT / "a/b"), **files})
                 mock_glob.return_value = [SCAN_ROOT / "a/b/package.json"]
-                mock_run.side_effect = _npm_runs(*_npm_no_update())
+                mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/a/b\n"))
                 update_package_jsons()
                 self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a/b")
 
     def run_below_package_json(self, mock_run: Mock, mock_glob: Mock, contents: str) -> None:
-        """Run on a member in /a, below a /package.json holding the contents, and assert npm ran for the member."""
-        self.files.replace_all({SCAN_ROOT / "package.json": contents, **self.lock_file(SCAN_ROOT)})
+        """Run on a project in /a, below a /package.json holding the contents, and assert npm ran for the project."""
+        self.files.replace_all({SCAN_ROOT / "package.json": contents, **self.lock_file(SCAN_ROOT / "a")})
         mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "a")]
-        mock_run.side_effect = _npm_runs(*_npm_no_update())
+        mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/a\n"))
         update_package_jsons()
         self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a")
 
@@ -401,11 +414,10 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
     @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_alone_is_logged_at_the_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
         """Test that the new version alone is logged at the line declaring the dependency, whose range npm rewrote."""
-        original = '{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n'
-        package_json = self.create_package_json(original)
+        package_json = self.create_package_json(_PACKAGE_RANGE)
         mock_glob.return_value = [package_json]
         runs = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
-        mock_run.side_effect = self.update_stub(package_json, original.replace("^1.0.0", "^1.1.0"), runs)
+        mock_run.side_effect = self.update_stub(package_json, _PACKAGE_RANGE.replace("^1.0.0", "^1.1.0"), runs)
         update_package_jsons()
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
@@ -615,7 +627,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self, mock_run: Mock, mock_glob: Mock
     ):
         """Test that a package.json npm left unreadable is warned about once, and its new version logged at the file."""
-        package_json = self.create_package_json('{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n')
+        package_json = self.create_package_json(_PACKAGE_RANGE)
         mock_glob.return_value = [package_json]
         runs = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         mock_run.side_effect = self.update_stub(package_json, _UNREADABLE, runs)
@@ -656,39 +668,6 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         update_package_jsons()
         self.assert_npm_called(mock_run)
 
-    def test_cooldown_of_a_workspace_member_read_in_the_workspace_root(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the cooldown of a workspace member is read in the workspace root that npm reports."""
-        self.files.replace_all(self.lock_file(SCAN_ROOT / "ws"))
-        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "ws/a")]
-        mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/ws\n"))
-        update_package_jsons()
-        mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **_RUN_KWARGS, cwd=SCAN_ROOT / "ws")
-        update = Command("npm", "update", "--save", "--include=dev", "--silent", _NPM_COOLDOWN_OPTION)
-        mock_run.assert_any_call(update, **_RUN_KWARGS, cwd=SCAN_ROOT / "ws/a")
-
-    @_publishing_version_1_1
-    def test_new_version_of_a_workspace_member_dependency_is_logged(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a dependency of a member has its new version logged, and one of another member not."""
-        self.files.replace_all(self.lock_file(SCAN_ROOT / "ws"))
-        for case, (name, directory) in _MEMBERS.items():
-            with self.subTest(case):
-                package_json = self.write_package_json(_member_contents(name), SCAN_ROOT / "ws" / directory)
-                mock_glob.return_value = [package_json]
-                mock_run.side_effect = _npm_runs(
-                    _npm_workspace_lock(
-                        _npm_member(name, directory, package="1.0"), _npm_member("c", "packages/c", other="2.0")
-                    ),
-                    Mock(stdout=""),
-                    _npm_workspace_lock(
-                        _npm_member(name, directory, package="1.1"), _npm_member("c", "packages/c", other="2.1")
-                    ),
-                    prefix=Mock(stdout="/ws\n"),
-                )
-                update_package_jsons()
-                self.assert_new_version_logged(
-                    "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 4)
-                )
-
     @_publishing_version_1_1
     @patch("pathlib.Path.resolve", autospec=True, side_effect=lambda path: Path(str(path).replace("/link", "/real")))
     def test_new_version_logged_for_a_package_json_in_a_symlinked_directory(
@@ -706,8 +685,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         for case, (prefix, workspace_root) in prefixes.items():
             with self.subTest(case):
                 self.files.replace_all(self.lock_file(workspace_root))
-                contents = '{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n'
-                package_json = self.write_package_json(contents, SCAN_ROOT / "link/app")
+                package_json = self.write_package_json(_PACKAGE_RANGE, SCAN_ROOT / "link/app")
                 mock_glob.return_value = [package_json]
                 mock_run.side_effect = _npm_runs(
                     _npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"), prefix=prefix
@@ -717,14 +695,6 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3)
                 )
 
-    @kills(
-        Mutation(
-            update_package_jsons,
-            "file.declares_a_dependency() or (manager.reads_workspaces_field and file.declares_workspaces())",
-            "file.declares_a_dependency()",
-            "npm does not run for a workspace root without dependencies, so the members' new versions go unreported",
-        )
-    )
     @_publishing_version_1_1
     def test_new_version_of_each_member_dependency_the_root_updated_is_logged_at_the_member(
         self, mock_run: Mock, mock_glob: Mock
@@ -757,17 +727,23 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 self.assertEqual(len(self.new_version_records()), len(members))
                 self.assert_none_logged(message_of(Logger.no_dependencies), "skipped package manager")
 
-    def test_workspace_root_is_updated_before_its_members(self, mock_run: Mock, mock_glob: Mock):
-        """Test that npm updates a workspace root before its members, whichever the glob finds first."""
+    def test_member_is_left_to_the_run_of_its_workspace_root(self, mock_run: Mock, mock_glob: Mock):
+        """Test that npm updates a workspace root, and not again for a member, which the root's run updates."""
         root = self.write_package_json(_WORKSPACE_ROOT_WITH_A_DEPENDENCY)
         member = self.write_package_json(_member_contents("a"), SCAN_ROOT / "packages/a")
         mock_glob.return_value = [member, root]
-        mock_run.side_effect = [*_npm_runs(*_npm_no_update()), *_npm_runs(*_npm_no_update())]
+        mock_run.side_effect = [*_npm_runs(*_npm_no_update()), Mock(stdout=_NPM_PREFIX)]
         update_package_jsons()
         updated_directories = [
             kwargs["cwd"] for command, kwargs in mock_run.call_args_list if command[0][:2] == ("npm", "update")
         ]
-        self.assertEqual(updated_directories, [SCAN_ROOT, SCAN_ROOT / "packages/a"])
+        self.assertEqual(updated_directories, [SCAN_ROOT])
+        self.assert_logged_among_others(
+            message_of(Logger.updated_by_the_workspace_root),
+            location=Location(member),
+            manager="npm",
+            root=Location(root),
+        )
 
     def test_range_of_a_workspace_member_the_root_rewrote_is_logged_at_the_member(
         self, mock_run: Mock, mock_glob: Mock
@@ -974,10 +950,247 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_no_warnings_logged()
 
 
+@staleness_disabled
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
+@patch("subprocess.run")
+class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
+    """Unit tests for updating a bun-managed package.json (detected via its bun.lock)."""
+
+    lock_file_name = "bun.lock"
+
+    def run_beside_bunfig(
+        self, mock_run: Mock, mock_glob: Mock, bunfig: Path, contents: str, environment: dict[str, str]
+    ) -> None:
+        """Run the update of a package.json beside a bun.lock and the bunfig.toml, in the environment given.
+
+        The environment is the test run's without XDG_CONFIG_HOME, plus the variables given.
+        """
+        without_xdg_config_home = {name: value for name, value in os.environ.items() if name != "XDG_CONFIG_HOME"}
+        with patch_environ(without_xdg_config_home | environment, clear=True):
+            mock_run.reset_mock()
+            self.files.replace_all({bunfig: contents, SCAN_ROOT / self.lock_file_name: _bun_lock(package="1.0")})
+            mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
+            mock_run.return_value = Mock(stdout="")
+            update_package_jsons()
+
+    @staticmethod
+    def assert_bun_updated(mock_run: Mock, *, cooldown: bool = True, directory: Path = SCAN_ROOT) -> None:
+        """Assert that bun updated every workspace once, from the directory (with the cooldown option when expected)."""
+        cooldown_option = [_BUN_COOLDOWN_OPTION] if cooldown else []
+        update = Command("bun", "update", "-r", *cooldown_option)
+        mock_run.assert_called_once_with(update, **_RUN_KWARGS, cwd=directory)
+
+    @patch("requests.Session.get", _package_lookup_responses())
+    def test_update(self, mock_run: Mock, mock_glob: Mock):
+        """Test that bun updates every workspace under the cooldown, and each version it moved in bun.lock is logged."""
+        lock = SCAN_ROOT / self.lock_file_name
+        package_json = self.write_package_json(_PACKAGE_RANGE)
+        mock_glob.return_value = [package_json]
+        self.files[lock] = _bun_lock(package="1.0")
+        mock_run.side_effect = self.update_stub(lock, _bun_lock(package="1.1"), [Mock(stdout="")])
+        update_package_jsons()
+        self.assert_bun_updated(mock_run)
+        self.assert_new_version_logged(
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
+        )
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            node_module,
+            "reads_workspaces_field=True,  # bun",
+            "reads_workspaces_field=False,  # bun",
+            "bun runs for a workspace root only where the root declares a dependency of its own",
+        )
+    )
+    @patch("requests.Session.get", _package_lookup_responses())
+    def test_root_run_logs_the_new_version_of_a_member_at_the_member(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the root's run logs the version bun moved for a member at the member's package.json, alone."""
+        lock = SCAN_ROOT / self.lock_file_name
+        workspaces = {"": {}, "packages/a": {"name": "a", "dependencies": {"package": "^1.0.0"}}}
+        self.files[lock] = bun_lock_contents(workspaces, {"package": "package@1.0"})
+        root = self.write_package_json(_WORKSPACE_ROOT_WITHOUT_DEPENDENCIES)
+        member = self.write_package_json(_PACKAGE_RANGE, SCAN_ROOT / "packages/a")
+        mock_glob.return_value = [root, member]
+        after = bun_lock_contents(workspaces, {"package": "package@1.1"})
+        mock_run.side_effect = self.update_stub(lock, after, [Mock(stdout=""), Mock(stdout="")])
+        update_package_jsons()
+        self.assert_bun_updated(mock_run)
+        self.assert_new_version_logged(
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(member, 3), changes="Changelog"
+        )
+        self.assert_logged_among_others(
+            message_of(Logger.updated_by_the_workspace_root),
+            location=Location(member),
+            manager="bun",
+            root=Location(root),
+        )
+
+    def run_with_lock_rewritten(
+        self,
+        mock_run: Mock,
+        mock_glob: Mock,
+        lock_before: str,
+        lock_after: str,
+        read_errors_after: dict[Path, Exception],
+    ) -> None:
+        """Run the update of a package.json whose bun.lock holds the text before, and the update leaves after."""
+        lock = SCAN_ROOT / self.lock_file_name
+        self.files.replace_all({lock: lock_before})
+        self.files.read_errors = {}
+
+        def update(_command: Command, **_kwargs: object) -> Mock:
+            """Rewrite the lock, and make it unreadable where the case says so."""
+            self.files[lock] = lock_after
+            self.files.read_errors = read_errors_after
+            return Mock(stdout="")
+
+        mock_run.reset_mock()
+        mock_run.side_effect = update
+        mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
+        update_package_jsons()
+
+    @kills(
+        Mutation(
+            node_module._bun_locked_versions,
+            "_LOG.unreadable_bun_lock(lock, error)",
+            "del error",
+            "Update-time passes over a bun.lock it cannot read without a warning",
+        ),
+        Mutation(
+            node_module._bun_locked_versions,
+            "except (OSError, ValueError) as error:",
+            "except KeyError as error:",
+            "a bun.lock that Update-time cannot read stops the run",
+            raises="ValueError: it does not hold the JSON bun writes",
+        ),
+    )
+    def test_unreadable_lock_is_warned_about_and_no_version_logged(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a bun.lock that Update-time cannot read is warned about, and the run does not log a version."""
+        lock = SCAN_ROOT / self.lock_file_name
+        denied = PermissionError(13, "Permission denied", str(lock))
+        not_json = "it does not hold the JSON bun writes"
+        cases: dict[str, tuple[str, str, dict[Path, Exception], str]] = {
+            "not JSON before the update": ("{", _bun_lock(package="1.1"), {}, not_json),
+            "unreadable after the update": (_bun_lock(package="1.0"), "", {lock: denied}, str(denied)),
+        }
+        for case, (lock_before, lock_after, read_errors_after, error) in cases.items():
+            with self.subTest(case):
+                self.run_with_lock_rewritten(mock_run, mock_glob, lock_before, lock_after, read_errors_after)
+                self.assert_logged(message_of(Logger.unreadable_bun_lock), location=Location(lock), error=error)
+                self.assert_no_new_version_logged()
+
+    @kills(
+        Mutation(
+            node_module._bunfig_sets_a_cooldown,
+            '"minimumReleaseAge" in install',
+            "bool(install)",
+            "a bunfig.toml with any [install] setting is taken to set a cooldown, so the run applies none",
+        ),
+        Mutation(
+            node_module._global_bunfig_sets_a_cooldown,
+            "xdg_config_home if xdg_config_home.is_absolute() else ",
+            "",
+            "Update-time reads the global bunfig.toml in the home directory, and bun the one in XDG_CONFIG_HOME",
+        ),
+        Mutation(
+            node_module._global_bunfig_sets_a_cooldown,
+            "xdg_config_home.is_absolute()",
+            "xdg_config_home != Path()",
+            "Update-time reads the global bunfig.toml in a relative XDG_CONFIG_HOME, which bun ignores for the home's",
+        ),
+    )
+    def test_cooldown_a_bunfig_sets_respected(self, mock_run: Mock, mock_glob: Mock):
+        """Test that no cooldown option is added when a bunfig.toml that bun reads sets minimumReleaseAge."""
+        own_cooldown, other_setting = "[install]\nminimumReleaseAge = 2592000\n", "[install]\nexact = true\n"
+        home_set = {"HOME": "/home"}
+        xdg_config_home_set = {"HOME": "/home", "XDG_CONFIG_HOME": "/xdg"}
+        project_bunfig = SCAN_ROOT / "bunfig.toml"
+        home_bunfig = Path("/home/.bunfig.toml")
+        cases = {
+            "the project's, setting a cooldown": (project_bunfig, own_cooldown, home_set, False),
+            "the project's, setting something else": (project_bunfig, other_setting, home_set, True),
+            "the home directory's": (home_bunfig, own_cooldown, home_set, False),
+            "the one in XDG_CONFIG_HOME": (Path("/xdg/.bunfig.toml"), own_cooldown, xdg_config_home_set, False),
+            "the home directory's, while XDG_CONFIG_HOME is set": (
+                home_bunfig,
+                own_cooldown,
+                xdg_config_home_set,
+                True,
+            ),
+            "the home directory's, while XDG_CONFIG_HOME is a relative path": (
+                home_bunfig,
+                own_cooldown,
+                {"HOME": "/home", "XDG_CONFIG_HOME": "config"},
+                False,
+            ),
+        }
+        for case, (bunfig, contents, environment, cooldown) in cases.items():
+            with self.subTest(case):
+                self.run_beside_bunfig(mock_run, mock_glob, bunfig, contents, environment)
+                self.assert_bun_updated(mock_run, cooldown=cooldown)
+
+    @kills(
+        Mutation(
+            node_module,
+            "@cache\ndef _global_bunfig_sets_a_cooldown",
+            "def _global_bunfig_sets_a_cooldown",
+            "every bun project reads the global bunfig.toml again, and repeats the warning about it",
+        )
+    )
+    def test_unreadable_global_bunfig_is_warned_about_once(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a global bunfig.toml that Update-time cannot read is warned about once, however many projects."""
+        global_bunfig = Path("/home/.bunfig.toml")
+        unclosed_error = "Expected ']' at the end of a table declaration (at line 1, column 9)"
+        projects = [SCAN_ROOT / "a", SCAN_ROOT / "b"]
+        without_xdg_config_home = {name: value for name, value in os.environ.items() if name != "XDG_CONFIG_HOME"}
+        with patch_environ(without_xdg_config_home | {"HOME": "/home"}, clear=True):
+            self.files.replace_all(
+                {global_bunfig: "[install\n"} | {project / self.lock_file_name: _bun_lock() for project in projects}
+            )
+            mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE, project) for project in projects]
+            mock_run.return_value = Mock(stdout="")
+            update_package_jsons()
+        self.assertEqual(len(mock_run.call_args_list), len(projects))
+        self.assert_logged(message_of(Logger.unreadable_bunfig), location=Location(global_bunfig), error=unclosed_error)
+
+    @kills(
+        Mutation(
+            node_module._bunfig_sets_a_cooldown,
+            "if not isinstance(install, dict):",
+            "if False:",
+            "a bunfig.toml whose install is not a table stops the run",
+            raises="TypeError: argument of type 'int' is not a container or iterable",
+        )
+    )
+    def test_unreadable_bunfig_is_warned_about_and_the_cooldown_applied(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a bunfig.toml that Update-time cannot read is warned about, and the run applies the cooldown."""
+        unclosed, unclosed_error = "[install\n", "Expected ']' at the end of a table declaration (at line 1, column 9)"
+        project_bunfig = SCAN_ROOT / "bunfig.toml"
+        denied = PermissionError(13, "Permission denied", str(project_bunfig))
+        cases: dict[str, tuple[Path, str, dict[Path, Exception], str]] = {
+            "the project's, not valid TOML": (project_bunfig, unclosed, {}, unclosed_error),
+            "the project's, unreadable": (project_bunfig, "", {project_bunfig: denied}, str(denied)),
+            "the global one, not valid TOML": (Path("/home/.bunfig.toml"), unclosed, {}, unclosed_error),
+            "the project's, whose install is not a table": (
+                project_bunfig,
+                "install = 5\n",
+                {},
+                "its install is not a table",
+            ),
+        }
+        for case, (bunfig, contents, read_errors, error) in cases.items():
+            with self.subTest(case):
+                self.files.read_errors = read_errors
+                self.run_beside_bunfig(mock_run, mock_glob, bunfig, contents, {"HOME": "/home"})
+                self.assert_bun_updated(mock_run)
+                self.assert_logged(message_of(Logger.unreadable_bunfig), location=Location(bunfig), error=error)
+
+
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 class SkipUnsupportedPackageManagerTest(LoggingTestCase):
-    """Unit tests for skipping package.json files managed by an unsupported package manager (yarn, bun)."""
+    """Unit tests for skipping package.json files managed by an unsupported package manager (yarn)."""
 
     def test_skip_unsupported_package_manager(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json with an unsupported `packageManager` field is skipped without running anything."""
@@ -985,7 +1198,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
         update_package_jsons()
         mock_run.assert_not_called()
         mock_package_json.write_text.assert_not_called()
-        self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm and pnpm")
+        self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm, pnpm, and bun")
         self.assert_no_new_version_logged()
 
     def test_skip_unsupported_lockfile(self, mock_run: Mock, mock_glob: Mock):
@@ -1000,7 +1213,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
                     update_package_jsons()
                 mock_run.assert_not_called()
                 mock_package_json.write_text.assert_not_called()
-                self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm and pnpm")
+                self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm, pnpm, and bun")
                 self.assert_no_new_version_logged()
 
 
@@ -1018,9 +1231,9 @@ class SkipPackageJsonWithoutDependenciesTest(ExecutablesOnPathTestCase):
         ),
         Mutation(
             package_json_module.PackageJson.declares_workspaces,
-            'bool(self.contents.get("workspaces"))',
+            "bool(self.workspace_patterns())",
             '"workspaces" in self.contents',
-            "npm runs for a package.json declaring an empty list of workspaces, and writes a lock beside it",
+            "npm runs for a package.json whose workspaces do not name a member, and writes a lock beside it",
         ),
     )
     def test_package_manager_not_run(self, mock_run: Mock, mock_glob: Mock):
@@ -1033,6 +1246,7 @@ class SkipPackageJsonWithoutDependenciesTest(ExecutablesOnPathTestCase):
             ),
             "empty sections": ('{"dependencies": {}, "devDependencies": {}}', "npm"),
             "empty workspaces": ('{"workspaces": []}', "npm"),
+            "a workspaces object without packages": ('{"workspaces": {"packages": []}}', "npm"),
             "a pnpm-managed file": ('{"packageManager": "pnpm@9.15.0"}', "pnpm"),
             "a pnpm-managed file declaring workspaces": (
                 '{"packageManager": "pnpm@9.15.0", "workspaces": ["a"]}',
@@ -1261,7 +1475,7 @@ _MEMBER = SCAN_ROOT / "ws/a"
 
 
 class _ProjectLeftAsItIsTestCase(_PackageJsonFilesTestCase, NoUpdateTestCase):
-    """Base for the tests of a package.json that npm or pnpm does not update, while its dependency is checked."""
+    """Base for the tests of a package.json its package manager does not update, while its dependency is checked."""
 
     lock_file_name = "package-lock.json"
 
@@ -1299,7 +1513,7 @@ class _ProjectLeftAsItIsTestCase(_PackageJsonFilesTestCase, NoUpdateTestCase):
 @patch("subprocess.run")
 @patch("requests.Session.get")
 class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
-    """Unit tests for a package.json whose workspace root does not hold a lock file."""
+    """Unit tests for a package.json whose workspace root does not hold a lock file that Update-time reads."""
 
     def test_npm_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that npm does not update a project whose workspace root does not hold a lock, and the checks run."""
@@ -1320,6 +1534,97 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
                     manager="npm",
                     lock=Location(workspace_root / "package-lock.json"),
                 )
+
+    @kills(
+        Mutation(
+            package_json_module.PackageJson.workspace_patterns,
+            'workspaces.get("packages") if isinstance(workspaces, dict) else workspaces',
+            "workspaces",
+            "a member that the packages of the root's workspaces object declare is taken to lie outside the workspace",
+        ),
+        Mutation(
+            node_module._declares_member,
+            "return not excluded and",
+            "return True or",
+            "a directory below a workspace root that does not declare it a member is updated against the root's lock",
+            raises="StopIteration",
+        ),
+        Mutation(
+            node_module._declares_member,
+            "return not excluded and",
+            "return",
+            "Update-time ignores a negated pattern of the root's workspaces, and runs bun against the root's lock",
+            raises="StopIteration",
+        ),
+    )
+    def test_bun_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
+        """Test that bun does not update a project whose workspace root does not hold a lock, and the checks run."""
+        root = _MEMBER.parent
+        cases = {
+            "declared in the packages of the root's workspaces object": (
+                {root / "package.json": '{"packageManager": "bun@1.4.4", "workspaces": {"packages": ["a"]}}'},
+                root,
+            ),
+            "excluded by a negated pattern of the root's workspaces": (
+                {root / "package.json": '{"workspaces": ["*", "!a"]}', root / "bun.lock": ""},
+                _MEMBER,
+            ),
+            "left out of the root's workspaces": (
+                {root / "package.json": '{"workspaces": ["b"]}', root / "bun.lock": ""},
+                _MEMBER,
+            ),
+        }
+        for case, (files, workspace_root) in cases.items():
+            with self.subTest(case):
+                self.assert_left_as_it_is(
+                    get,
+                    mock_run,
+                    mock_glob,
+                    files=files,
+                    contents=self.clipboard_contents(),
+                    npm_prefix=None,
+                    message=message_of(Logger.no_lock_file),
+                    manager="bun",
+                    lock=Location(workspace_root / "bun.lock"),
+                )
+
+    @kills(
+        Mutation(
+            node_module._PackageManager._policy_for_a_project_left_as_it_is,
+            "_LOG.binary_lock(path, binary_lock, lock)",
+            "del binary_lock",
+            "Update-time passes over a project locked in a binary bun.lockb without saying how to convert the lock",
+        ),
+        Mutation(
+            node_module._PackageManager._policy_for_a_project_left_as_it_is,
+            "(binary_lock := lock_root / self.binary_lock)",
+            "(binary_lock := path.parent / self.binary_lock)",
+            "a member whose workspace root holds a binary bun.lockb is said to lack a lock",
+        ),
+    )
+    def test_bun_not_run_for_a_binary_lock(self, get: Mock, mock_run: Mock, mock_glob: Mock):
+        """Test that bun does not update a project locked in a binary bun.lockb, and that the checks still run."""
+        root_declaring_the_member = {_MEMBER.parent / "package.json": '{"workspaces": ["a"]}'}
+        cases = {
+            "beside the package.json": (_MEMBER, {}),
+            "at the workspace root": (_MEMBER.parent, root_declaring_the_member),
+        }
+        for case, (lock_root, files) in cases.items():
+            with self.subTest(case):
+                self.files.replace_all({lock_root / "bun.lockb": "", **files})
+                package_json = self.write_package_json(self.clipboard_contents(), _MEMBER)
+                mock_glob.return_value = [package_json]
+                mock_run.reset_mock()
+                get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
+                update_package_jsons()
+                mock_run.assert_not_called()
+                self.assert_logged_among_others(
+                    message_of(Logger.binary_lock),
+                    location=Location(package_json),
+                    lock=Location(lock_root / "bun.lockb"),
+                    text_lock=Location(lock_root / "bun.lock"),
+                )
+                self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4), among_others=True)
 
     def test_pnpm_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that pnpm does not update a project whose workspace root does not hold a lock, and the checks run."""
@@ -1458,6 +1763,30 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
                 update_package_jsons()
                 self.assert_redundant_directive_logged(reason, "clipboard", Location(package_json, 4), directive)
+
+    @kills(
+        Mutation(
+            node_module._PackageManager._policy_for_a_project_left_as_it_is,
+            "return _BINARY_LOCK_POLICY",
+            "return _NO_LOCK_FILE_POLICY",
+            "a marker in a project locked in a binary bun.lockb is reported as one in a project without a lock",
+        )
+    )
+    def test_a_directive_steering_the_update_beside_a_binary_lock_is_reported_as_deciding_nothing(
+        self, get: Mock, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that each directive steering the update of a project locked in a bun.lockb is reported as redundant."""
+        cases = {"ignore[update]": Reason.BINARY_LOCK_LEFT, "allow[update<3]": Reason.BINARY_LOCK_KEPT}
+        for directive, reason in cases.items():
+            with self.subTest(directive=directive):
+                self.files.replace_all({SCAN_ROOT / "bun.lockb": ""})
+                package_json = self.write_package_json(self.clipboard_contents(directive))
+                mock_glob.return_value = [package_json]
+                get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
+                update_package_jsons()
+                mock_run.assert_not_called()
+                location = Location(package_json, 4)
+                self.assert_redundant_directive_logged(reason, "clipboard", location, directive, among_others=True)
 
 
 @no_vulnerabilities

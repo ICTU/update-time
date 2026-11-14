@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Update and check the dependencies of a `package.json` that bun manages, rather than skipping it or running npm for it. Closes [#519](https://github.com/ICTU/update-time/issues/519).
+
+### Changed
+
+- Run npm once for a workspace, at its root, rather than again for each member the root's run updated already. Part of [#519](https://github.com/ICTU/update-time/issues/519).
 
 ## 0.0.58 - 2026-11-13
 

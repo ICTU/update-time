@@ -117,6 +117,28 @@ class AuditTest(unittest.TestCase):
         passes.assert_called_once_with(_ANOTHER_KILLER)
         checked.assert_not_called()
 
+    @kills(
+        Mutation(
+            audit_module._audit,
+            "cache(_passes_unmutated)",
+            "_passes_unmutated",
+            "a candidate runs against the code as it is again for each registration it is a candidate for",
+        )
+    )
+    def test_a_candidate_of_several_registrations_is_run_against_the_unmutated_code_once(self):
+        """Test that a candidate is run against the code as it is once, however many registrations it is checked for."""
+        even_reported_as_odd = Mutation(
+            mutation_subject.is_even, "number % 2 == 0", "number % 2 == 1", "an even number is reported as odd"
+        )
+        registrations = [(_REGISTERED, _ODD_REPORTED_AS_EVEN), (_REGISTERED, even_reported_as_odd)]
+        with (
+            patch.object(audit_module, "_passes_unmutated", Mock(return_value=True)) as passes,
+            patch.object(Mutation, "check", return_value=Result(Outcome.SURVIVED)) as checked,
+        ):
+            _audit(registrations, _run_with(_A_SURVIVOR))
+        passes.assert_called_once_with(_A_SURVIVOR)
+        self.assertEqual(checked.call_count, 2)
+
     def test_the_candidates_are_checked_in_utc(self):
         """Test that a candidate is checked in UTC, and that the machine's own zone is restored afterwards."""
         zones = []

@@ -10,6 +10,7 @@ import os
 import sys
 import unittest
 from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -58,20 +59,22 @@ class _SuiteRun:
 def _audit(registrations: Iterable[tuple[str, Mutation]], run: _SuiteRun) -> list[_Finding]:
     """Return a finding for each registered mutation that a test other than the registering one kills as well.
 
-    A candidate's own registrations stand aside, so checking it does not check them in turn.
+    A candidate's own registrations stand aside, so checking it does not check them in turn. A candidate runs against
+    the code as it is once, however many registrations it is a candidate for.
     """
+    passes_unmutated = cache(_passes_unmutated)
     # A test that reads the local time can kill a mutation in one zone and let it survive in another.
     with patch.dict(os.environ, {CHECKS_OFF: "1"}), time_zone("UTC"):
-        findings = [_finding(test, mutation, run) for test, mutation in registrations]
+        findings = [_finding(test, mutation, run, passes_unmutated) for test, mutation in registrations]
     return [finding for finding in findings if finding.killers]
 
 
-def _finding(test: str, mutation: Mutation, run: _SuiteRun) -> _Finding:
+def _finding(test: str, mutation: Mutation, run: _SuiteRun, passes_unmutated: Callable[[str], bool]) -> _Finding:
     """Return the registered mutation with the tests besides the registering one that kill it."""
     killers = sorted(
         candidate
         for candidate in run.candidates(mutation.path, mutation.lines, test)
-        if _passes_unmutated(candidate) and mutation.check(candidate).outcome is Outcome.KILLED
+        if passes_unmutated(candidate) and mutation.check(candidate).outcome is Outcome.KILLED
     )
     return _Finding(test, mutation.regression, killers)
 

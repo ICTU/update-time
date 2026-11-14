@@ -8,6 +8,14 @@ from update_time.formats import toml
 from tests.helpers import mock_path
 
 
+class ParseTest(unittest.TestCase):
+    """Unit tests for parsing TOML text."""
+
+    def test_malformed(self):
+        """Test that malformed TOML text parses as None instead of raising."""
+        self.assertIsNone(toml.parse("this is not = valid = toml"))
+
+
 class ReadTest(unittest.TestCase):
     """Unit tests for parsing a TOML file."""
 
