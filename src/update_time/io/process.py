@@ -20,9 +20,11 @@ def is_installed(executable: str) -> bool:
 
 
 def run(command: Command, cwd: Path | None = None) -> Result:
-    """Run a command and return its result, logging a failure, and the executable's version when the log shows debug."""
+    """Run a command and return its result, logging a failure, and the command and its tool's version at debug level."""
     if _LOG.logs_debug():
-        _log_version(command.executable, Path.cwd() if cwd is None else cwd)
+        directory = Path.cwd() if cwd is None else cwd
+        _log_version(command.executable, directory)
+        _LOG.command_run(command, directory)
     outcome = run_unlogged(command, cwd)
     if isinstance(outcome, FileNotFoundError):
         _LOG.command_not_found(command)

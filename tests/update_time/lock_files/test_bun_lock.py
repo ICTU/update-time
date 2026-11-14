@@ -21,8 +21,14 @@ class LockedVersionsTest(unittest.TestCase):
             "the versions bun moved for dev and optional dependencies go unreported",
         ),
         Mutation(
+            bun_lock._workspace_versions,
+            " if path else None",
+            "",
+            "a root named after a package it depends on gets the versions that package's own dependencies resolve to",
+        ),
+        Mutation(
             bun_lock._entry,
-            "packages[own] if own in packages else packages[dependency]",
+            "packages[own] if member is not None and own in packages else packages[dependency]",
             "packages[dependency]",
             "a member that resolves a dependency to a version of its own gets the version the workspaces share",
         ),
@@ -54,6 +60,11 @@ class LockedVersionsTest(unittest.TestCase):
                 },
                 {"is-number": "is-number@6.0.0", "@scope/b/is-number": "is-number@7.0.0"},
                 {Path(): {"is-number": "6.0.0"}, Path("packages/b"): {"is-number": "7.0.0"}},
+            ),
+            "a root named after a package it depends on": (
+                {"": {"name": "elysia", "dependencies": {"cookie": "^1.0.0", "elysia": "^1.0.0"}}},
+                {"cookie": "cookie@1.1.1", "elysia": "elysia@1.4.16", "elysia/cookie": "cookie@1.1.0"},
+                {Path(): {"cookie": "1.1.1", "elysia": "1.4.16"}},
             ),
             "entries that do not name a registry version": (
                 {"": {"dependencies": {"b": "workspace:*", "git": "github:org/git", "local": "file:./local"}}},

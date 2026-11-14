@@ -955,6 +955,11 @@ class Logger:
 
     # --- Updater-specific diagnostics ---
 
+    @_debug("Not applying the cooldown of %(days)d days to %(location)s: %(setting)s sets one")
+    def project_cooldown(self, path: Path, setting: str, days: int) -> dict[str, object]:
+        """Log that a package manager's own setting holds the cooldown of a file, rather than Update-time's cooldown."""
+        return self._file_fields(path, setting=setting, days=days)
+
     @_info("Set uv exclude-newer to %(cooldown)r in %(location)s to apply the cooldown")
     def configured_uv_cooldown(self, path: Path, cooldown: str) -> dict[str, object]:
         """Log that Update-time wrote its cooldown into the project's uv configuration."""
@@ -995,6 +1000,14 @@ class Logger:
     def binary_lock(self, path: Path, lock: Path, text_lock: Path) -> dict[str, object]:
         """Warn that bun does not run for a file whose lock is binary, and say how to convert the lock."""
         return self._file_fields(path, lock=Location(lock), text_lock=Location(text_lock))
+
+    @_warning(
+        "Not running a package manager for %(location)s: %(files)s name different ones; set the packageManager field "
+        "to the one to run"
+    )
+    def files_of_more_than_one_manager(self, path: Path, files: Iterable[Path]) -> dict[str, object]:
+        """Warn that no package manager runs for a file whose project holds the files of more than one."""
+        return self._file_fields(path, files=tuple(Location(file) for file in files))
 
     @_warning("Could not read %(location)s to find the versions it locks (%(error)s)")
     def unreadable_bun_lock(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
@@ -1299,6 +1312,11 @@ class Logger:
     def tool_version(self, executable: str, directory: Path, version: str) -> dict[str, object]:
         """Log the version an executable reports in a directory."""
         return {"executable": executable, "directory": Location(directory), "version": version}
+
+    @_debug("Running %(command)s in %(directory)s")
+    def command_run(self, command: Command, directory: Path) -> dict[str, object]:
+        """Log a command, with its arguments and options, and the directory it runs in."""
+        return {"command": command, "directory": Location(directory)}
 
     @_warning("Could not determine the version of %(executable)s in %(directory)s: %(reason)s")
     def tool_version_unknown(self, executable: str, directory: Path, reason: str) -> dict[str, object]:

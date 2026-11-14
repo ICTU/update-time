@@ -364,7 +364,6 @@ The directory a monorepo builds the package from.
 The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
 The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no room for it, so each reference closes over its own.
 The file type each updater scans, and the function that scans it.
-The first cooldown probe (min-release-age) returns a value, so Update-time adds no cooldown of its own:.
 The first request batches every pin the check looks up; the ones after it follow from what it answered.
 The guard a module runs its entry point behind, spelled as `ast.unparse` writes it whatever quotes the source used.
 The hexadecimal characters of the git commit SHA an action or a hook is pinned to.

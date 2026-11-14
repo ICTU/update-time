@@ -179,7 +179,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 
 | | Level | What is logged |
 | :-: | :---- | :------------- |
-| 🔍 | `DEBUG` | what Update-time is doing: its version and command-line arguments, the environment it runs in, which [credentials](#increasing-rate-limits) are set, the files it checks, the [markers](#️-controlling-updates-and-warnings-per-reference) it recognises, the updates it holds back, the warnings it silences, and more |
+| 🔍 | `DEBUG` | what Update-time is doing: its version and command-line arguments, the environment it runs in, which [credentials](#increasing-rate-limits) are set, the files it checks, the commands it runs, the [markers](#️-controlling-updates-and-warnings-per-reference) it recognises, the updates it holds back, the warnings it silences, and more |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning), a version a package manager moved back to honour the [cooldown](#-cooldown) |
 | ⚠️ | `WARNING` | what needs your attention: a [stale](#️-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#️-vulnerable-dependencies), or [archived](#️-archived-dependencies) dependency, [hash drift](#hash-drift), a [Python version outside the project's `requires-python`](#what-versions-are-updated-4), a source it cannot reach or whose answer it cannot read, a file it cannot parse, an advisory it cannot read, a marker that is [invalid](#invalid-markers) or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not on the path or a [GitHub rate limit](#increasing-rate-limits) that is used up, and a signal such as Ctrl-C that stops the run |
@@ -356,7 +356,14 @@ DEBUG Holding back version 4.38.3 of github/codeql-action/init in .github/workfl
 DEBUG Holding back version 3.15.0 of python in Dockerfile:2: published 2026-10-08 13:01 UTC, within the cooldown of 30 days until 2026-11-07 13:01 UTC (update-time: set[cooldown=30])
 ```
 
-Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, pnpm, or bun. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Update-time does not hand the value over where the package manager's own settings already hold a cooldown. [Python dependencies](#python-dependencies) and [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) describe what that means per dependency type.
+Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, pnpm, or bun. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Update-time does not hand the value over where the package manager's own settings already hold a cooldown. It names the setting that holds the cooldown instead, at `DEBUG`, so the log shows a `--cooldown` that does not reach a project:
+
+```console
+DEBUG Not applying the cooldown of 7 days to package.json: bun minimumReleaseAge sets one
+DEBUG Not applying the cooldown of 7 days to pyproject.toml: uv exclude-newer sets one
+```
+
+[Python dependencies](#python-dependencies) and [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) describe what that means per dependency type.
 
 A lock file or a compiled requirements file can hold a version younger than the cooldown. That happens, for example, on the first run that applies a cooldown, and on a run with a longer cooldown than the run before. uv, pip-compile, npm, and bun then move that version back to the newest version older than the cooldown, and pnpm refuses to update. Update-time reports a version moved back at `INFO`:
 
@@ -864,7 +871,7 @@ An `ignore[update]`, a bound, and a `set[cooldown=…]` each steer the update. U
 
 - a `requirements.txt` requirement that does not pin an exact version, outside the source of a file Update-time recompiles (see [Python dependencies](#markers))
 - a `pom.xml` dependency or plugin whose version Maven does not update (see [What dependencies are updated?](#what-dependencies-are-updated-2)), or whose pom's versions plugin configuration names rules of its own, which Maven follows instead of the marker (see [Maven dependencies](#markers-2))
-- a dependency of a `pyproject.toml` that uv does not manage, of a `package.json` whose project does not have a lock file or has a binary `bun.lockb`, or of a workspace whose root lies outside the scan root
+- a dependency of a `pyproject.toml` that uv does not manage, of a `package.json` whose project does not have a lock file, has a binary `bun.lockb`, or holds the files of more than one package manager, or of a workspace whose root lies outside the scan root
 - an image that the file does not pull, or a reference that goes through a variable or a template Update-time cannot substitute (see [Docker images](#what-dependencies-are-updated-5))
 - a GitHub Action or pre-commit hook that names a full commit SHA without a comment (see [GitHub Actions and pre-commit hooks](#pinning-3))
 
@@ -1233,7 +1240,7 @@ Update-time reports every warning scope as redundant on a dependency PyPI does n
 
 #### What files are updated?
 
-Update-time looks for `package.json` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm, and `bun.lock` for bun.
+Update-time looks for `package.json` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm, and `bun.lock` for bun. Update-time finds the manager in the nearest directory that names one, from the `package.json`'s own upwards. A directory names a manager in the `packageManager` field of its `package.json`, or else in the lock files and the `pnpm-workspace.yaml` it holds.
 
 Update-time runs npm, pnpm, or bun only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. It runs npm and bun for the root of a workspace as well, whose `workspaces` field names the members. The managers would write a lock file beside any other `package.json`, so Update-time does not run them for such a file, and reports it at `DEBUG`:
 
@@ -1254,6 +1261,12 @@ bun wrote its lock as a binary `bun.lockb` before version 1.2, which Update-time
 
 ```console
 WARNING Not running bun for package.json: it locks its dependencies in the binary bun.lockb, which Update-time cannot read; run bun install --save-text-lockfile to convert it to bun.lock
+```
+
+Where the files of a directory name more than one manager, as a `pnpm-lock.yaml` beside a `bun.lockb` does, Update-time cannot tell which one the project uses, so it runs none of them. It still checks the dependencies, and says how to choose at `WARNING`:
+
+```console
+WARNING Not running a package manager for test/node/esm/package.json: test/node/esm/pnpm-lock.yaml and test/node/esm/bun.lockb name different ones; set the packageManager field to the one to run
 ```
 
 Update-time does not run the managers either where the root of the project's workspace lies outside the scan root, as when the scan starts in a member of the workspace. They would write the lock file beside that root, outside the scan. Update-time still checks the dependencies, and reports the file at `DEBUG`:
@@ -1277,7 +1290,7 @@ Update-time delegates updating Node dependencies to the package manager that man
 
 Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. npm, pnpm, and bun update a dependency to the newest version that satisfies the range declared in the `package.json`. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved up.
 
-The managers also write the version they resolve into the declared range. They do so whether or not the version in the lock file moved. bun rewrites a `^` or a `~` range alone, and leaves a range such as `>=1.0.0` or `1.x` as written. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
+The managers also write the version they resolve into the declared range. They do so whether or not the version in the lock file moved. bun rewrites a `^` or a `~` range alone, and leaves a range such as `>=1.0.0` or `1.x` as written. Where the workspace root's `bunfig.toml`, or your global `.bunfig.toml`, sets `exact = true` under `[install]`, bun replaces a `^` or a `~` range with the version it resolves, so `^7.6.0` becomes `7.8.6`. From then on, bun leaves the dependency on that version, as it leaves any exact pin. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
 
 ```console
 INFO npm rewrote the range of minimatch in dev/package.json:5 from ^3.1.2 to ^3.1.5; the version in the lock file is unchanged at 3.1.5

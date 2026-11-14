@@ -337,20 +337,43 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         }
         for case, files in cases.items():
             with self.subTest(case):
-                workspace_file = {SCAN_ROOT / "pnpm-workspace.yaml": "packages:\n  - a/b\n"}
-                self.files.replace_all({**workspace_file, **self.lock_file(SCAN_ROOT / "a/b"), **files})
-                mock_glob.return_value = [SCAN_ROOT / "a/b/package.json"]
-                mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/a/b\n"))
+                # Without a lock in a/b, the walk up has to reach the field that names npm:
+                self.files.replace_all({SCAN_ROOT / "pnpm-workspace.yaml": "packages:\n  - a/b\n", **files})
+                mock_glob.return_value = [package_json := SCAN_ROOT / "a/b/package.json"]
+                mock_run.side_effect = [Mock(stdout="/a/b\n")]
                 update_package_jsons()
-                self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a/b")
+                self.assert_logged_among_others(
+                    message_of(Logger.no_lock_file),
+                    location=Location(package_json),
+                    manager="npm",
+                    lock=Location(SCAN_ROOT / "a/b/package-lock.json"),
+                )
+
+    def test_npm_lock_beside_the_package_json_wins_over_a_pnpm_workspace_above(self, mock_run: Mock, mock_glob: Mock):
+        """Test that npm runs for a package.json beside an npm lock, below a pnpm workspace that would include it."""
+        workspace_file = {SCAN_ROOT / "pnpm-workspace.yaml": "packages:\n  - a/b\n"}
+        self.files.replace_all({**workspace_file, **self.lock_file(SCAN_ROOT / "a/b")})
+        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "a/b")]
+        mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/a/b\n"))
+        update_package_jsons()
+        self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a/b")
 
     def run_below_package_json(self, mock_run: Mock, mock_glob: Mock, contents: str) -> None:
-        """Run on a project in /a, below a /package.json holding the contents, and assert npm ran for the project."""
-        self.files.replace_all({SCAN_ROOT / "package.json": contents, **self.lock_file(SCAN_ROOT / "a")})
-        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "a")]
-        mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/a\n"))
+        """Run on a project in /a without a lock, below a /package.json holding the contents, and assert npm is chosen.
+
+        A lock in /a would name the manager there, so the walk up would not reach the package.json above.
+        """
+        self.files.replace_all({SCAN_ROOT / "package.json": contents})
+        package_json = self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "a")
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = [Mock(stdout="/a\n")]
         update_package_jsons()
-        self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a")
+        self.assert_logged_among_others(
+            message_of(Logger.no_lock_file),
+            location=Location(package_json),
+            manager="npm",
+            lock=Location(SCAN_ROOT / "a/package-lock.json"),
+        )
 
     def test_invalid_package_json_above_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json above that does not parse is warned about, and passed over."""
@@ -649,16 +672,31 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_command_stderr_logged(stderr="npm error network")
 
-    def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
-        """Test that no cooldown option is added when the project's npm config already sets one."""
-        package_json = self.create_package_json()
-        mock_glob.return_value = [package_json]
-        # The first cooldown probe (min-release-age) returns a value, so Update-time adds no cooldown of its own:
-        mock_run.side_effect = [Mock(stdout=_NPM_PREFIX), Mock(stdout="14\n"), *_npm_no_update()]
-        update_package_jsons()
-        self.assert_npm_called(mock_run, cooldown=False)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+    @kills(
+        Mutation(
+            node_module._ConfiguredCooldown.setting,
+            "return key",
+            "return self.keys[0]",
+            "a project whose npm config sets before is said to set min-release-age",
+        ),
+    )
+    def test_project_cooldown_respected_and_named(self, mock_run: Mock, mock_glob: Mock):
+        """Test that no cooldown option is added where the project's npm config sets one, and the setting is named."""
+        cases = {
+            "min-release-age": [Mock(stdout="14\n")],
+            "before": [Mock(stdout="null\n"), Mock(stdout="2026-11-01\n")],
+        }
+        for setting, probes in cases.items():
+            with self.subTest(setting):
+                mock_run.reset_mock()
+                package_json = self.create_package_json()
+                mock_glob.return_value = [package_json]
+                mock_run.side_effect = [Mock(stdout=_NPM_PREFIX), *probes, *_npm_no_update()]
+                update_package_jsons()
+                self.assert_npm_called(mock_run, cooldown=False)
+                self.assert_project_cooldown_logged(package_json, f"npm {setting}")
+                self.assert_no_new_version_logged()
+                self.assert_no_warnings_logged()
 
     def test_cooldown_applied_when_npm_config_get_fails(self, mock_run: Mock, mock_glob: Mock):
         """Test that the cooldown option is added when `npm config get` fails, as it does inside a workspace member."""
@@ -938,14 +976,15 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
                     member, message_of(Logger.no_lock_file), manager="pnpm", lock=Location(lock_root / "pnpm-lock.yaml")
                 )
 
-    def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
-        """Test that no cooldown option is added when the project's pnpm config already sets minimumReleaseAge."""
+    def test_project_cooldown_respected_and_named(self, mock_run: Mock, mock_glob: Mock):
+        """Test that no cooldown option is added where the project's pnpm config sets one, and the setting is named."""
         package_json = self.create_package_json()
         mock_glob.return_value = [package_json]
         # The cooldown probe returns a value, so Update-time adds no cooldown of its own:
         mock_run.side_effect = [Mock(stdout="4320\n"), Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]")]
         update_package_jsons()
         self.assert_pnpm_called(mock_run, cooldown=False)
+        self.assert_project_cooldown_logged(package_json, "pnpm minimumReleaseAge")
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -1083,7 +1122,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
     @kills(
         Mutation(
             node_module._bunfig_sets_a_cooldown,
-            '"minimumReleaseAge" in install',
+            "_BUNFIG_COOLDOWN in install",
             "bool(install)",
             "a bunfig.toml with any [install] setting is taken to set a cooldown, so the run applies none",
         ),
@@ -1101,7 +1140,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         ),
     )
     def test_cooldown_a_bunfig_sets_respected(self, mock_run: Mock, mock_glob: Mock):
-        """Test that no cooldown option is added when a bunfig.toml that bun reads sets minimumReleaseAge."""
+        """Test that no cooldown option is added where a bunfig.toml that bun reads sets one, and that it is logged."""
         own_cooldown, other_setting = "[install]\nminimumReleaseAge = 2592000\n", "[install]\nexact = true\n"
         home_set = {"HOME": "/home"}
         xdg_config_home_set = {"HOME": "/home", "XDG_CONFIG_HOME": "/xdg"}
@@ -1129,6 +1168,10 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
             with self.subTest(case):
                 self.run_beside_bunfig(mock_run, mock_glob, bunfig, contents, environment)
                 self.assert_bun_updated(mock_run, cooldown=cooldown)
+                if cooldown:
+                    self.assert_none_logged(message_of(Logger.project_cooldown), "project cooldown")
+                else:
+                    self.assert_project_cooldown_logged(SCAN_ROOT / "package.json", "bun minimumReleaseAge")
 
     @kills(
         Mutation(
@@ -1651,6 +1694,106 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
 
 
 @no_vulnerabilities
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
+@patch("subprocess.run")
+@patch("requests.Session.get")
+class FilesOfMoreThanOneManagerTest(_ProjectLeftAsItIsTestCase):
+    """Unit tests for a package.json whose directory holds the files of more than one package manager."""
+
+    @kills(
+        Mutation(
+            update_package_jsons,
+            "elif choice.names_more_than_one_manager():",
+            "elif False:",
+            "the manager whose file comes first runs, and may update a lock the project no longer uses",
+        )
+    )
+    def test_no_manager_runs(self, get: Mock, mock_run: Mock, mock_glob: Mock):
+        """Test that no manager runs where the files of the package.json's project name two, which are warned about."""
+        cases = {
+            "npm's and bun's locks": (_MEMBER, ("package-lock.json", "bun.lock")),
+            "npm's shrinkwrap file and pnpm's lock": (_MEMBER, ("npm-shrinkwrap.json", "pnpm-lock.yaml")),
+            "pnpm's lock and bun's binary lock": (_MEMBER, ("pnpm-lock.yaml", "bun.lockb")),
+            "pnpm's workspace file and bun's lock": (_MEMBER, ("pnpm-workspace.yaml", "bun.lock")),
+            "pnpm's and yarn's locks": (_MEMBER, ("pnpm-lock.yaml", "yarn.lock")),
+            "pnpm's and bun's locks at the workspace root": (_MEMBER.parent, ("pnpm-lock.yaml", "bun.lock")),
+        }
+        for case, (directory, names) in cases.items():
+            with self.subTest(case):
+                self.files.replace_all(dict.fromkeys((directory / name for name in names), ""))
+                package_json = self.write_package_json(self.clipboard_contents(), _MEMBER)
+                mock_glob.return_value = [package_json]
+                mock_run.reset_mock()
+                mock_run.return_value = Mock(stdout="", stderr="")
+                get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
+                update_package_jsons()
+                mock_run.assert_not_called()
+                self.assert_logged_among_others(
+                    message_of(Logger.files_of_more_than_one_manager),
+                    location=Location(package_json),
+                    files=tuple(Location(directory / name) for name in names),
+                )
+                self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4), among_others=True)
+
+    def test_a_package_json_without_dependencies_is_not_warned_about(self, get: Mock, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json beside two managers' locks gets the usual debug line where it declares nothing."""
+        self.files.replace_all({_MEMBER / "pnpm-lock.yaml": "", _MEMBER / "bun.lockb": ""})
+        package_json = self.write_package_json('{"name": "fixture"}', _MEMBER)
+        mock_glob.return_value = [package_json]
+        update_package_jsons()
+        mock_run.assert_not_called()
+        get.assert_not_called()
+        self.assert_logged_among_others(
+            message_of(Logger.no_dependencies), location=Location(package_json), manager="pnpm", verb="install"
+        )
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            node_module._choice_in,
+            "if declared_manager:\n"
+            "        return _ManagerChoice(declared_manager)\n"
+            "    files = tuple(directory / name for name in _MANAGER_FILES if (directory / name).exists())",
+            "files = tuple(directory / name for name in _MANAGER_FILES if (directory / name).exists())\n"
+            "    if declared_manager:\n"
+            "        return _ManagerChoice(declared_manager, files)",
+            "a packageManager field no longer settles which manager runs beside the files of two",
+        ),
+        Mutation(
+            node_module._ManagerChoice.names_more_than_one_manager,
+            "len({_MANAGER_FILES[file.name] for file in self.files})",
+            "len(self.files)",
+            "a project locked in both bun.lock and bun.lockb is taken to hold the files of two managers",
+        ),
+    )
+    def test_the_manager_runs_where_one_is_named(self, get: Mock, mock_run: Mock, mock_glob: Mock):
+        """Test that bun runs without a warning where a packageManager field or the files beside it name bun alone."""
+        cases = {
+            "a packageManager field beside pnpm's lock": (
+                '"name": "app", "packageManager": "bun@1.4.4"',
+                {_MEMBER / "pnpm-lock.yaml": "", _MEMBER / "bun.lock": _bun_lock()},
+            ),
+            "bun's text and binary locks": (
+                '"name": "app"',
+                {_MEMBER / "bun.lock": _bun_lock(), _MEMBER / "bun.lockb": ""},
+            ),
+        }
+        for case, (name_field, files) in cases.items():
+            with self.subTest(case):
+                self.files.replace_all(files)
+                contents = self.clipboard_contents().replace('"name": "app"', name_field)
+                package_json = self.write_package_json(contents, _MEMBER)
+                mock_glob.return_value = [package_json]
+                mock_run.reset_mock()
+                mock_run.return_value = Mock(stdout="")
+                get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
+                update_package_jsons()
+                update = Command("bun", "update", "-r", _BUN_COOLDOWN_OPTION)
+                mock_run.assert_called_once_with(update, **_RUN_KWARGS, cwd=_MEMBER)
+                self.assert_no_warnings_logged()
+
+
+@no_vulnerabilities
 @patch_pathlib_path("rglob", cwd=_MEMBER)
 @patch("subprocess.run")
 @patch("requests.Session.get")
@@ -1780,6 +1923,33 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
         for directive, reason in cases.items():
             with self.subTest(directive=directive):
                 self.files.replace_all({SCAN_ROOT / "bun.lockb": ""})
+                package_json = self.write_package_json(self.clipboard_contents(directive))
+                mock_glob.return_value = [package_json]
+                get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
+                update_package_jsons()
+                mock_run.assert_not_called()
+                location = Location(package_json, 4)
+                self.assert_redundant_directive_logged(reason, "clipboard", location, directive, among_others=True)
+
+    @kills(
+        Mutation(
+            node_module,
+            "Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT",
+            "Reason.NO_LOCK_FILE_LEFT, Reason.NO_LOCK_FILE_KEPT",
+            "a marker in a project holding two managers' locks is reported as one in a project without a lock",
+        )
+    )
+    def test_a_directive_steering_the_update_beside_two_managers_files_is_reported_as_deciding_nothing(
+        self, get: Mock, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that each directive steering the update of a project holding two managers' locks is redundant."""
+        cases = {
+            "ignore[update]": Reason.MORE_THAN_ONE_MANAGER_LEFT,
+            "allow[update<3]": Reason.MORE_THAN_ONE_MANAGER_KEPT,
+        }
+        for directive, reason in cases.items():
+            with self.subTest(directive=directive):
+                self.files.replace_all({SCAN_ROOT / "pnpm-lock.yaml": "", SCAN_ROOT / "bun.lock": ""})
                 package_json = self.write_package_json(self.clipboard_contents(directive))
                 mock_glob.return_value = [package_json]
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())

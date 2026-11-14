@@ -14,6 +14,7 @@ from update_time.package_managers.moved_versions import log_moved_versions, log_
 from update_time.package_managers.uv import marker_policy
 from update_time.package_managers.uv.uv import (
     EXCLUDE_NEWER_OPTION,
+    EXCLUDE_NEWER_SETTING,
     by_workspace,
     configure_cooldown,
     pypi_served,
@@ -195,6 +196,7 @@ class _LockTarget:
 def _with_cutoff[TargetT: _LockTarget](target: TargetT, file: Path, log: Logger) -> TargetT:
     """Return what uv locks with the cooldown as a cutoff, unless uv's settings hold an `exclude-newer` already."""
     if settings_hold_exclude_newer(target.command, file, log):
+        log.project_cooldown(file, EXCLUDE_NEWER_SETTING, COOLDOWN.get())
         return target
     return replace(target, cooldown_options=(EXCLUDE_NEWER_OPTION, cooldown_cutoff(COOLDOWN.get())))
 

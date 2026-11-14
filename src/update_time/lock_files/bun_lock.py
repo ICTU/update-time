@@ -23,28 +23,32 @@ def locked_versions(lock: Path) -> dict[Path, dict[DependencyName, VersionString
     if document is None or "lockfileVersion" not in document:
         raise ValueError(_NOT_A_BUN_LOCK)
     workspaces, packages = document["workspaces"], document["packages"]
-    return {Path(path): _workspace_versions(workspaces[path], packages) for path in workspaces}
+    return {Path(path): _workspace_versions(path, workspaces[path], packages) for path in workspaces}
 
 
-def _workspace_versions(workspace: yaml.Document, packages: yaml.Document) -> dict[DependencyName, VersionString]:
+def _workspace_versions(
+    path: str, workspace: yaml.Document, packages: yaml.Document
+) -> dict[DependencyName, VersionString]:
     """Return the version the lock records for each dependency the workspace declares, where its entry names one."""
-    name = workspace["name"].string()
+    # The root's dependencies sit at the top of the lock. A key under the root's name, such as `elysia/cookie`, belongs
+    # to a package of the same name that the root depends on.
+    member = workspace["name"].string() if path else None
     declared = [dependency for section in DEPENDENCY_SECTIONS for dependency in workspace[section]]
     return {
         dependency: version
         for dependency in declared
-        if (version := _version(_entry(packages, name, dependency))) is not None
+        if (version := _version(_entry(packages, member, dependency))) is not None
     }
 
 
-def _entry(packages: yaml.Document, workspace: str | None, dependency: DependencyName) -> yaml.Document:
-    """Return the lock's entry for the dependency of the workspace.
+def _entry(packages: yaml.Document, member: str | None, dependency: DependencyName) -> yaml.Document:
+    """Return the lock's entry for the dependency of the member, or of the root where the member is None.
 
-    The lock keys a version that only the workspace resolves to under the workspace's name, such as `a/is-number`, and
-    a version the workspaces share under the dependency's name alone.
+    The lock keys a version that only a member resolves to under the member's name, such as `a/is-number`, and a
+    version the workspaces share under the dependency's name alone.
     """
-    own = f"{workspace}/{dependency}"
-    return packages[own] if own in packages else packages[dependency]
+    own = f"{member}/{dependency}"
+    return packages[own] if member is not None and own in packages else packages[dependency]
 
 
 def _version(package: yaml.Document) -> VersionString | None:

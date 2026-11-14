@@ -88,11 +88,21 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         pyproject_toml.write_text.assert_not_called()
         self.assert_logged(message_of(Logger.uv_cooldown_not_set), location=ANY)
 
+    @kills(
+        Mutation(
+            uv.configure_cooldown,
+            "# A user-set exclude-newer: leave it alone.\n"
+            "            _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())",
+            "# A user-set exclude-newer: leave it alone.\n            pass",
+            "the log does not say that the project's own exclude-newer overrides the run's cooldown",
+        )
+    )
     def test_leaves_a_user_value_untouched(self):
-        """Test that an exclude-newer without the managed-by comment is left alone, writing and logging nothing."""
+        """Test that an exclude-newer without the managed-by comment is left alone, and logged as the cooldown."""
         pyproject_toml = self.configure(pyproject("a==1.0") + '\n[tool.uv]\nexclude-newer = "2024-01-01"\n')
         pyproject_toml.write_text.assert_not_called()
         self.assert_no_info_logged()
+        self.assert_project_cooldown_logged(pyproject_toml, "uv exclude-newer")
 
     @kills(
         Mutation(
@@ -100,7 +110,14 @@ class ConfigureCooldownTest(UvSettingsTestCase):
             "file.parent, file",
             "Path.cwd(), file",
             "uv reads the settings of the directory Update-time runs in rather than those of the project",
-        )
+        ),
+        Mutation(
+            uv.configure_cooldown,
+            "# An exclude-newer set outside the file, such as in a uv.toml: leave it alone.\n"
+            "        _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())",
+            "# An exclude-newer set outside the file, such as in a uv.toml: leave it alone.\n        pass",
+            "the log does not say that an exclude-newer in uv's settings overrides the run's cooldown",
+        ),
     )
     def test_leaves_an_exclude_newer_that_uvs_settings_hold_elsewhere(self):
         """Test that nothing is written where uv's settings, in the file's directory, hold an `exclude-newer`."""
@@ -108,6 +125,7 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         pyproject_toml = self.configure(pyproject("a==1.0"))
         pyproject_toml.write_text.assert_not_called()
         self.assert_no_info_logged()
+        self.assert_project_cooldown_logged(pyproject_toml, "uv exclude-newer")
         settings = Command("uv", "lock", "--show-settings")
         self.mock_run.assert_called_once_with(
             settings, capture_output=True, text=True, check=True, cwd=pyproject_toml.parent
@@ -149,12 +167,21 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         pyproject_toml = self.configure(pyproject("a==1.0") + _managed("7 days"))
         self.assertIn('exclude-newer = "14 days"', pyproject_toml.write_text.call_args.args[0])
 
+    @kills(
+        Mutation(
+            uv.configure_cooldown,
+            '_LOG.project_cooldown(pyproject_toml, "UV_EXCLUDE_NEWER", COOLDOWN.get())',
+            "pass",
+            "the log does not say that UV_EXCLUDE_NEWER overrides the run's cooldown",
+        )
+    )
     @patch_environ({"UV_EXCLUDE_NEWER": "2024-01-01"})
     def test_environment_override_writes_nothing(self):
         """Test that nothing is written, nor uv asked for its settings, when UV_EXCLUDE_NEWER is set."""
         pyproject_toml = self.configure(pyproject("a==1.0"))
         pyproject_toml.write_text.assert_not_called()
         self.mock_run.assert_not_called()
+        self.assert_project_cooldown_logged(pyproject_toml, "UV_EXCLUDE_NEWER")
 
 
 class WorkspaceRootTest(unittest.TestCase):

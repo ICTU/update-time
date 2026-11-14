@@ -16,6 +16,7 @@ from pathlib import Path
 from packaging.version import InvalidVersion
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
     Archival,
     ArchivedSubject,
@@ -465,6 +466,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_manifests_without_dependencies(log, capture),
         **_package_jsons_without_a_lock_file(log, capture),
         **_bun_files_left_unread(log, capture),
+        **_files_of_more_than_one_manager(log, capture),
+        **_project_cooldowns(log, capture),
         **_members_left_to_their_root(log, capture),
         **_workspace_roots_outside_the_scan(log, capture),
         **_package_managers_not_on_path(log, capture),
@@ -538,6 +541,22 @@ def _package_jsons_without_a_lock_file(log: Logger, capture: _Capture) -> dict[s
     log.no_lock_file(Path("web/package.json"), "npm", Path("web/package-lock.json"))
     log.no_lock_file(Path("packages/ui/package.json"), "pnpm", Path("pnpm-lock.yaml"))
     return {"@@NO_NODE_LOCK_FILE@@": capture.take()}
+
+
+def _project_cooldowns(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that a bun project and a uv project set their own cooldowns, which the run's cooldown does not override."""
+    log.project_cooldown(Path("package.json"), "bun minimumReleaseAge", COOLDOWN.get())
+    log.project_cooldown(Path("pyproject.toml"), "uv exclude-newer", COOLDOWN.get())
+    return {"@@PROJECT_COOLDOWNS@@": capture.take()}
+
+
+def _files_of_more_than_one_manager(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that no manager runs for a project whose files name two, a pnpm lock and a binary bun lock."""
+    directory = Path("test/node/esm")
+    log.files_of_more_than_one_manager(
+        directory / "package.json", [directory / "pnpm-lock.yaml", directory / "bun.lockb"]
+    )
+    return {"@@NODE_FILES_OF_MORE_THAN_ONE_MANAGER@@": capture.take()}
 
 
 def _bun_files_left_unread(log: Logger, capture: _Capture) -> dict[str, str]:

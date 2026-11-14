@@ -110,11 +110,11 @@ class RunTests(LoggingTestCase):
 
 
 @patch("subprocess.run")
-class ToolVersionTests(LoggingTestCase):
-    """Unit tests for logging the version of each tool the run invokes."""
+class DebugLogTests(LoggingTestCase):
+    """Unit tests for what running a command logs at debug level: the command, and the version of the tool."""
 
     def setUp(self) -> None:
-        """Log at debug level, where the tool versions are logged."""
+        """Log at debug level, where the commands and the tool versions are logged."""
         super().setUp()
         root = logging.getLogger()
         self.addCleanup(root.setLevel, root.level)
@@ -125,11 +125,31 @@ class ToolVersionTests(LoggingTestCase):
         """Return each command the stub for subprocess.run received, with the directory it ran in."""
         return [(each.args[0], each.kwargs["cwd"]) for each in mock_run.call_args_list]
 
+    @kills(
+        Mutation(
+            process_module.run,
+            "_LOG.command_run(command, directory)",
+            "pass",
+            "the debug log leaves out the commands Update-time runs, so it does not show the options they ran with",
+        )
+    )
+    def test_the_command_is_logged_with_its_arguments_and_the_directory_it_runs_in(self, mock_run: Mock):
+        """Test that each command is logged with its arguments and options, and the directory it runs in."""
+        command = Command("npm", "update", "--save", "--min-release-age=7")
+        cases = {"in a directory": (_PROJECT, _PROJECT), "in no directory": (None, Path.cwd())}
+        for case, (cwd, directory) in cases.items():
+            with self.subTest(case):
+                mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
+                run(command, cwd=cwd)
+                self.assert_logged_among_others(
+                    message_of(Logger.command_run), command=command, directory=Location(directory)
+                )
+
     def test_version_is_logged_with_the_directory_the_command_runs_in(self, mock_run: Mock):
         """Test that the version of the executable is logged with the directory the command runs in."""
         mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
         run(Command("npm", "outdated"), cwd=_PROJECT)
-        self.assert_logged(
+        self.assert_logged_among_others(
             message_of(Logger.tool_version),
             executable="npm",
             directory=Location(_PROJECT),
@@ -140,7 +160,7 @@ class ToolVersionTests(LoggingTestCase):
         """Test that the version of an executable run in no particular directory names the scan root it runs in."""
         mock_run.return_value = Mock(stdout="uv 0.13.1\n", stderr="")
         run(Command("uv", "lock"))
-        self.assert_logged(
+        self.assert_logged_among_others(
             message_of(Logger.tool_version),
             executable="uv",
             directory=Location(Path.cwd()),
@@ -201,7 +221,7 @@ class ToolVersionTests(LoggingTestCase):
                     directory=Location(_PROJECT),
                     reason=reason,
                 )
-                self.assert_no_debug_logged()
+                self.assert_none_logged(message_of(Logger.tool_version), "tool version")
 
     def test_a_tool_that_cannot_run_is_reported_once(self, mock_run: Mock):
         """Test that a tool the system cannot run is reported by its command alone, not by its version query too."""
