@@ -91,12 +91,14 @@ class RequirementsCompiler(ABC):
         """Return the command without the cutoff Update-time manages, and the cooldown to pass in its place.
 
         Where no source carries the managed-by comment, a cutoff the header records is the user's, and stays. Where the
-        tool's settings hold a cutoff, Update-time does not pass a cooldown.
+        tool's settings hold a cutoff, Update-time does not pass a cooldown. Either is logged as the file's cooldown.
         """
         if not commented and command.has_option(self.cutoff_option):
+            self.log.project_cooldown(self.compiled.path, self.setting, COOLDOWN.get())
             return command, None
         command = command.without_option(self.cutoff_option)
         if self.settings_hold_cutoff(command):
+            self.log.project_cooldown(self.compiled.path, self.setting, COOLDOWN.get())
             return command, None
         return command, self.duration(COOLDOWN.get())
 

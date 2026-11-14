@@ -376,6 +376,12 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert the message was not logged at all, whatever else was logged at its level."""
         self.assertEqual(self.records_of(message, **fields), [], f"Expected no {what} to be logged")
 
+    def assert_project_cooldown_logged(self, path: pathlib.Path, setting: str) -> None:
+        """Assert that the setting is logged as holding the cooldown of the file, rather than the run's cooldown."""
+        self.assert_logged_among_others(
+            message_of(Logger.project_cooldown), location=Location(path), days=COOLDOWN.default, setting=setting
+        )
+
     def assert_no_new_version_logged(self) -> None:
         """Assert that no new version was logged (other records at the same level are allowed)."""
         self.assert_none_logged(message_of(Logger.new_version), "new version")

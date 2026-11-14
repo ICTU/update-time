@@ -46,6 +46,13 @@ class Reason(StrEnum):
         "Update-time leaves the dependencies of a project with a binary lock as they are, so a bound decides nothing"
     )
     BINARY_LOCK_LEFT = "Update-time leaves the dependencies of a project with a binary lock as they are"
+    MORE_THAN_ONE_MANAGER_KEPT = (
+        "Update-time leaves the dependencies of a project whose files name more than one package manager as they are, "
+        "so a bound decides nothing"
+    )
+    MORE_THAN_ONE_MANAGER_LEFT = (
+        "Update-time leaves the dependencies of a project whose files name more than one package manager as they are"
+    )
     WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT = (
         "Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a "
         "bound decides nothing"

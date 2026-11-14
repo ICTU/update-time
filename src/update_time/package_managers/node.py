@@ -33,19 +33,10 @@ if TYPE_CHECKING:
 _LOG = get_logger("package.json")
 _BUN_LOCK = "bun.lock"  # The lock bun writes as text, which Update-time reads
 _BUN_BINARY_LOCK = "bun.lockb"  # The lock bun wrote before version 1.2, and still writes where a project asks for it
+# The setting under `[install]` in a bunfig.toml that holds bun's cooldown.
+_BUNFIG_COOLDOWN = "minimumReleaseAge"
 # Why a bunfig.toml whose `install` is not a table cannot be read for the cooldown it sets.
 _INSTALL_NOT_A_TABLE = "its install is not a table"
-# Files that signal which package manager a project uses, checked when there is no corepack `packageManager` field.
-# pnpm and bun are handled like npm; yarn is detected only to be skipped (see `SUPPORTED_MANAGERS`). npm's
-# `package-lock.json` is deliberately absent: npm is the default when nothing else matches, so listing it would be a
-# no-op, and leaving it out lets a real non-npm lockfile win over a stale `package-lock.json` left by a migration.
-_MANAGER_FILES = {
-    "pnpm-lock.yaml": "pnpm",
-    "pnpm-workspace.yaml": "pnpm",
-    "yarn.lock": "yarn",
-    _BUN_LOCK: "bun",
-    _BUN_BINARY_LOCK: "bun",
-}
 _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 _NPM_LIST = Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS, "--package-lock-only")
 _PNPM_LIST = Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only")
@@ -132,12 +123,14 @@ def _bun_locked_versions(directory: Path) -> _LockedVersions:
         return {}
 
 
-def _bun_sets_its_own_cooldown(directory: Path) -> bool:
-    """Return whether the bunfig.toml in the directory, or the global one, sets a cooldown.
+def _bun_cooldown_setting(directory: Path) -> str | None:
+    """Return the setting that holds bun's cooldown where the bunfig.toml in the directory, or the global one, sets it.
 
     bun does not have a command that reports its config, so Update-time reads the files bun reads.
     """
-    return _bunfig_sets_a_cooldown(directory / "bunfig.toml") or _global_bunfig_sets_a_cooldown()
+    if _bunfig_sets_a_cooldown(directory / "bunfig.toml") or _global_bunfig_sets_a_cooldown():
+        return _BUNFIG_COOLDOWN
+    return None
 
 
 @cache
@@ -163,7 +156,7 @@ def _bunfig_sets_a_cooldown(bunfig: Path) -> bool:
     if not isinstance(install, dict):
         _LOG.unreadable_bunfig(bunfig, ValueError(_INSTALL_NOT_A_TABLE))
         return False
-    return "minimumReleaseAge" in install
+    return _BUNFIG_COOLDOWN in install
 
 
 @dataclass(frozen=True)
@@ -174,14 +167,17 @@ class _ConfiguredCooldown:
     keys: tuple[str, ...]
     unset: str  # What the command reports for a key that is not set
 
-    def is_set(self, directory: Path) -> bool:
-        """Return whether the config in the directory sets one of the keys.
+    def setting(self, directory: Path) -> str | None:
+        """Return the first of the keys that the config in the directory sets, if any.
 
         `<manager> config get` reports the effective value from the whole config cascade, so a key that the project or
         the user sets counts. When the manager fails to report a key, the key counts as unset.
         """
-        results = (run(Command(*self.config_get, key), cwd=directory) for key in self.keys)
-        return any(result.succeeded and result.stdout.strip() != self.unset for result in results)
+        for key in self.keys:
+            result = run(Command(*self.config_get, key), cwd=directory)
+            if result.succeeded and result.stdout.strip() != self.unset:
+                return key
+        return None
 
 
 @dataclass(frozen=True)
@@ -199,9 +195,13 @@ class _PackageManager:
     binary_lock: str | None  # Update-time cannot read this lock, which the manager may write instead
     workspace_file: str | None
     reads_workspaces_field: bool
-    sets_its_own_cooldown: Callable[[Path], bool]
+    cooldown_setting: Callable[[Path], str | None]  # The setting that holds the project's own cooldown, if one does
     cooldown_option: Callable[[int], str]
     locked_versions: Callable[[Path], _LockedVersions]
+
+    def files(self) -> tuple[str, ...]:
+        """Return the names of the files that name this manager: its locks, and its workspace file if it has one."""
+        return tuple(name for name in (*self.lock_files, self.binary_lock, self.workspace_file) if name is not None)
 
     def _lock_root(self, directory: Path, workspace_root: Path) -> Path:
         """Return the root of the workspace whose lock file locks the project in the directory.
@@ -214,9 +214,12 @@ class _PackageManager:
         roots = (ancestor for ancestor in (directory, *directory.parents) if (ancestor / self.workspace_file).exists())
         return next(roots, directory)
 
-    def _cooldown_options(self, directory: Path) -> list[str]:
-        """Return the option that applies Update-time's cooldown, or nothing if the project configures its own."""
-        return [] if self.sets_its_own_cooldown(directory) else [self.cooldown_option(COOLDOWN.get())]
+    def _cooldown_options(self, path: Path) -> list[str]:
+        """Return the option that applies Update-time's cooldown, or log the project's own and return nothing."""
+        if (setting := self.cooldown_setting(path.parent)) is None:
+            return [self.cooldown_option(COOLDOWN.get())]
+        _LOG.project_cooldown(path, f"{self.name} {setting}", COOLDOWN.get())
+        return []
 
     def _policy_for_a_project_left_as_it_is(self, path: Path, lock_root: Path) -> ManagerPolicy[Declaration] | None:
         """Return the policy for the markers of a package.json the manager does not run for, or None where it runs.
@@ -256,7 +259,7 @@ class _PackageManager:
         if workspace_root.resolve() != directory.resolve():
             _LOG.updated_by_the_workspace_root(path, self.name, workspace_root / "package.json")
             return CheckedPackageJson(package_json, MARKER_POLICY)
-        cooldown = self._cooldown_options(directory)
+        cooldown = self._cooldown_options(path)
         listed_before = self.locked_versions(directory)
         snapshots = [_ProjectSnapshot(_WORKSPACE_ROOT, path, package_json, listed_before.get(_WORKSPACE_ROOT, {}))]
         for member, locked in listed_before.items():
@@ -357,13 +360,13 @@ _NPM = _PackageManager(
     binary_lock=None,
     workspace_file=None,
     reads_workspaces_field=True,  # npm takes the members of a workspace from the root package.json's `workspaces`.
-    sets_its_own_cooldown=_ConfiguredCooldown(
+    cooldown_setting=_ConfiguredCooldown(
         Command("npm", "config", "get"),
         # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
         # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
         keys=("min-release-age", "before"),
         unset="null",
-    ).is_set,
+    ).setting,
     cooldown_option=lambda days: f"--min-release-age={days}",
     locked_versions=_npm_locked_versions,
 )
@@ -380,11 +383,11 @@ _PNPM = _PackageManager(
     workspace_file="pnpm-workspace.yaml",
     # pnpm takes the members of a workspace from pnpm-workspace.yaml, and creates that file from a `workspaces` field.
     reads_workspaces_field=False,
-    sets_its_own_cooldown=_ConfiguredCooldown(
+    cooldown_setting=_ConfiguredCooldown(
         Command("pnpm", "config", "get"),
         keys=("minimumReleaseAge",),
         unset="undefined",  # Rather than pnpm's built-in default
-    ).is_set,
+    ).setting,
     cooldown_option=lambda days: f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",
     locked_versions=_pnpm_locked_versions,
 )
@@ -398,7 +401,7 @@ _BUN = _PackageManager(
     binary_lock=_BUN_BINARY_LOCK,
     workspace_file=None,
     reads_workspaces_field=True,  # bun takes the members of a workspace from the root package.json's `workspaces`.
-    sets_its_own_cooldown=_bun_sets_its_own_cooldown,
+    cooldown_setting=_bun_cooldown_setting,
     cooldown_option=lambda days: f"--minimum-release-age={days * SECONDS_PER_DAY}",
     locked_versions=_bun_locked_versions,
 )
@@ -406,6 +409,11 @@ _BUN = _PackageManager(
 # catalog and skips a project whose manager isn't here (yarn) rather than mishandling it by running npm (which
 # would write a stray package-lock.json and ignore the real lock).
 SUPPORTED_MANAGERS = {manager.name: manager for manager in (_NPM, _PNPM, _BUN)}
+# The files that name a project's package manager. A corepack `packageManager` field wins over them, and npm is the
+# default. yarn is named only to be skipped.
+_MANAGER_FILES = {name: manager.name for manager in SUPPORTED_MANAGERS.values() for name in manager.files()} | {
+    "yarn.lock": "yarn"
+}
 
 
 def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
@@ -435,6 +443,11 @@ _NO_LOCK_FILE_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
 # The policy for the markers of a package.json whose project is locked in a binary lock that Update-time cannot read.
 _BINARY_LOCK_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(Reason.BINARY_LOCK_LEFT, Reason.BINARY_LOCK_KEPT)
 
+# The policy for the markers of a package.json whose project's files name more than one package manager.
+MORE_THAN_ONE_MANAGER_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+    Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT
+)
+
 # The policy for the markers of a package.json whose workspace root lies outside the scan root.
 _WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
     Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
@@ -449,20 +462,32 @@ class CheckedPackageJson:
     policy: ManagerPolicy[Declaration]
 
 
-def manager_name(package_json: PackageJson) -> str:
-    """Return the name of the project's package manager (npm, pnpm, yarn, bun), defaulting to npm.
+@dataclass(frozen=True)
+class _ManagerChoice:
+    """The name of a project's package manager, and the files in the directory that named it."""
+
+    name: str
+    files: tuple[Path, ...] = ()
+
+    def names_more_than_one_manager(self) -> bool:
+        """Return whether the files name more than one package manager."""
+        return len({_MANAGER_FILES[file.name] for file in self.files}) > 1
+
+
+def manager_choice(package_json: PackageJson) -> _ManagerChoice:
+    """Return the project's package manager (npm, pnpm, yarn, bun), defaulting to npm, and the files that named it.
 
     The nearest directory that names a manager decides, from the package.json's own upwards, so a workspace member
     takes the manager of its workspace root. In each directory, the corepack `packageManager` field of its
     package.json (e.g. `"pnpm@9.15.0"`) wins over a lockfile or a workspace file.
     """
     directory = package_json.path.parent
-    if manager := package_json.declared_manager() or _signalled_manager(directory):
-        return manager
+    if choice := _choice_in(directory, package_json.declared_manager()):
+        return choice
     for ancestor in directory.parents:
-        if manager := _declared_manager_in(ancestor) or _signalled_manager(ancestor):
-            return manager
-    return "npm"
+        if choice := _choice_in(ancestor, _declared_manager_in(ancestor)):
+            return choice
+    return _ManagerChoice("npm")
 
 
 def _declared_manager_in(directory: Path) -> str:
@@ -474,6 +499,9 @@ def _declared_manager_in(directory: Path) -> str:
     return "" if readable is None else readable.declared_manager()
 
 
-def _signalled_manager(directory: Path) -> str:
-    """Return the name of the manager that a lockfile or a workspace file in the directory signals, if any."""
-    return next((manager for name, manager in _MANAGER_FILES.items() if (directory / name).exists()), "")
+def _choice_in(directory: Path, declared_manager: str) -> _ManagerChoice | None:
+    """Return the manager the package.json in the directory declares, or else the first its files name, if any."""
+    if declared_manager:
+        return _ManagerChoice(declared_manager)
+    files = tuple(directory / name for name in _MANAGER_FILES if (directory / name).exists())
+    return _ManagerChoice(_MANAGER_FILES[files[0].name], files) if files else None

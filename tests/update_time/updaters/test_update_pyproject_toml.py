@@ -777,6 +777,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         left = self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents}, _uv_lock("1.1"))
         self.assertEqual(left[PYPROJECT_TOML], pyproject("package==1.1") + _UV_TABLE)
         self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [False, False])
+        self.assert_project_cooldown_logged(PYPROJECT_TOML, "uv exclude-newer")
 
     def test_the_locked_version_of_a_workspace_members_dependency_is_read_from_the_workspace_root(
         self, run: Mock, get: Mock, glob: Mock

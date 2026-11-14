@@ -127,6 +127,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [False, False])
         settings = Command("uv", "lock", "--script", str(_SCRIPT), "--show-settings")
         self.assertIn(settings, [executed.args[0] for executed in run.call_args_list])
+        self.assert_project_cooldown_logged(_SCRIPT, "uv exclude-newer")
 
     def test_a_dependency_locked_at_several_versions_is_pinned_and_reported_at_the_lowest(
         self, run: Mock, get: Mock, glob: Mock

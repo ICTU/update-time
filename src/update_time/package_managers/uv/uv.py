@@ -43,6 +43,8 @@ _NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
 # there by the lower-cased `update-time` word, so the prose can change.
 _MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to set exclude-newer yourself"
 _MANAGED_BY_COMMENT_WORD = "update-time"
+# The uv setting that holds a project's own cooldown, as the log names it.
+EXCLUDE_NEWER_SETTING = "uv exclude-newer"
 EXCLUDE_NEWER_OPTION = "--exclude-newer"
 # What `--show-settings` prints about `exclude-newer`: `Some(…)` where the project's config, the user's config, or
 # `UV_EXCLUDE_NEWER` sets one, and `None` where none of them does.
@@ -104,19 +106,27 @@ def configure_cooldown(pyproject_toml: Path) -> None:
     and the uv run that follows reports uv missing.
 
     A value carrying the managed-by comment is kept in sync with the cooldown; a value without the comment is
-    the user's own and is left untouched, as is an already-current value carrying it (which is not rewritten).
+    the user's own and is left untouched, as is an already-current value carrying it (which is not rewritten). The
+    setting that holds the user's own cooldown is logged.
     """
-    if os.environ.get("UV_EXCLUDE_NEWER") or not is_installed("uv"):
+    if os.environ.get("UV_EXCLUDE_NEWER"):
+        _LOG.project_cooldown(pyproject_toml, "UV_EXCLUDE_NEWER", COOLDOWN.get())
+        return
+    if not is_installed("uv"):
         return
     file = PyprojectToml(pyproject_toml)
     existing = file.tool_key("uv", "exclude-newer")
     cooldown = _duration(COOLDOWN.get())
     if existing is None and settings_hold_exclude_newer(Command("uv", "lock"), pyproject_toml, _LOG):
-        return  # An exclude-newer set outside the file, such as in a uv.toml: leave it alone.
+        # An exclude-newer set outside the file, such as in a uv.toml: leave it alone.
+        _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())
+        return
     if existing is not None:
         value, comment = existing
         if _MANAGED_BY_COMMENT_WORD not in comment.lower():
-            return  # A user-set exclude-newer: leave it alone.
+            # A user-set exclude-newer: leave it alone.
+            _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())
+            return
         if value == cooldown:
             return  # Already Update-time's and already current.
     if file.set_tool_key("uv", "exclude-newer", cooldown, comment=_MANAGED_BY_COMMENT):
@@ -155,7 +165,7 @@ class UvPipCompile(RequirementsCompiler):
     """uv as the tool that recompiles a requirements file it compiled, with its `exclude-newer` as the cutoff."""
 
     tool: ClassVar[str] = "uv pip compile"
-    setting: ClassVar[str] = "uv exclude-newer"
+    setting: ClassVar[str] = EXCLUDE_NEWER_SETTING
     cutoff_option: ClassVar[str] = EXCLUDE_NEWER_OPTION
     package_cooldown_option: ClassVar[str | None] = "--exclude-newer-package"
 

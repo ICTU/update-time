@@ -23,7 +23,7 @@ def update_package_jsons() -> None:
     """Find all package.json files, update each with its (supported) package manager, and check its dependencies.
 
     The package manager runs only for a package.json that declares a dependency, or workspaces the manager reads, since
-    it writes a lockfile beside any package.json it runs for.
+    it writes a lockfile beside any package.json it runs for. It runs only where the project's files name one manager.
     """
     supported: list[node.CheckedPackageJson] = []
     # The run for a workspace root updates its members, so the roots go first, and a member is read as that run left it:
@@ -31,14 +31,18 @@ def update_package_jsons() -> None:
         _LOG.path(package_json)
         if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:
             continue
-        if (manager := node.SUPPORTED_MANAGERS.get(name := node.manager_name(file))) is None:
+        choice = node.manager_choice(file)
+        if (manager := node.SUPPORTED_MANAGERS.get(name := choice.name)) is None:
             _LOG.unsupported_package_manager(package_json, name, prose_list(node.SUPPORTED_MANAGERS))
             continue
-        if file.declares_a_dependency() or (manager.reads_workspaces_field and file.declares_workspaces()):
-            checked_package_json = manager.update_package_json(file)
-        else:
+        if not (file.declares_a_dependency() or (manager.reads_workspaces_field and file.declares_workspaces())):
             _LOG.no_dependencies(package_json, name, "install")
-            checked_package_json = node.CheckedPackageJson(file, node.MARKER_POLICY)
+            checked_package_json: node.CheckedPackageJson | None = node.CheckedPackageJson(file, node.MARKER_POLICY)
+        elif choice.names_more_than_one_manager():
+            _LOG.files_of_more_than_one_manager(package_json, choice.files)
+            checked_package_json = node.CheckedPackageJson(file, node.MORE_THAN_ONE_MANAGER_POLICY)
+        else:
+            checked_package_json = manager.update_package_json(file)
         if checked_package_json is not None:
             supported.append(checked_package_json)
     _warn_about_dependencies(supported)

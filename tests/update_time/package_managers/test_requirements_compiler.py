@@ -276,6 +276,7 @@ class RecompileTest(UvSettingsTestCase):
                 )
                 self.assert_recompiled("--upgrade-package", "flask", command=_PIP_COMMAND)
                 self.assertEqual(files[_SOURCE], "flask==1.0\n")
+                self.assert_project_cooldown_logged(_COMPILED, "pip-compile uploaded-prior-to")
 
     @kills(
         Mutation(
@@ -320,6 +321,7 @@ class RecompileTest(UvSettingsTestCase):
             "--upgrade-package", "flask", command=("pip-compile", "--output-file=requirements.txt", cutoff, "base.in")
         )
         self.assertEqual(files[_SOURCE], "flask==1.0\n")
+        self.assert_project_cooldown_logged(_COMPILED, "pip-compile uploaded-prior-to")
 
     @patch_environ({COOLDOWN.name: "14"})
     def test_the_cooldown_replaces_the_exclude_newer_the_header_records_where_a_source_carries_the_managed_by_comment(
@@ -346,6 +348,7 @@ class RecompileTest(UvSettingsTestCase):
         header = (*_UV_HEADER_ARGUMENTS, "--exclude-newer", "2024-06-01")
         self.assert_recompiled("--upgrade-package", "flask", command=(*_UV_TOOL, *header))
         self.assertEqual(files[_SOURCE], "flask==1.0\n")
+        self.assert_project_cooldown_logged(_COMPILED, "uv exclude-newer")
 
     def test_no_exclude_newer_is_passed_where_the_project_configures_one(self):
         """Test that uv does not get the cooldown where its settings hold an `exclude-newer`, whatever a source says."""
@@ -359,6 +362,7 @@ class RecompileTest(UvSettingsTestCase):
                 files = self.recompile({_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
                 self.assert_recompiled("--upgrade-package", "flask")
                 self.assertEqual(files[_SOURCE], source)
+                self.assert_project_cooldown_logged(_COMPILED, "uv exclude-newer")
 
     def test_the_cooldown_is_passed_where_uvs_settings_cannot_be_read(self):
         """Test that Update-time warns, and passes the cooldown, where uv does not say whether its settings hold one."""
