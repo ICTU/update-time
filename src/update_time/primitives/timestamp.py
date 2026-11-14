@@ -1,10 +1,13 @@
-"""Reading and comparing timestamps."""
+"""Reading and comparing timestamps, and the minutes and seconds in a day."""
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+MINUTES_PER_DAY = 24 * 60
+SECONDS_PER_DAY = MINUTES_PER_DAY * 60
 
 
 def days_since(timestamp: datetime) -> int:

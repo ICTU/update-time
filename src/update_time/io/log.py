@@ -983,6 +983,29 @@ class Logger:
         """Warn that uv's settings do not say whether the project sets an `exclude-newer` for the file."""
         return self._file_fields(path)
 
+    @_debug("Not running %(manager)s for %(location)s: the run for its workspace root %(root)s updates it")
+    def updated_by_the_workspace_root(self, path: Path, manager: str, root: Path) -> dict[str, object]:
+        """Log that the package manager does not run for a workspace member, since the run for its root updates it."""
+        return self._file_fields(path, manager=manager, root=Location(root))
+
+    @_warning(
+        "Not running bun for %(location)s: it locks its dependencies in the binary %(lock)s, which Update-time cannot "
+        "read; run bun install --save-text-lockfile to convert it to %(text_lock)s"
+    )
+    def binary_lock(self, path: Path, lock: Path, text_lock: Path) -> dict[str, object]:
+        """Warn that bun does not run for a file whose lock is binary, and say how to convert the lock."""
+        return self._file_fields(path, lock=Location(lock), text_lock=Location(text_lock))
+
+    @_warning("Could not read %(location)s to find the versions it locks (%(error)s)")
+    def unreadable_bun_lock(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
+        """Warn that a bun.lock cannot be read, so the versions bun moved in it go unreported."""
+        return self._file_fields(path, error=str(error))
+
+    @_warning("Could not read %(location)s to find whether it sets a cooldown for bun (%(error)s)")
+    def unreadable_bunfig(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
+        """Warn that a bunfig.toml cannot be read, so the cooldown it may set goes unread."""
+        return self._file_fields(path, error=str(error))
+
     @_warning(
         "Could not read from pip's settings whether they set an uploaded-prior-to for %(location)s (%(reason)s); "
         "applying the cooldown"

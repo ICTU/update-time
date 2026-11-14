@@ -18,12 +18,11 @@ if TYPE_CHECKING:
 
     from update_time.domain.dependency import DependencyName, VersionString
 
-# The dependency sections whose entries Update-time checks. pnpm's `list --json` output splits its installed
-# dependencies over the same sections, so `package_managers.node` reads them from here too.
+# The dependency sections whose entries Update-time checks.
 DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
 
-# The dependency sections npm and pnpm install from. A peer dependency states a range its consumer has to satisfy,
-# so Update-time does not check it, but npm and pnpm install it all the same.
+# The dependency sections npm, pnpm, and bun install from. A peer dependency states a range its consumer has to
+# satisfy, so Update-time does not check it, but the package managers install it all the same.
 _INSTALLED_SECTIONS = (*DEPENDENCY_SECTIONS, "peerDependencies")
 
 # The field a package.json names its markers in. JSON has no comments, so a marker cannot sit beside the reference
@@ -123,12 +122,18 @@ class PackageJson(json_format.JsonFile):
         return declared.split("@", maxsplit=1)[0] if isinstance(declared, str) else ""
 
     def declares_a_dependency(self) -> bool:
-        """Return whether the package.json declares a dependency for npm and pnpm to install."""
+        """Return whether the package.json declares a dependency for its package manager to install."""
         return any(self.contents.get(section) for section in _INSTALLED_SECTIONS)
 
     def declares_workspaces(self) -> bool:
         """Return whether the package.json declares the members of a workspace."""
-        return bool(self.contents.get("workspaces"))
+        return bool(self.workspace_patterns())
+
+    def workspace_patterns(self) -> list[str]:
+        """Return the glob patterns naming the workspace's members, in an array or in the `packages` of an object."""
+        workspaces = self.contents.get("workspaces")
+        patterns = workspaces.get("packages") if isinstance(workspaces, dict) else workspaces
+        return [pattern for pattern in patterns if isinstance(pattern, str)] if isinstance(patterns, list) else []
 
     def declarations(self) -> Iterator[Declaration]:
         """Yield a declaration for each entry of the dependency sections, at the exact version it pins if any.

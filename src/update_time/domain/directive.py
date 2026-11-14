@@ -42,6 +42,10 @@ class Reason(StrEnum):
         "Update-time leaves the dependencies of a project without a lock file as they are, so a bound decides nothing"
     )
     NO_LOCK_FILE_LEFT = "Update-time leaves the dependencies of a project without a lock file as they are"
+    BINARY_LOCK_KEPT = (
+        "Update-time leaves the dependencies of a project with a binary lock as they are, so a bound decides nothing"
+    )
+    BINARY_LOCK_LEFT = "Update-time leaves the dependencies of a project with a binary lock as they are"
     WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT = (
         "Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a "
         "bound decides nothing"

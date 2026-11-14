@@ -44,7 +44,7 @@ DEPENDENCY_TYPES = _DependencyTypes(
         "Python dependencies",
         (file_type.PYPROJECT_TOML, file_type.REQUIREMENTS_TXT, file_type.INLINE_SCRIPT_METADATA),
     ),
-    npm_dependencies=DependencyType("npm and pnpm dependencies", (file_type.PACKAGE_JSON,)),
+    npm_dependencies=DependencyType("npm, pnpm, and bun dependencies", (file_type.PACKAGE_JSON,)),
     maven_dependencies=DependencyType("Maven dependencies", (file_type.POM_XML,)),
     node_engine_version=DependencyType("Node engine version", (file_type.PACKAGE_JSON,)),
     python_version=DependencyType("Python version", (file_type.PYTHON_VERSION_FILE,)),

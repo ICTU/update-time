@@ -1,4 +1,29 @@
-"""Test helpers that build the compiled requirements files the tests read."""
+"""Test helpers that build the lock files and the compiled requirements files the tests read."""
+
+import json
+
+
+def bun_lock_contents(workspaces: dict, packages: dict[str, str]) -> str:
+    """Return a bun.lock locking the workspaces, with an entry per package whose first element is the resolution.
+
+    The lock is written as bun writes it: with a comma after every member, and each package's entry on a line.
+    """
+    entries = "".join(
+        f"    {json.dumps(key)}: {json.dumps([resolution, '', {}, 'sha512-…'], ensure_ascii=False)},\n"
+        for key, resolution in packages.items()
+    )
+    workspaces_object = _value(workspaces, 2)
+    return f'{{\n  "lockfileVersion": 1,\n  "workspaces": {workspaces_object},\n  "packages": {{\n{entries}  }},\n}}\n'
+
+
+def _value(value: object, indent: int) -> str:
+    """Return the value as bun writes it, an object with a member on each line, each followed by a comma."""
+    if not isinstance(value, dict):
+        return json.dumps(value)
+    members = "".join(
+        f"{' ' * (indent + 2)}{json.dumps(key)}: {_value(item, indent + 2)},\n" for key, item in value.items()
+    )
+    return f"{{\n{members}{' ' * indent}}}"
 
 
 def requirements_compiled_by_uv(source_name: str, output: str | None = "requirements.txt", options: str = "") -> str:

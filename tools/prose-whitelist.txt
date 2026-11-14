@@ -103,7 +103,6 @@ Assert that of the two constants a module assigns, only the one the reader leave
 Assert that the lines below the message sit in a box, and that the box holds these lines and no others.
 Assert that the run reported no archival, having asked the given URLs and GitHub nothing.
 Both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against.
-Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`.
 Check each requirement that pins no exact version.
 Converting is what the bands, which are floats, compare against; an unset score would band as no level.
 Coverage stays at 100%, and `just test` enforces it, so you need no separate coverage command.
@@ -447,7 +446,6 @@ Update every docstring and comment the change makes untrue.
 Update the Node engine to the latest [Node](https://hub.docker.com/_/node) release on Docker Hub when no Dockerfile declares a numeric Node base image to derive it from, instead of logging an error.
 Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to hold one: a `<version>` element names a version.
 Update-time adds no hash pin to a Python dependency.
-Update-time adds no hash pin to an npm or pnpm dependency.
 Update-time checks each pin a Python file declares against the newest release of its package on PyPI and reports the stale ones.
 Update-time checks the version the run leaves the reference on.
 Update-time does not check an image, because no OCI registry publishes an archival signal.

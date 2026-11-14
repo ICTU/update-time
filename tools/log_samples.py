@@ -464,6 +464,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
         **_package_jsons_without_a_lock_file(log, capture),
+        **_bun_files_left_unread(log, capture),
+        **_members_left_to_their_root(log, capture),
         **_workspace_roots_outside_the_scan(log, capture),
         **_package_managers_not_on_path(log, capture),
         **_not_a_uv_project(log, capture),
@@ -536,6 +538,28 @@ def _package_jsons_without_a_lock_file(log: Logger, capture: _Capture) -> dict[s
     log.no_lock_file(Path("web/package.json"), "npm", Path("web/package-lock.json"))
     log.no_lock_file(Path("packages/ui/package.json"), "pnpm", Path("pnpm-lock.yaml"))
     return {"@@NO_NODE_LOCK_FILE@@": capture.take()}
+
+
+def _bun_files_left_unread(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log the binary lock, the text lock, and the bunfig.toml that Update-time cannot read, and pair the lines."""
+    log.binary_lock(Path("package.json"), Path("bun.lockb"), Path("bun.lock"))
+    binary_lock = capture.take()
+    log.unreadable_bun_lock(Path("bun.lock"), ValueError("it does not hold the JSON bun writes"))
+    bun_lock = capture.take()
+    log.unreadable_bunfig(
+        Path("bunfig.toml"), ValueError("Expected ']' at the end of a table declaration (at line 1, column 9)")
+    )
+    return {
+        "@@BUN_BINARY_LOCK@@": binary_lock,
+        "@@BUN_LOCK_UNREADABLE@@": bun_lock,
+        "@@BUNFIG_UNREADABLE@@": capture.take(),
+    }
+
+
+def _members_left_to_their_root(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that bun does not run for a workspace member, which the run for its workspace root updates."""
+    log.updated_by_the_workspace_root(Path("packages/ui/package.json"), "bun", Path("package.json"))
+    return {"@@NODE_MEMBER_LEFT_TO_ITS_ROOT@@": capture.take()}
 
 
 def _workspace_roots_outside_the_scan(log: Logger, capture: _Capture) -> dict[str, str]:

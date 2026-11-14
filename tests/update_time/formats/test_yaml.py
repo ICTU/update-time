@@ -58,6 +58,10 @@ class ReadTest(unittest.TestCase):
         """Test that a tag naming a Python object is refused, so reading a file constructs no arbitrary object."""
         self.assertIsNone(yaml.read(mock_path("!!python/object/apply:os.system ['echo']\n")))
 
+    def test_character_the_parser_refuses(self):
+        """Test that a file holding a character YAML does not allow, such as a bell, reads back as None."""
+        self.assertIsNone(yaml.read(mock_path('{"name": "x\x07"}\n')))
+
 
 class DocumentTest(unittest.TestCase):
     """Unit tests for walking a parsed YAML document."""
