@@ -82,7 +82,7 @@ class DockerHubHeadersTest(LoggingTestCase):
         Mutation(
             docker_hub.last_pushed,
             "_LOG, headers=api_headers())",
-            "_LOG)",
+            "_LOG, params=api_headers())",
             "a push-date request spends Docker Hub's anonymous rate limit although credentials are set",
         ),
         Mutation(

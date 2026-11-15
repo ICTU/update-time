@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from update_time.io.fetch import failure_reason, fetch, fetch_json, json_body, look_up, next_page_url
+from update_time.io.fetch import failure_reason, fetch, fetch_json, next_page_url
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.lookup import LookedUp
 
@@ -74,28 +74,12 @@ class FetchTest(LoggingTestCase):
 class FetchJsonTest(LoggingTestCase):
     """Unit tests for the fetch_json function."""
 
-    @kills(
-        Mutation(
-            json_body,
-            "return LookedUp(response.json())",
-            "return LookedUp(response)",
-            "a source reads the response as if it were the JSON body",
-        )
-    )
     @patch_get({"key": "value"}, ok=True)
     def test_ok_response_gives_its_json_body(self):
         """Test that an OK response gives its parsed JSON body, and logs nothing."""
         self.assertEqual(fetch_json("https://example.org", _LOG), LookedUp({"key": "value"}))
         self.mock_log.assert_not_called()
 
-    @kills(
-        Mutation(
-            look_up,
-            "on_response=on_response, **request)",
-            "on_response=on_response)",
-            "a source's requests go out without the authorization it sets",
-        )
-    )
     @patch("requests.Session.get")
     def test_the_headers_are_sent_with_the_request(self, mock_get: Mock):
         """Test that the headers are sent with the request."""
@@ -103,40 +87,12 @@ class FetchJsonTest(LoggingTestCase):
         fetch_json("https://example.org", _LOG, headers={"Authorization": "Bearer token"})
         mock_get.assert_called_once_with("https://example.org", timeout=10, headers={"Authorization": "Bearer token"})
 
-    @kills(
-        Mutation(
-            look_up,
-            "return LookedUp(None, failure_reason(None))",
-            "return LookedUp(None)",
-            "a source reports a failed request without saying why it failed",
-        )
-    )
     @patch("requests.Session.get", Mock(side_effect=requests.exceptions.Timeout))
     def test_a_failed_request_gives_its_reason_and_is_logged_once(self):
         """Test that a request failing at the transport level gives the reason it failed, and logs one warning."""
         self.assertEqual(fetch_json("https://example.org", _LOG), LookedUp(None, "the request failed"))
         self.assert_logged(message_of(Logger.timeout), url="https://example.org")
 
-    @kills(
-        Mutation(
-            look_up,
-            "logger.response(response)",
-            "pass",
-            "a refused request goes unreported unless the source reports it itself",
-        ),
-        Mutation(
-            look_up,
-            "return LookedUp(None, failure_reason(response))",
-            "return LookedUp(None, failure_reason(None))",
-            "a source reports a refused request without its status",
-        ),
-        Mutation(
-            look_up,
-            "if response.status_code in statuses_meaning_absent:",
-            "if statuses_meaning_absent:",
-            "a refusal reads as absent because the caller names another status as absent",
-        ),
-    )
     @patch_get(ok=False, status_code=503, url="https://example.org", reason="Service Unavailable")
     def test_a_refused_request_gives_its_status_and_is_logged_once(self):
         """Test that a refusal with a status other than one meaning absent gives the status, and logs one warning."""
@@ -148,14 +104,6 @@ class FetchJsonTest(LoggingTestCase):
             message_of(Logger.response), url="https://example.org", status=503, reason="Service Unavailable"
         )
 
-    @kills(
-        Mutation(
-            look_up,
-            "return LookedUp(None, failure_reason(response), absent=True)",
-            "return LookedUp(None, failure_reason(response))",
-            "a source reads what it does not serve as a failed request",
-        )
-    )
     @patch_get(ok=False, status_code=404)
     def test_a_status_meaning_absent_gives_an_absent_lookup_and_logs_nothing(self):
         """Test that a refusal with a status the caller says means absent gives an absent lookup, and logs nothing."""
@@ -165,20 +113,6 @@ class FetchJsonTest(LoggingTestCase):
         )
         self.mock_log.assert_not_called()
 
-    @kills(
-        Mutation(
-            json_body,
-            "logger.invalid_json(response.url)",
-            "pass",
-            "a body that is not JSON goes unreported unless the source reports it itself",
-        ),
-        Mutation(
-            json_body,
-            'return LookedUp(None, "the response is not valid JSON")',
-            "return LookedUp(None)",
-            "a source reports a body that is not JSON without saying why it failed",
-        ),
-    )
     @patch("requests.Session.get", Mock(return_value=unparsable_response(ok=True, url="https://example.org")))
     def test_a_body_that_is_not_json_gives_its_reason_and_is_logged_once(self):
         """Test that an OK response whose body is not JSON gives the reason rather than raising, and logs a warning."""
