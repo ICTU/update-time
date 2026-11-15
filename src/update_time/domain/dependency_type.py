@@ -45,7 +45,8 @@ DEPENDENCY_TYPES = _DependencyTypes(
         (file_type.PYPROJECT_TOML, file_type.REQUIREMENTS_TXT, file_type.INLINE_SCRIPT_METADATA),
     ),
     npm_dependencies=DependencyType(
-        "npm, pnpm, and bun dependencies", (file_type.PACKAGE_JSON, file_type.PNPM_WORKSPACE_YAML)
+        "npm, pnpm, yarn, and bun dependencies",
+        (file_type.PACKAGE_JSON, file_type.PNPM_WORKSPACE_YAML, file_type.YARNRC_YML),
     ),
     maven_dependencies=DependencyType("Maven dependencies", (file_type.POM_XML,)),
     node_engine_version=DependencyType("Node engine version", (file_type.PACKAGE_JSON,)),

@@ -21,7 +21,15 @@ from update_time.primitives.location import Location
 
 from tests.helpers import FakeFiles, mock_path, patch_environ
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, declaration, message_of, pyproject, uv_path_source
+from tests.update_time.helpers import (
+    SCAN_ROOT,
+    SUBPROCESS_RUN_OPTIONS,
+    LoggingTestCase,
+    declaration,
+    message_of,
+    pyproject,
+    uv_path_source,
+)
 from tests.update_time.package_managers.helpers import (
     CONFIGURED_EXCLUDE_NEWER,
     MANAGED_BY_COMMENT,
@@ -127,9 +135,7 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         self.assert_no_info_logged()
         self.assert_project_cooldown_logged(pyproject_toml, "uv exclude-newer")
         settings = Command("uv", "lock", "--show-settings")
-        self.mock_run.assert_called_once_with(
-            settings, capture_output=True, text=True, check=True, cwd=pyproject_toml.parent
-        )
+        self.mock_run.assert_called_once_with(settings, **SUBPROCESS_RUN_OPTIONS, cwd=pyproject_toml.parent)
 
     def test_writes_the_cooldown_where_uvs_settings_cannot_be_read(self):
         """Test that Update-time warns, and writes the cooldown, where uv does not say whether its settings hold one."""

@@ -35,6 +35,7 @@ from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     GUAVA,
     SCAN_ROOT,
+    SUBPROCESS_RUN_OPTIONS,
     ExecutablesOnPathTestCase,
     bound,
     days_ago,
@@ -238,7 +239,7 @@ def _versions_command(rules: Path, properties: str = "") -> Command:
 
 def _maven_run(command: Command, directory: Path = _PROJECT) -> object:
     """Return the call that runs the Maven command in the directory."""
-    return call(command, capture_output=True, text=True, check=True, cwd=directory)
+    return call(command, **SUBPROCESS_RUN_OPTIONS, cwd=directory)
 
 
 def _aggregator(*paths: str) -> str:

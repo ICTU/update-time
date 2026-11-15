@@ -1,6 +1,6 @@
 """Compare the versions a Node package manager locks per project before and after its update, and log the changes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from update_time.domain.reference import Reference
@@ -61,19 +61,19 @@ class ProjectUpdate:
         Skip the locations already in `reported`, and add the ones logged, so that a catalog entry several projects
         take their version from is logged once.
         """
-        declarations = {} if self.after is None else self.after.dependency_locations(catalogs)
+        declarations = {} if self.after is None else self.after.dependency_references(catalogs)
         for package, new_version in self.moved_versions.items():
             current = self.before.locked[package]
-            declared = declarations.get(package, [Location(self.before.path)])
-            locations = [location for location in declared if location not in reported]
-            reported.update(locations)
+            declared = declarations.get(package, [Reference(package, "", Location(self.before.path))])
+            moved = [replace(each, current_version=current) for each in declared if each.location not in reported]
+            reported.update(each.location for each in moved)
             if SEMVER.is_downgrade(current, new_version):
-                for location in locations:
-                    _LOG.version_moved_back(manager, Reference(package, current, location), new_version)
+                for reference in moved:
+                    _LOG.version_moved_back(manager, reference, new_version)
                 continue
-            package_version = npmjs.SOURCE.release(package, new_version)
-            for location in locations:
-                _LOG.new_version(Reference(package, current, location), package_version)
+            releases = {name: npmjs.SOURCE.release(name, new_version) for name in {each.dependency for each in moved}}
+            for reference in moved:
+                _LOG.new_version(reference, releases[reference.dependency])
 
     def log_range_rewrites(self, manager: str) -> None:
         """Log each rewrite of a range in the package.json, for a dependency with an unmoved locked version."""

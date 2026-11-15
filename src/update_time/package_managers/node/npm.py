@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from update_time.io.process import run
 from update_time.lock_files.locked_versions import ROOT_PROJECT, listed_versions
-from update_time.package_managers.node.package_manager import ConfiguredCooldown, PackageManager
+from update_time.package_managers.node.package_manager import ConfiguredCooldown, CooldownArguments, PackageManager
 from update_time.primitives.command import Command
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ NPM = PackageManager(
         keys=("min-release-age", "before"),
         unset="null",
     ).setting,
-    cooldown_option=lambda days: f"--min-release-age={days}",
+    cooldown_arguments=lambda days: CooldownArguments((f"--min-release-age={days}",)),
     locked_versions=_npm_locked_versions,
     catalogs=None,  # npm has no catalogs
 )

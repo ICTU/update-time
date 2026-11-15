@@ -1,4 +1,4 @@
-"""The policies for the markers of a package.json and of a pnpm-workspace.yaml, and a package.json judged by one."""
+"""The policies for the markers of a package.json and of a file holding catalogs, and a package.json judged by one."""
 
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -28,7 +28,7 @@ def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
     return ManagerPolicy.every_warning_scope(Reason.NO_NPM_RELEASE)
 
 
-# npm, pnpm, and bun move a dependency within the range its package.json declares, whatever a marker says about it.
+# npm, pnpm, yarn, and bun move a dependency within the range its package.json declares, whatever a marker says.
 MARKER_POLICY = ManagerPolicy(
     hold_back_redundancy=lambda _declaration: Reason.MANAGER_RESOLVES_THE_VERSION,
     bound_redundancy=lambda _declaration: Reason.BOUND_DECIDES_NOTHING,
@@ -43,6 +43,11 @@ NO_LOCK_FILE_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
 
 # The policy for the markers of a package.json whose project is locked in a binary lock that Update-time cannot read.
 BINARY_LOCK_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(Reason.BINARY_LOCK_LEFT, Reason.BINARY_LOCK_KEPT)
+
+# The policy for the markers of a package.json whose yarn cannot apply a cooldown, such as yarn classic.
+YARN_WITHOUT_A_COOLDOWN_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+    Reason.YARN_WITHOUT_A_COOLDOWN_LEFT, Reason.YARN_WITHOUT_A_COOLDOWN_KEPT
+)
 
 # The policy for the markers of a package.json whose project's files name more than one package manager.
 MORE_THAN_ONE_MANAGER_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(

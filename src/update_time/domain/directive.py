@@ -46,6 +46,13 @@ class Reason(StrEnum):
         "Update-time leaves the dependencies of a project with a binary lock as they are, so a bound decides nothing"
     )
     BINARY_LOCK_LEFT = "Update-time leaves the dependencies of a project with a binary lock as they are"
+    YARN_WITHOUT_A_COOLDOWN_KEPT = (
+        "Update-time leaves the dependencies of a project whose yarn cannot apply a cooldown as they are, so a bound "
+        "decides nothing"
+    )
+    YARN_WITHOUT_A_COOLDOWN_LEFT = (
+        "Update-time leaves the dependencies of a project whose yarn cannot apply a cooldown as they are"
+    )
     MORE_THAN_ONE_MANAGER_KEPT = (
         "Update-time leaves the dependencies of a project whose files name more than one package manager as they are, "
         "so a bound decides nothing"

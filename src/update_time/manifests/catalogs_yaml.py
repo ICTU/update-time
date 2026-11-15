@@ -1,4 +1,4 @@
-"""Read pnpm-workspace.yaml files: the entries of their catalogs, and the markers beside them."""
+"""Read the YAML files holding a workspace's catalogs: the entries of the catalogs, and the markers beside them."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
@@ -19,13 +19,13 @@ if TYPE_CHECKING:
     from update_time.primitives.line import Line
 
 
-# Why a pnpm-workspace.yaml that does not parse cannot be read.
+# Why a file that does not parse cannot be read.
 _NOT_VALID_YAML = "it is not valid YAML"
 
 
 @dataclass(frozen=True)
-class PnpmWorkspaceYaml(File):
-    """A pnpm-workspace.yaml: its lines, and the YAML document they hold."""
+class CatalogsYaml(File):
+    """A YAML file holding a workspace's catalogs, such as a pnpm-workspace.yaml: its lines, and their document."""
 
     path: Path
     lines: list[Line]
@@ -33,7 +33,7 @@ class PnpmWorkspaceYaml(File):
 
     @classmethod
     def read(cls, path: Path) -> Self:
-        """Return the pnpm-workspace.yaml at the path, raising a `ValueError` where it is not valid YAML."""
+        """Return the file at the path, raising a `ValueError` where it is not valid YAML."""
         text = path.read_text()
         if (document := yaml.parse(text)) is None:
             raise ValueError(_NOT_VALID_YAML)
@@ -47,7 +47,7 @@ class PnpmWorkspaceYaml(File):
                 yield declaration(entry.key, entry.text, self._location(entry), marker)
 
     def catalogs(self) -> Catalogs:
-        """Return the catalogs the pnpm-workspace.yaml holds."""
+        """Return the catalogs the file holds."""
         return Catalogs(
             {
                 CatalogEntry(name, entry.key): Reference(entry.key, entry.text, self._location(entry))

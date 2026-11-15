@@ -8,6 +8,7 @@ from update_time.manifests.package_json import PackageJson
 from update_time.package_managers.node.bun import BUN
 from update_time.package_managers.node.npm import NPM
 from update_time.package_managers.node.pnpm import PNPM
+from update_time.package_managers.node.yarn import YARN
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -16,14 +17,12 @@ if TYPE_CHECKING:
 _LOG = get_logger("package.json")
 
 # The managers Update-time can update, keyed by name. The updater resolves a detected manager name against this
-# catalog and skips a project whose manager isn't here (yarn) rather than mishandling it by running npm (which
-# would write a stray package-lock.json and ignore the real lock).
-SUPPORTED_MANAGERS = {manager.name: manager for manager in (NPM, PNPM, BUN)}
+# catalog and skips a project whose `packageManager` field names a manager that isn't here, rather than mishandling it
+# by running npm (which would write a stray package-lock.json and ignore the real lock).
+SUPPORTED_MANAGERS = {manager.name: manager for manager in (NPM, PNPM, YARN, BUN)}
 # The files that name a project's package manager. A corepack `packageManager` field wins over them, and npm is the
-# default. yarn is named only to be skipped.
-_MANAGER_FILES = {name: manager.name for manager in SUPPORTED_MANAGERS.values() for name in manager.files()} | {
-    "yarn.lock": "yarn"
-}
+# default.
+_MANAGER_FILES = {name: manager.name for manager in SUPPORTED_MANAGERS.values() for name in manager.files()}
 
 
 @dataclass(frozen=True)

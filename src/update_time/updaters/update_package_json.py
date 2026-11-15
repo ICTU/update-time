@@ -1,17 +1,17 @@
 """Find package.json files, update their dependencies with the project's Node package manager, and check them.
 
-Check the catalogs of the pnpm-workspace.yaml files as well.
+Check the catalogs of the pnpm-workspace.yaml and .yarnrc.yml files as well.
 """
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.directive import Reason
-from update_time.domain.file_type import PACKAGE_JSON, PNPM_WORKSPACE_YAML
+from update_time.domain.file_type import PACKAGE_JSON, PNPM_WORKSPACE_YAML, YARNRC_YML
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests.catalogs_yaml import CatalogsYaml
 from update_time.manifests.package_json import PackageJson
-from update_time.manifests.pnpm_workspace_yaml import PnpmWorkspaceYaml
 from update_time.package_managers.node.manager_choice import SUPPORTED_MANAGERS, manager_choice
 from update_time.package_managers.node.marker_policy import (
     MARKER_POLICY,
@@ -43,7 +43,7 @@ class _CheckedFile:
 
 
 def update_package_jsons() -> None:
-    """Find all package.json files, update each with its package manager, and check them and the pnpm catalogs.
+    """Find all package.json files, update each with its package manager, and check them and the catalogs.
 
     The package manager runs only for a package.json that declares a dependency or roots a workspace, since it writes
     a lockfile beside any package.json it runs for. pnpm also runs for a workspace root that does not hold a
@@ -72,17 +72,24 @@ def update_package_jsons() -> None:
             supported.append(
                 checked_package_json.judged_by(manager.checked_catalogs(checked_package_json.package_json))
             )
+    catalog_policies |= _yarn_catalog_policies(supported)
     files_to_check = [_CheckedFile(list(each.package_json.declarations()), each.policy) for each in supported]
     _warn_about_dependencies(files_to_check + _checked_workspace_files(catalog_policies))
     _report_undeclared_references([each.package_json for each in supported])
 
 
+def _yarn_catalog_policies(checked: list[CheckedPackageJson]) -> dict[Path, ManagerPolicy[Declaration]]:
+    """Return the policy for the markers of each .yarnrc.yml: the policy of the package.json beside it, if checked."""
+    policies = {each.package_json.path.parent: each.policy for each in checked}
+    return {path: policies.get(path.parent, MARKER_POLICY) for path in glob_for(YARNRC_YML)}
+
+
 def _checked_workspace_files(catalog_policies: dict[Path, ManagerPolicy[Declaration]]) -> list[_CheckedFile]:
-    """Return each pnpm-workspace.yaml to check, with its policy, warning about each that cannot be read."""
+    """Return each file holding catalogs to check, with its policy, warning about each that cannot be read."""
     files: list[_CheckedFile] = []
     for path, policy in catalog_policies.items():
         _LOG.path(path)
-        if (workspace_file := PnpmWorkspaceYaml.readable(path, _LOG.unreadable_catalogs)) is not None:
+        if (workspace_file := CatalogsYaml.readable(path, _LOG.unreadable_catalogs)) is not None:
             files.append(_CheckedFile(list(workspace_file.declarations()), policy))
     return files
 

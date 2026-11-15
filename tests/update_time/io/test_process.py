@@ -1,6 +1,7 @@
 """Unit tests for running processes."""
 
 import logging
+import os
 import signal
 import subprocess  # nosec
 import unittest
@@ -11,10 +12,11 @@ from unittest.mock import Mock, call, patch
 
 from update_time.io import process as process_module
 from update_time.io.log import Logger
-from update_time.io.process import Processes, run
+from update_time.io.process import Processes, run, tool_version
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 
+from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, message_of
 
@@ -48,6 +50,30 @@ class RunTests(LoggingTestCase):
         mock_run.return_value = Mock(stdout="", stderr="")
         run(Command("tool", "list"))
         self.assertIsNone(mock_run.call_args.kwargs["cwd"])
+
+    @kills(
+        Mutation(
+            process_module.run_unlogged,
+            "env = os.environ | dict(environment) if environment else None",
+            "env = None",
+            "a command runs without the variables Update-time adds to its environment, such as yarn's cooldown",
+        ),
+        Mutation(
+            process_module.run_unlogged,
+            "os.environ | dict(environment)",
+            "dict(environment)",
+            "a command that Update-time adds variables to runs without the environment it inherits, such as its PATH",
+        ),
+    )
+    def test_environment_variables_are_passed_on_top_of_the_inherited_ones(self, mock_run: Mock):
+        """Test that the variables given are added to the inherited environment, and that none given inherits it."""
+        mock_run.return_value = Mock(stdout="", stderr="")
+        with patch_environ({"HOME": "/home", "YARN_NPM_MINIMAL_AGE_GATE": "60"}, clear=True):
+            run(Command("yarn", "up"), environment={"YARN_NPM_MINIMAL_AGE_GATE": "10080"})
+            expected = os.environ | {"YARN_NPM_MINIMAL_AGE_GATE": "10080"}
+            self.assertEqual(mock_run.call_args.kwargs["env"], expected)
+            run(Command("yarn", "up"))
+        self.assertIsNone(mock_run.call_args.kwargs["env"])
 
     def test_json_is_parsed(self, mock_run: Mock):
         """Test that stdout is parsed as JSON on demand."""
@@ -128,21 +154,32 @@ class DebugLogTests(LoggingTestCase):
     @kills(
         Mutation(
             process_module.run,
-            "_LOG.command_run(command, directory)",
+            "_LOG.command_run(command, directory, variables)",
             "pass",
             "the debug log leaves out the commands Update-time runs, so it does not show the options they ran with",
-        )
+        ),
+        Mutation(
+            Logger.command_run,
+            '" ".join((*variables, *command))',
+            '" ".join(command)',
+            "the debug log leaves out the variables a command adds to its environment, such as yarn's cooldown",
+        ),
     )
     def test_the_command_is_logged_with_its_arguments_and_the_directory_it_runs_in(self, mock_run: Mock):
-        """Test that each command is logged with its arguments and options, and the directory it runs in."""
+        """Test that each command is logged with its arguments, the variables it adds, and the directory it runs in."""
         command = Command("npm", "update", "--save", "--min-release-age=7")
-        cases = {"in a directory": (_PROJECT, _PROJECT), "in no directory": (None, Path.cwd())}
-        for case, (cwd, directory) in cases.items():
+        gate = {"YARN_NPM_MINIMAL_AGE_GATE": "10080"}
+        cases: dict[str, tuple[Path | None, Path, dict[str, str], str]] = {
+            "in a directory": (_PROJECT, _PROJECT, {}, str(command)),
+            "in no directory": (None, Path.cwd(), {}, str(command)),
+            "with a variable added": (_PROJECT, _PROJECT, gate, f"YARN_NPM_MINIMAL_AGE_GATE=10080 {command}"),
+        }
+        for case, (cwd, directory, environment, line) in cases.items():
             with self.subTest(case):
                 mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
-                run(command, cwd=cwd)
+                run(command, cwd=cwd, environment=environment)
                 self.assert_logged_among_others(
-                    message_of(Logger.command_run), command=command, directory=Location(directory)
+                    message_of(Logger.command_run), command=line, directory=Location(directory)
                 )
 
     def test_version_is_logged_with_the_directory_the_command_runs_in(self, mock_run: Mock):
@@ -188,6 +225,22 @@ class DebugLogTests(LoggingTestCase):
             ],
         )
 
+    @kills(
+        Mutation(
+            process_module,
+            "@cache\ndef _tool_version",
+            "def _tool_version",
+            "a run at DEBUG asks a tool for the version that a caller asked it for already",
+        )
+    )
+    def test_a_version_asked_for_before_a_run_is_not_asked_for_again(self, mock_run: Mock):
+        """Test that a run logging the version that a caller asked for already does not ask for it a second time."""
+        mock_run.return_value = Mock(stdout="4.18.1\n", stderr="")
+        tool_version("yarn", _PROJECT)
+        run(Command("yarn", "config", "--json"), cwd=_PROJECT, environment={"NO_COLOR": "1"})
+        commands = [command for command, _directory in self.commands_run(mock_run)]
+        self.assertEqual(commands, [Command("yarn", "--version"), Command("yarn", "config", "--json")])
+
     def test_no_directory_and_the_working_directory_share_one_version_query(self, mock_run: Mock):
         """Test that a command run in no directory and one run in the working directory ask for the version once."""
         mock_run.return_value = Mock(stdout="uv 0.13.1\n", stderr="")
@@ -199,12 +252,23 @@ class DebugLogTests(LoggingTestCase):
     def test_a_version_that_cannot_be_determined_is_warned_about(self, mock_run: Mock):
         """Test that a failing version query is warned about with its reason, while the command itself still runs."""
         unknown_option = subprocess.CalledProcessError(1, "", output="", stderr="unknown option: --version\n")
+        stack_trace = subprocess.CalledProcessError(
+            1,
+            "",
+            output="",
+            stderr="Error: Cannot find module '/.yarn/releases/yarn-4.18.1.cjs'\n    at Module._load (node:1145:15)\n",
+        )
         no_java = subprocess.CalledProcessError(
             1, "", output="The JAVA_HOME environment variable is not set\n", stderr=""
         )
         for case, outcome, reason in (
             ("non-zero exit", unknown_option, "unknown option: --version"),
             ("non-zero exit, error on stdout", no_java, "The JAVA_HOME environment variable is not set"),
+            (
+                "non-zero exit, a stack trace below the error",
+                stack_trace,
+                "Error: Cannot find module '/.yarn/releases/yarn-4.18.1.cjs'",
+            ),
             ("nothing on stdout", Mock(stdout="", stderr=""), "it did not print a version"),
             (
                 "non-zero exit, no output",

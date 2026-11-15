@@ -36,7 +36,7 @@ _WORKSPACES: _KeyPath = ("workspaces",)
 # The key of the unnamed catalog, and the key that holds the named catalogs.
 _CATALOG, _NAMED_CATALOGS = "catalog", "catalogs"
 
-# The dependency sections npm, pnpm, and bun install from. A peer dependency states a range its consumer has to
+# The dependency sections npm, pnpm, yarn, and bun install from. A peer dependency states a range its consumer has to
 # satisfy, so Update-time does not check it, but the package managers install it all the same.
 _INSTALLED_SECTIONS = (*DEPENDENCY_SECTIONS, "peerDependencies")
 
@@ -154,21 +154,23 @@ class PackageJson(json_format.JsonFile, File):
                     location = self._entry_location(_MARKER_FIELD, *section, name)
                     yield Reference(name, "", location, marker=_marker(self.contents, section, name))
 
-    def dependency_locations(self, catalogs: Catalogs) -> dict[DependencyName, list[Location]]:
-        """Return each direct registry dependency and the locations of the entries declaring it.
+    def dependency_references(self, catalogs: Catalogs) -> dict[DependencyName, list[Reference]]:
+        """Return a reference to each entry declaring a direct registry dependency, keyed by the name it declares.
 
-        A name declared in several sections carries a location per entry, so none of the lines it sits on is lost. A
-        dependency that takes its version from a catalog is located at the catalog's entry.
+        A name declared in several sections carries a reference per entry, so none of the lines it sits on is lost. A
+        dependency that takes its version from a catalog is located at the catalog's entry. The reference names the
+        registry package, which is the one an alias names.
         """
-        locations: dict[DependencyName, list[Location]] = {}
+        references: dict[DependencyName, list[Reference]] = {}
         for dependency_declaration in self._declarations(_DEPENDENCY_SECTION_PATHS):
             if dependency_declaration.names_a_release:
                 location: Location | None = dependency_declaration.location
             else:
                 location = catalogs.location_of(dependency_declaration)
             if location is not None:
-                locations.setdefault(dependency_declaration.dependency, []).append(location)
-        return locations
+                reference = Reference(dependency_declaration.dependency, "", location)
+                references.setdefault(dependency_declaration.declared_name, []).append(reference)
+        return references
 
     def catalog_dependencies(self) -> list[CatalogEntry]:
         """Return the catalog entry each dependency that takes its version from a catalog takes it from."""
