@@ -43,8 +43,12 @@ def _python_files() -> list[Path]:
 
 
 def _module(path: Path) -> str:
-    """Return the import path of the module the file holds, such as `update_time.io.log` for its file under src."""
+    """Return the import path of the module the file holds, such as `update_time.io.log` for its file under src.
+
+    A package's `__init__.py` holds the package, so `src/update_time/__init__.py` is `update_time`.
+    """
     parts = Path(str(path)).with_suffix("").parts
+    parts = parts[:-1] if parts[-1] == "__init__" else parts
     return ".".join(parts[1:] if parts[0] == _SOURCE_ROOT else parts)
 
 

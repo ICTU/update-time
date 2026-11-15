@@ -241,10 +241,10 @@ usages name: install-py-dependencies
 usages-help:
     @echo "\nReport every usage this repository makes of NAME, one per line, and the number of them, so the size of"
     @echo "a change to the name is counted rather than guessed:"
-    @echo "\n    just usages update_time.package_managers.node._ProjectUpdate.log_new_versions"
+    @echo "\n    just usages update_time.package_managers.node.project_update.ProjectUpdate.log_moved_versions"
     @echo "\nThe usages come from ty's language server. So a method called on self or on an instance counts, and"
     @echo "so do an import, an alias, and a name passed as a value."
-    @echo "\nGive NAME qualified, or give the end of one, such as log_new_versions or _ProjectUpdate.log_new_versions."
+    @echo "\nGive NAME qualified, or give the end of one, such as log_moved_versions or ProjectUpdate.log_moved_versions."
     @echo "A name that ends several definitions fails the run and lists them. A name nothing defines fails the run"
     @echo "too, so a report of no usages says the name exists and nothing uses it."
 

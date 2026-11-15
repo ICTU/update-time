@@ -122,16 +122,49 @@ class RenamedTest(unittest.TestCase):
                 source = f"{imports}\n\n{name}.old()\n"
                 self.assertEqual(_renamed("pkg.m.old", "pkg.m.new", source), source.replace(".old()", ".new()"))
 
+    @kills(
+        Mutation(
+            rename_module._InPlaceRenameCommand.leave_ImportFrom,
+            "if not any(matches):",
+            "if matches != [True]:",
+            "an import of several names loses its trailing comma, since LibCST rebuilds it",
+        )
+    )
+    def test_an_import_of_several_names_keeps_its_layout(self):
+        """Test that an import of the name among others is renamed in place, its lines and trailing comma kept."""
+        source = "from m import (\n    alpha,\n    {0},\n)\n\nalpha()\n{0}()\n"
+        self.assertEqual(_renamed("m.old", "m.new", source.format("old")), source.format("new"))
+
+    @kills(
+        Mutation(
+            rename_module._InPlaceRenameCommand.leave_ImportFrom,
+            " or isinstance(names, libcst.ImportStar)",
+            "",
+            "a star import of the name's module ends the rename with a traceback",
+            raises="TypeError: 'ImportStar' object is not iterable",
+        )
+    )
+    def test_a_star_import_of_the_module_is_left_as_it_is(self):
+        """Test that a source importing every name of the name's module, naming none of them, is left as it is."""
+        source = "from m import *\n\nold()\n"
+        self.assertEqual(_renamed("m.old", "m.new", source), source)
+
 
 class MainTest(unittest.TestCase):
     """Unit tests for renaming over the files named and reporting a rename that did not land."""
 
     def rename(
-        self, *sources: str, old: str = "m.old", new: str = "m.new", module: str = _DEFINES, prose: str = ""
+        self,
+        *sources: str,
+        old: str = "m.old",
+        new: str = "m.new",
+        module: str = _DEFINES,
+        module_file: str = "m.py",
+        prose: str = "",
     ) -> int:
         """Rename over files holding the given sources, and return the exit code.
 
-        `module` is what the module `m` holds, given as a file of its own when the old name names that module.
+        `module` is what the module `m` holds, given as the file `module_file` when the old name names that module.
 
         `prose` is what the one file searched for mentions of the name holds, empty for a repository mentioning it
         nowhere.
@@ -139,7 +172,7 @@ class MainTest(unittest.TestCase):
         self.reported, self.noted = io.StringIO(), io.StringIO()
         self.paths = {f"file{index}.py": mock_path(source) for index, source in enumerate(sources)}
         if old.startswith("m."):
-            self.paths["m.py"] = mock_path(module)
+            self.paths[module_file] = mock_path(module)
         mentioning = Mock(read_text=Mock(return_value=prose), __str__=lambda _: "prose.py")
         with (
             patch.object(sys, "argv", ["rename.py", old, new, *self.paths]),
@@ -187,6 +220,24 @@ class MainTest(unittest.TestCase):
         # The helper writes the first source to `file0.py`, which is the module the name `file0.old` qualifies.
         self.assertEqual(self.rename(_DEFINES, old="file0.old", new="new"), 0)
         self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("def new():\n    pass\n")])
+
+    @kills(
+        Mutation(
+            rename_module._is_module,
+            '.removesuffix("/__init__")',
+            "",
+            "the rename reports that none of the files given defines a name from a package's `__init__.py`",
+        )
+    )
+    def test_a_name_the_init_of_a_package_defines_is_renamed_there(self):
+        """Test that a method the `__init__.py` of a package defines is renamed there."""
+        defines = "class Helper:\n    def {}(self):\n        pass\n"
+        uses = "def use(helper):\n    return helper.old()\n"
+        module_file = "m/__init__.py"
+        self.assertEqual(
+            self.rename(uses, old="m.Helper.old", module=defines.format("old"), module_file=module_file), 0
+        )
+        self.assertEqual(self.paths[module_file].write_text.call_args_list, [call(defines.format("new"))])
 
     @kills(
         Mutation(

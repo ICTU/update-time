@@ -19,7 +19,12 @@ from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.io.log import Logger
 from update_time.manifests import package_json as package_json_module
 from update_time.manifests import pnpm_workspace_yaml as pnpm_workspace_yaml_module
-from update_time.package_managers import node as node_module
+from update_time.package_managers.node import bun as bun_module
+from update_time.package_managers.node import marker_policy as marker_policy_module
+from update_time.package_managers.node import npm as npm_module
+from update_time.package_managers.node import package_manager as package_manager_module
+from update_time.package_managers.node import pnpm_workspace as pnpm_workspace_module
+from update_time.package_managers.node import project_update as project_update_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.primitives.timestamp import MINUTES_PER_DAY, SECONDS_PER_DAY
@@ -340,7 +345,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module,
+            npm_module,
             '("package-lock.json", "npm-shrinkwrap.json")',
             '("package-lock.json",)',
             "a project that an npm-shrinkwrap.json locks is left as it is, as if it did not have a lock file",
@@ -477,7 +482,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._ProjectUpdate.log_moved_versions,
+            project_update_module.ProjectUpdate.log_moved_versions,
             "version_moved_back(manager, Reference(package, current, location)",
             "version_moved_back(manager, Reference(package, current, locations[0])",
             "a version moved back is reported at the first line declaring it alone",
@@ -583,7 +588,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._log_range_rewrites,
+            project_update_module._log_range_rewrites,
             "range_before.current_version == range_after.current_version",
             "range_before == range_after",
             "a range npm only moved to another line by sorting the keys is logged as rewritten",
@@ -703,7 +708,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._ConfiguredCooldown.setting,
+            package_manager_module.ConfiguredCooldown.setting,
             "return key",
             "return self.keys[0]",
             "a project whose npm config sets before is said to set min-release-age",
@@ -943,7 +948,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._PackageManager.roots_a_workspace,
+            package_manager_module.PackageManager.roots_a_workspace,
             "(package_json.path.parent / self.workspace_file).exists()",
             "False",
             "pnpm runs at a workspace root only where its package.json declares a dependency",
@@ -963,7 +968,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module.update_pnpm_workspace,
+            pnpm_workspace_module.update_pnpm_workspace,
             "workspace.update(None)",
             "None",
             "the members of a workspace whose root lacks a package.json are left as they are",
@@ -989,8 +994,8 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module.update_pnpm_workspace,
-            "is_installed(_PNPM.update.executable)",
+            pnpm_workspace_module.update_pnpm_workspace,
+            "is_installed(PNPM.update.executable)",
             "True",
             "a missing pnpm is run anyway at a workspace root without a package.json, failing once per command",
         )
@@ -1010,7 +1015,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._log_updates,
+            project_update_module.log_updates,
             "update.log_moved_versions(manager, ",
             'update.log_moved_versions("npm", ',
             "a version pnpm moved back is reported as moved back by npm",
@@ -1233,7 +1238,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._ProjectUpdate.log_moved_versions,
+            project_update_module.ProjectUpdate.log_moved_versions,
             " if location not in reported]",
             "]",
             "the version bun moved for a catalog's entry is reported once for each member taking it",
@@ -1296,13 +1301,13 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._bun_locked_versions,
+            bun_module._bun_locked_versions,
             "_LOG.unreadable_bun_lock(lock, error)",
             "del error",
             "Update-time passes over a bun.lock it cannot read without a warning",
         ),
         Mutation(
-            node_module._bun_locked_versions,
+            bun_module._bun_locked_versions,
             "except (OSError, ValueError) as error:",
             "except KeyError as error:",
             "a bun.lock that Update-time cannot read stops the run",
@@ -1326,19 +1331,19 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._bunfig_sets_a_cooldown,
+            bun_module._bunfig_sets_a_cooldown,
             "_BUNFIG_COOLDOWN in install",
             "bool(install)",
             "a bunfig.toml with any [install] setting is taken to set a cooldown, so the run applies none",
         ),
         Mutation(
-            node_module._global_bunfig_sets_a_cooldown,
+            bun_module._global_bunfig_sets_a_cooldown,
             "xdg_config_home if xdg_config_home.is_absolute() else ",
             "",
             "Update-time reads the global bunfig.toml in the home directory, and bun the one in XDG_CONFIG_HOME",
         ),
         Mutation(
-            node_module._global_bunfig_sets_a_cooldown,
+            bun_module._global_bunfig_sets_a_cooldown,
             "xdg_config_home.is_absolute()",
             "xdg_config_home != Path()",
             "Update-time reads the global bunfig.toml in a relative XDG_CONFIG_HOME, which bun ignores for the home's",
@@ -1380,7 +1385,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module,
+            bun_module,
             "@cache\ndef _global_bunfig_sets_a_cooldown",
             "def _global_bunfig_sets_a_cooldown",
             "every bun project reads the global bunfig.toml again, and repeats the warning about it",
@@ -1404,7 +1409,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
 
     @kills(
         Mutation(
-            node_module._bunfig_sets_a_cooldown,
+            bun_module._bunfig_sets_a_cooldown,
             "if not isinstance(install, dict):",
             "if False:",
             "a bunfig.toml whose install is not a table stops the run",
@@ -1751,14 +1756,14 @@ class MissingPackageManagerTest(NoUpdateTestCase):
     @patch("requests.Session.get")
     @kills(
         Mutation(
-            node_module._PackageManager.update_package_json,
+            package_manager_module.PackageManager.update_package_json,
             "_LOG.package_manager_not_on_path(path, executable)\n"
             "            return CheckedPackageJson(package_json, MARKER_POLICY)",
             "_LOG.package_manager_not_on_path(path, executable)",
             "a missing package manager is reported, and then run anyway, failing once per command",
         ),
         Mutation(
-            node_module._PackageManager.update_package_json,
+            package_manager_module.PackageManager.update_package_json,
             "executable := self.update.executable",
             'executable := "npm"',
             "a pnpm-managed package.json is checked for npm rather than for pnpm",
@@ -1847,14 +1852,14 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
 
     @kills(
         Mutation(
-            node_module._declares_member,
+            bun_module._declares_member,
             "return not excluded and",
             "return True or",
             "a directory below a workspace root that does not declare it a member is updated against the root's lock",
             raises="StopIteration",
         ),
         Mutation(
-            node_module._declares_member,
+            bun_module._declares_member,
             "return not excluded and",
             "return",
             "Update-time ignores a negated pattern of the root's workspaces, and runs bun against the root's lock",
@@ -1894,13 +1899,13 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
 
     @kills(
         Mutation(
-            node_module._Workspace.policy_for_a_project_left_as_it_is,
+            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
             "_LOG.binary_lock(path, binary_lock, lock)",
             "del binary_lock",
             "Update-time passes over a project locked in a binary bun.lockb without saying how to convert the lock",
         ),
         Mutation(
-            node_module._Workspace.policy_for_a_project_left_as_it_is,
+            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
             "(binary_lock := self.root / manager.binary_lock)",
             "(binary_lock := path.parent / manager.binary_lock)",
             "a member whose workspace root holds a binary bun.lockb is said to lack a lock",
@@ -2059,8 +2064,8 @@ class WorkspaceRootOutsideTheScanTest(_ProjectLeftAsItIsTestCase):
 
     @kills(
         Mutation(
-            node_module._Workspace.policy_for_a_project_left_as_it_is,
-            "return _WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY",
+            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
+            "return WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY",
             "return MARKER_POLICY",
             "a marker in a member whose workspace root lies outside the scan is reported as one npm decides",
         )
@@ -2087,7 +2092,7 @@ class WorkspaceRootOutsideTheScanTest(_ProjectLeftAsItIsTestCase):
 
     @kills(
         Mutation(
-            node_module._PackageManager.checked_catalogs,
+            package_manager_module.PackageManager.checked_catalogs,
             " if is_scanned(workspace.root) else Catalogs()",
             "",
             "a dependency of a catalog outside the scan is said to be checked at the catalog",
@@ -2146,8 +2151,8 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     @kills(
         Mutation(
-            node_module._Workspace.policy_for_a_project_left_as_it_is,
-            "return _NO_LOCK_FILE_POLICY",
+            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
+            "return NO_LOCK_FILE_POLICY",
             "return MARKER_POLICY",
             "a marker in a project without a lock file is reported as redundant, since npm resolves the version",
         )
@@ -2178,28 +2183,22 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     @kills(
         Mutation(
-            node_module._catalog_policy,
+            pnpm_workspace_module._catalog_policy,
             "return MARKER_POLICY\n",
             "return MORE_THAN_ONE_MANAGER_POLICY\n",
             "a marker in a pnpm catalog is judged as if the workspace's files named more than one manager",
         ),
         Mutation(
-            node_module._catalog_policy,
-            "return _NO_LOCK_FILE_POLICY",
+            pnpm_workspace_module._catalog_policy,
+            "return NO_LOCK_FILE_POLICY",
             "return MARKER_POLICY",
             "a marker in the catalog of a pnpm workspace without a lock file is judged as if pnpm ran for it",
         ),
         Mutation(
-            node_module._catalog_policy,
+            pnpm_workspace_module._catalog_policy,
             "if choice is not None and choice.names_more_than_one_manager():",
             "if choice is None:",
             "a marker in a pnpm catalog beside the files of another manager is judged as if pnpm ran for it",
-        ),
-        Mutation(
-            node_module._catalog_policy,
-            "choice = _choice_in(directory, _declared_manager_in(directory))",
-            "choice = _choice_in(directory, str())",
-            "a marker in a pnpm catalog is judged as if pnpm did not run where the packageManager field names it",
         ),
     )
     def test_a_directive_steering_the_update_of_a_pnpm_catalog_entry_is_reported_as_deciding_nothing(
@@ -2238,7 +2237,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     @kills(
         Mutation(
-            node_module._unchecked_scopes,
+            marker_policy_module._unchecked_scopes,
             "if declaration.catalog is not None:",
             "if declaration.catalog:",
             "the warning on a dependency of the unnamed catalog says the npm registry does not serve a release for it",
@@ -2253,7 +2252,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     @kills(
         Mutation(
-            node_module.CheckedPackageJson.judged_by,
+            marker_policy_module.CheckedPackageJson.judged_by,
             "catalogs.location_of(declaration) is None",
             "not catalogs.entries",
             "Update-time says it checks a `catalog:typo` dependency at a catalog that the workspace does not hold",
@@ -2268,9 +2267,9 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     @kills(
         Mutation(
-            node_module._Workspace.policy_for_a_project_left_as_it_is,
-            "return _BINARY_LOCK_POLICY",
-            "return _NO_LOCK_FILE_POLICY",
+            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
+            "return BINARY_LOCK_POLICY",
+            "return NO_LOCK_FILE_POLICY",
             "a marker in a project locked in a binary bun.lockb is reported as one in a project without a lock",
         )
     )
@@ -2292,7 +2291,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     @kills(
         Mutation(
-            node_module,
+            marker_policy_module,
             "Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT",
             "Reason.NO_LOCK_FILE_LEFT, Reason.NO_LOCK_FILE_KEPT",
             "a marker in a project holding two managers' locks is reported as one in a project without a lock",
