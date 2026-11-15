@@ -2080,7 +2080,7 @@ class MarkerTest(NoUpdateTestCase):
         Mutation(
             package_json_module._marker,
             "if marker.raw else marker",
-            "if _MARKER_FIELD in contents else marker",
+            "if directives else marker",
             "the Recognised line names a reference whose value in the field does not hold a directive",
         )
     )

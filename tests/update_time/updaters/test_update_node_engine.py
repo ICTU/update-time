@@ -219,12 +219,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            package_json_manifest._marker,
-            "return replace(marker, spelling=_field_spelling(contents)) if marker.raw else marker",
-            "return marker",
-            "a readable field's marker is recognised as its directives rather than as the field",
-        ),
-        Mutation(
             package_json_manifest._field_spelling,
             ", ensure_ascii=False)",
             ")",

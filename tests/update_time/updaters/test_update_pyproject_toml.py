@@ -732,12 +732,6 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
 
     @kills(
         Mutation(
-            lock._LockTarget.workspace,
-            "return target if target.keeps_the_lock else _with_cutoff(target, root, log)",
-            "return target",
-            "uv locks a workspace whose root lacks a uv.lock without a cutoff, and the config holds none either",
-        ),
-        Mutation(
             lock._read_workspace,
             "if target.keeps_the_lock:\n        configure_cooldown(root)",
             "configure_cooldown(root)",

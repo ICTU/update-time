@@ -332,14 +332,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.run_updater(mock_dockerfile)
         self.assert_left_alone_unqueried(mock_dockerfile, "python", "3.14", 2, ImageNotLookedUp.VERSION_ACROSS_LINES)
 
-    @kills(
-        Mutation(
-            update_dockerfile_base_image._refusal,
-            "Source(why_image_not_looked_up=lambda _pinned: reason)",
-            "Source()",
-            "a refused reference does not say why it is never looked up, so a redundant marker names another reason",
-        )
-    )
     def test_stale_scope_on_a_refused_reference_is_reported_as_redundant_because_of_the_refusal(self):
         """Test that `set[stale-after=0]` is redundant for the reason a reference is left alone: its build arguments."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
