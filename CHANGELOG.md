@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.59 - 2026-11-15
+
 ### Added
 
 - Update and check the dependencies of a `package.json` that bun manages, rather than skipping it or running npm for it. Closes [#519](https://github.com/ICTU/update-time/issues/519).
