@@ -13,7 +13,6 @@ from update_time.updaters import (
     update_gitlab_ci_config,
     update_jsdelivr,
     update_node_engine,
-    update_package_json,
     update_pom_xml,
     update_pre_commit_config,
     update_pyproject_toml,
@@ -27,8 +26,9 @@ from tests.mutation import Mutation, kills
 if TYPE_CHECKING:
     from types import ModuleType
 
-# The file type each updater scans, and the function that scans it. Only `update_manifest_images` is left out: it
-# scans two file types, so `ScannedManifestsTest` pins both of them.
+# The file type each updater scans, and the function that scans it. `update_manifest_images` is left out: it scans
+# two file types, so `ScannedManifestsTest` pins both of them. So is `update_package_json`, whose tests find each file
+# by its pattern.
 _SCANS = (
     (update_circle_ci_config, "update_circle_ci_config", file_type.CIRCLE_CI_CONFIGS),
     (update_devcontainer, "update_devcontainers", file_type.DEVCONTAINER_CONFIGS),
@@ -37,7 +37,6 @@ _SCANS = (
     (update_gitlab_ci_config, "update_gitlab_ci_config", file_type.GITLAB_CI_CONFIG),
     (update_jsdelivr, "update_jsdelivrs", file_type.SPHINX_CONFIG),
     (update_node_engine, "update_node_engines", file_type.PACKAGE_JSON),
-    (update_package_json, "update_package_jsons", file_type.PACKAGE_JSON),
     (update_pom_xml, "update_pom_xmls", file_type.POM_XML),
     (update_pre_commit_config, "update_pre_commit_configs", file_type.PRE_COMMIT_CONFIG),
     (update_pyproject_toml, "update_pyproject_tomls", file_type.PYPROJECT_TOML),
@@ -63,9 +62,9 @@ class ScannedFileTypesTest(unittest.TestCase):
     # Aliasing the import swaps the file type without changing its shape, so no other test can notice.
     @kills(
         Mutation(
-            update_package_json,
-            "from update_time.domain.file_type import PACKAGE_JSON",
-            "from update_time.domain.file_type import PYPROJECT_TOML as PACKAGE_JSON",
+            update_pom_xml,
+            "from update_time.domain.file_type import POM_XML",
+            "from update_time.domain.file_type import PYPROJECT_TOML as POM_XML",
             "a script walks another file type than the one whose files it updates",
         )
     )

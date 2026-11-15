@@ -46,3 +46,4 @@
 - 2026-11-12 `tests.update_time.sources.test_pypi.GetChangesTest.test_root_listing_is_fetched_once_per_repository` — a GitHub API URL is fetched again for every caller that asks for it
 - 2026-11-12 `tests.update_time.updaters.test_update_github_action.UpdateGitHubActionsThroughTheSourceTest.test_two_references_to_one_branch_ask_for_its_releases_and_commit_once` — a GitHub API URL is fetched again for every caller that asks for it
 - 2026-11-13 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_member_sourcing_a_sibling_member_by_path_is_updated_with_its_workspace` — a member sourcing a sibling member by path puts its workspace in a cycle with itself, stopping the run
+- 2026-11-15 `tests.update_time.updaters.test_update_package_json.MarkerTest.test_a_warning_scope_is_reported_for_a_catalog_dependency_of_an_npm_project` — the warning on a `catalog:` dependency says the npm registry does not serve a release for it

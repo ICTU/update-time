@@ -30,6 +30,19 @@ class ReadTest(unittest.TestCase):
 
     @kills(
         Mutation(
+            yaml.parse,
+            "except yaml.YAMLError, ValueError:",
+            "except yaml.YAMLError:",
+            "a YAML file holding a date that does not exist stops the run",
+            raises="ValueError: month must be in 1..12, not 13",
+        )
+    )
+    def test_a_date_that_does_not_exist_makes_the_yaml_invalid(self):
+        """Test that a YAML file holding a date that does not exist is not valid YAML."""
+        self.assertIsNone(yaml.parse("released: 2023-13-45\n"))
+
+    @kills(
+        Mutation(
             yaml,
             '_Loader.add_multi_constructor("!", _value_under_unknown_tag)\n',
             "",
@@ -105,3 +118,22 @@ class DocumentTest(unittest.TestCase):
         nodes = self.nodes_of("- a\n- a\n- [b]\n")
         self.assertEqual(sorted(string for node in nodes if (string := node.string()) is not None), ["a", "a", "b"])
         self.assertEqual(len(nodes), 5)  # The sequence, its three items, and the `b` in the one holding it.
+
+    def test_a_merged_entry_is_keyed_where_the_merged_mapping_writes_it(self):
+        """Test that a merged entry is a keyed value at its key in the merged mapping, and a text drops its quotes."""
+        document = cast("yaml.Document", yaml.parse("base: &base\n  a: 1\nderived:\n  <<: *base\n  b: '2'\n"))
+        keyed = [(each.key, each.text, each.line_number, each.column) for each in document["derived"].keyed_values()]
+        self.assertEqual(keyed, [("a", "1", 2, 2), ("b", "2", 5, 2)])
+
+    @kills(
+        Mutation(
+            yaml.Document.keyed_values,
+            "if isinstance(self._value, _Mapping) else []",
+            "if self._value is not None else []",
+            "the keyed values of a sequence are read as those of a mapping, which stops the run",
+            raises="AttributeError: 'list' object has no attribute 'keyed_values'",
+        )
+    )
+    def test_a_sequence_has_no_keyed_values(self):
+        """Test that a sequence has no keyed values."""
+        self.assertEqual(cast("yaml.Document", yaml.parse("- left-pad\n")).keyed_values(), [])

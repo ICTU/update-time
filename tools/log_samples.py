@@ -182,9 +182,15 @@ def _redundant_package_json_markers(log: Logger, capture: _Capture) -> dict[str,
 
     undeclared = reference("lodash", Location(Path("package.json"), 9))
     log.redundant_directive(undeclared, "set[stale-after=0]", Reason.UNDECLARED_DEPENDENCY)
+    undeclared_warning = capture.take()
+
+    catalog_dependency = reference("semver", Location(Path("packages/a/package.json"), 4))
+    log.redundant_directive(catalog_dependency, "set[stale-after=0]", Reason.CHECKED_AT_THE_CATALOG)
+    log.redundant_directive(catalog_dependency, "set[stale-after=0]", Reason.CATALOG_ENTRY_NOT_FOUND)
     return {
         "@@REDUNDANT_UNSERVED_NPM_DEPENDENCY_WARNING@@": unserved,
-        "@@REDUNDANT_UNDECLARED_DEPENDENCY_WARNING@@": capture.take(),
+        "@@REDUNDANT_UNDECLARED_DEPENDENCY_WARNING@@": undeclared_warning,
+        "@@REDUNDANT_CATALOG_DEPENDENCY_WARNING@@": capture.take(),
     }
 
 
@@ -473,6 +479,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_package_managers_not_on_path(log, capture),
         **_not_a_uv_project(log, capture),
         **_range_rewrites(log, capture),
+        **_unreadable_pnpm_workspace_yaml(log, capture),
         **_versions_moved_back(log, capture),
         **_pin_with_environment_marker(log, capture),
         **_path_source_cycle(log, capture),
@@ -609,11 +616,22 @@ def _not_a_uv_project(log: Logger, capture: _Capture) -> dict[str, str]:
 
 
 def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that npm rewrote a range where the lock file held its version already, and where it held none."""
+    """Log the ranges a manager rewrote, in a package.json and in a catalog, and pair the lines."""
     package_json = Location(Path("dev/package.json"), 5)
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
-    return {"@@RANGE_REWRITES@@": capture.take()}
+    range_rewrites = capture.take()
+    log.range_rewrite(
+        "pnpm", reference("semver", Location(Path("pnpm-workspace.yaml"), 4), "^7.0.0"), "^7.8.6", "7.8.6"
+    )
+    return {"@@RANGE_REWRITES@@": range_rewrites, "@@CATALOG_RANGE_REWRITE@@": capture.take()}
+
+
+def _unreadable_pnpm_workspace_yaml(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that a pnpm-workspace.yaml cannot be read, and pair the line."""
+    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    log.unreadable_catalogs(Path("pnpm-workspace.yaml"), error)
+    return {"@@UNREADABLE_PNPM_WORKSPACE_YAML@@": capture.take()}
 
 
 def _pin_with_environment_marker(log: Logger, capture: _Capture) -> dict[str, str]:

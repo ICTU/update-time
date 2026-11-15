@@ -101,11 +101,11 @@ usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
 
 Scan the PATH for pinned dependencies and update them to their latest
 versions, rewriting the pinned versions in place. Looks at pyproject.toml,
-requirements.txt, PEP 723 inline script metadata, package.json, pom.xml,
-.python-version, Dockerfiles, CircleCI configs, .gitlab-ci.yml, Docker Compose
-files, Helm charts, devcontainer configs, YAML files under .github/, .pre-
-commit-config.yaml, and Sphinx config. A cooldown period holds back releases
-that are too fresh to trust.
+requirements.txt, PEP 723 inline script metadata, package.json, pnpm-
+workspace.yaml, pom.xml, .python-version, Dockerfiles, CircleCI configs,
+.gitlab-ci.yml, Docker Compose files, Helm charts, devcontainer configs, YAML
+files under .github/, .pre-commit-config.yaml, and Sphinx config. A cooldown
+period holds back releases that are too fresh to trust.
 
 positional arguments:
   PATH                  the directory to scan recursively for dependencies to
@@ -233,7 +233,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | Dependency type | Files | Source | Updated by |
 | :-------------- | :---- | :----- | :--------- |
 | [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt` and the sources of a compiled one, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time, uv, or pip-compile |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm, pnpm, or bun, whichever manages the `package.json` |
+| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | `package.json` and `pnpm-workspace.yaml` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm, pnpm, or bun, whichever manages the `package.json` |
 | [Maven dependencies](#maven-dependencies) | `pom.xml` | the repositories the project's Maven build resolves from | delegated to Maven's [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/) |
 | [Node engine version](#node-engine-version-and-python-version) | `package.json` | the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
 | [Python version](#node-engine-version-and-python-version) | `.python-version` | the latest [Python](https://hub.docker.com/_/python) release on Docker Hub | Update-time |
@@ -420,7 +420,7 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 | Dependency type | Yank check |
 | :-------------- | :--------- |
 | [Python dependencies](#python-dependencies) | exact pins in `requirements.txt`, the sources of a compiled one, `pyproject.toml`, and inline script metadata, and the version a compiled file pins for a source's requirement without an exact pin, against PyPI's yank metadata |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | `package.json` exact pins, against the npm registry's deprecation of the pinned version |
+| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | exact pins in a `package.json` and in a catalog, against the npm registry's deprecation of the pinned version |
 | [Maven dependencies](#maven-dependencies) | none: Maven Central does not report a withdrawal |
 | [Node engine version](#node-engine-version-and-python-version) | none: its source does not record a yank |
 | [Python version](#node-engine-version-and-python-version) | none: its source does not record a yank |
@@ -454,7 +454,7 @@ Which dependencies are checked follows from what OSV holds advisories for:
 | Dependency type | Vulnerability check |
 | :-------------- | :------------------ |
 | [Python dependencies](#python-dependencies) | exact pins in `requirements.txt`, the sources of a compiled one, `pyproject.toml`, and inline script metadata, and the version a compiled file pins for a source's requirement without an exact pin, against OSV's PyPI advisories |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | `package.json` exact pins, against OSV's npm advisories |
+| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | exact pins in a `package.json` and in a catalog, against OSV's npm advisories |
 | [Maven dependencies](#maven-dependencies) | the version each `pom.xml` dependency and plugin is left on, against OSV's Maven advisories |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
@@ -749,7 +749,7 @@ A marker is written in one of three places, and the file's format decides which:
   ]
   ```
 
-- **In an `update-time` field**, for a reference in a file that can hold no comment. A `package.json` is strict JSON. So the marker of its Node engine or of one of its dependencies names the reference it steers instead of sitting beside it, in a field mirroring the file's own structure:
+- **In an `update-time` field**, for a reference in a file that can hold no comment. A `package.json` is strict JSON. So the marker of its Node engine, of one of its dependencies, or of an entry of its catalogs names the reference it steers instead of sitting beside it, in a field mirroring the file's own structure:
 
   ```json
   "update-time": { "engines": { "node": "ignore[update]" }, "dependencies": { "left-pad": "set[stale-after=0]" } }
@@ -773,7 +773,7 @@ A marker written with the block's own `#` alone uncomments to `update-time: igno
 
 A dependency array can put several declarations on one line, or each on a line of its own, so two rules decide which declaration a marker steers. An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both. A marker on the line above steers whatever the line below it declares, wherever in the array that declaration sits. So a marker above the `dependencies = [` line steers nothing, since that line declares no dependency.
 
-A `package.json` dependency takes its marker under the section that declares it (see [npm, pnpm, and bun dependencies](#markers-1)).
+A `package.json` dependency takes its marker under the section that declares it, and a catalog entry takes its marker under the path of its catalog (see [npm, pnpm, and bun dependencies](#markers-1)).
 
 #### Confirming a marker was understood
 
@@ -814,6 +814,7 @@ WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:
 Update-time also leaves these references unchecked, although it checks other references of their dependency type:
 
 - a dependency that its source does not serve a release for, such as a `pyproject.toml` dependency pointing at a git repository or a `package.json` dependency given as a git URL
+- a `package.json` dependency that takes its version from a catalog, since Update-time checks that version at the catalog's entry, if it finds one (see [npm, pnpm, and bun dependencies](#markers-1))
 - an image that the file does not pull, such as a CircleCI machine-executor image or an image a Docker Compose file builds, or a reference that goes through a variable or a template Update-time cannot substitute, such as `redis:7.2-${VARIANT}`, since Update-time does not ask a registry about either
 - for the `stale` scope, an image on a registry other than Docker Hub, since such a registry does not report a publication date
 - a `pom.xml` declaration that leaves its version to the declaration managing it (see [Maven dependencies](#markers-2))
@@ -1240,9 +1241,9 @@ Update-time reports every warning scope as redundant on a dependency PyPI does n
 
 #### What files are updated?
 
-Update-time looks for `package.json` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm, and `bun.lock` for bun. Update-time finds the manager in the nearest directory that names one, from the `package.json`'s own upwards. A directory names a manager in the `packageManager` field of its `package.json`, or else in the lock files and the `pnpm-workspace.yaml` it holds.
+Update-time looks for `package.json` and `pnpm-workspace.yaml` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm, and `bun.lock` for bun. Update-time finds the manager in the nearest directory that names one, from the `package.json`'s own upwards. A directory names a manager in the `packageManager` field of its `package.json`, or else in the lock files and the `pnpm-workspace.yaml` it holds.
 
-Update-time runs npm, pnpm, or bun only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. It runs npm and bun for the root of a workspace as well, whose `workspaces` field names the members. The managers would write a lock file beside any other `package.json`, so Update-time does not run them for such a file, and reports it at `DEBUG`:
+Update-time runs npm, pnpm, or bun only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. It runs npm and bun for the root of a workspace as well, whose `workspaces` field names the members. It runs pnpm for the root of a workspace whose `pnpm-workspace.yaml` names the members, whether or not that root holds a `package.json`. The managers would write a lock file beside any other `package.json`, so Update-time does not run them for such a file, and reports it at `DEBUG`:
 
 ```console
 DEBUG Not running npm for ui/static/package.json: it does not declare dependencies for npm to install
@@ -1282,13 +1283,21 @@ Where npm, pnpm, or bun is not on the path, Update-time still checks the depende
 ERROR Could not update the dependencies in web/package.json: pnpm is not on the path
 ```
 
+A workspace can name the versions of its dependencies once, in a catalog at its root. bun keeps its catalogs in the root's `package.json`: the unnamed catalog under `workspaces.catalog` and a named one under `workspaces.catalogs.<name>`, or else at the top level, as `catalog` and `catalogs`. pnpm keeps them in `pnpm-workspace.yaml`, under `catalog` and `catalogs.<name>`. Update-time warns about a `pnpm-workspace.yaml` that it cannot read:
+
+```console
+WARNING Could not read pnpm-workspace.yaml to find the catalogs it holds ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)
+```
+
 #### What dependencies are updated?
 
-Update-time delegates updating Node dependencies to the package manager that manages the `package.json`. If that is npm, it runs `npm update --save --include=dev`. If it is pnpm, it runs `pnpm update`. If it is bun, it runs `bun update -r`.
+Update-time delegates updating Node dependencies to the package manager that manages the `package.json`. If that is npm, it runs `npm update --save --include=dev`. If it is pnpm, it runs `pnpm update -r`. If it is bun, it runs `bun update -r`.
+
+pnpm and bun update the entries of a workspace's catalogs as well. A member of a workspace declares a dependency as `catalog:` to take its version from the unnamed catalog, and as `catalog:<name>` to take it from a named one. `catalog:default` and a catalog named `default` stand for the unnamed catalog. npm has no catalogs, and refuses a `catalog:` dependency.
 
 #### What versions are updated?
 
-Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. npm, pnpm, and bun update a dependency to the newest version that satisfies the range declared in the `package.json`. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved up.
+Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. npm, pnpm, and bun update a dependency to the newest version that satisfies the range declared in the `package.json`, or in the catalog that a `catalog:` dependency takes its version from. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved up.
 
 The managers also write the version they resolve into the declared range. They do so whether or not the version in the lock file moved. bun rewrites a `^` or a `~` range alone, and leaves a range such as `>=1.0.0` or `1.x` as written. Where the workspace root's `bunfig.toml`, or your global `.bunfig.toml`, sets `exact = true` under `[install]`, bun replaces a `^` or a `~` range with the version it resolves, so `^7.6.0` becomes `7.8.6`. From then on, bun leaves the dependency on that version, as it leaves any exact pin. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
 
@@ -1297,10 +1306,16 @@ INFO npm rewrote the range of minimatch in dev/package.json:5 from ^3.1.2 to ^3.
 INFO npm rewrote the range of minimatch in dev/package.json:5 from ^3.0.0 to ^3.1.5; the lock file did not record a version before
 ```
 
-npm and bun move and rewrite the dependencies of a workspace's members along with those of its root. So Update-time runs them for the root alone, and reports each member's new versions at the member's `package.json`. It reports at `DEBUG` that it does not run them for a member:
+pnpm and bun rewrite the range of a catalog entry as they rewrite the range of a `package.json`. Update-time reports a version moved for a `catalog:` dependency once, however many members take their version from it, and a range rewritten in a catalog as well:
 
 ```console
-DEBUG Not running bun for packages/ui/package.json: the run for its workspace root package.json updates it
+INFO pnpm rewrote the range of semver in pnpm-workspace.yaml:4 from ^7.0.0 to ^7.8.6; the version in the lock file is unchanged at 7.8.6
+```
+
+npm, pnpm, and bun move and rewrite the dependencies of a workspace's members along with those of its root. So Update-time runs them for the root alone, and reports each member's new versions at the member's `package.json`. It reports at `DEBUG` which run updates a member:
+
+```console
+DEBUG The bun run for the workspace root package.json updates packages/ui/package.json
 ```
 
 Update-time reads the versions bun locks from `bun.lock`. Where it cannot read that file, it warns, and does not report a version for the project:
@@ -1331,19 +1346,19 @@ Where the lock file holds a version younger than the cooldown, npm and bun move 
 
 #### Stale dependencies
 
-Update-time checks each dependency against its newest release on the npm registry, and reports the stale ones. It skips dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references, since they don't resolve to a registry release. A dependency's marker can set a threshold of its own, such as `set[stale-after=90]`, or silence the warning with `set[stale-after=0]` (see [Markers](#markers-1)).
+Update-time checks each dependency and each entry of a catalog against its newest release on the npm registry, and reports the stale ones. It checks a `catalog:` dependency at the catalog's entry. It skips dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references, since they don't resolve to a registry release. A dependency's marker can set a threshold of its own, such as `set[stale-after=90]`, or silence the warning with `set[stale-after=0]` (see [Markers](#markers-1)).
 
 #### Yanked dependencies
 
-Update-time checks a dependency pinned to an exact version, such as `"left-pad": "1.3.0"` or `"left-pad": "=1.3.0"`, against the npm registry's deprecation of that version. npm, pnpm, and bun leave such a dependency on the version it names, so they never move it off a deprecated one.
+Update-time checks a dependency or a catalog entry pinned to an exact version, such as `"left-pad": "1.3.0"` or `"left-pad": "=1.3.0"`, against the npm registry's deprecation of that version. npm, pnpm, and bun leave such a dependency on the version it names, so they never move it off a deprecated one.
 
 #### Vulnerable dependencies
 
-Update-time checks a dependency pinned to an exact version, such as `"left-pad": "1.3.0"`, against OSV's npm advisories.
+Update-time checks a dependency or a catalog entry pinned to an exact version, such as `"left-pad": "1.3.0"`, against OSV's npm advisories.
 
 #### Archived dependencies
 
-The npm registry does not publish an archival signal, so Update-time does not check a `package.json` dependency.
+The npm registry does not publish an archival signal, so Update-time checks neither a `package.json` dependency nor a catalog entry.
 
 #### Markers
 
@@ -1360,7 +1375,14 @@ A dependency's marker goes in the `package.json`'s `update-time` field (see [Whe
 }
 ```
 
-A marker steers the checks rather than the update, since npm, pnpm, and bun move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
+An entry of a catalog takes a marker as well. In a `package.json`, the marker sits in the `update-time` field under the catalog's path, as in `"update-time": { "workspaces": { "catalog": { "semver": "set[stale-after=0]" } } }`. In a `pnpm-workspace.yaml`, the marker is a comment on the entry's line or on the line above:
+
+```yaml
+catalog:
+  semver: ^7.0.0  # update-time: set[stale-after=0]
+```
+
+A marker steers the checks rather than the update, since npm, pnpm, and bun move a dependency within the range its `package.json` or its catalog declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
 
 Update-time reports every scope as redundant on a dependency that does not resolve to a registry release, such as a git URL:
 
@@ -1372,6 +1394,13 @@ A marker naming a dependency that its section does not declare decides nothing, 
 
 ```console
 WARNING Redundant update-time directive set[stale-after=0] for lodash in package.json:9: this dependency is not declared in the section the update-time field names it under
+```
+
+A `catalog:` dependency takes its version from the catalog, and Update-time checks that version at the catalog's entry. So it reports every warning scope as redundant on the dependency itself. Where Update-time does not find the entry, it does not check the version, and the warning says so. That happens in an npm project, since npm has no catalogs. It happens where the scan starts in a member and leaves out the workspace root that holds the catalog. And it happens where the dependency names a catalog that the workspace does not hold:
+
+```console
+WARNING Redundant update-time directive set[stale-after=0] for semver in packages/a/package.json:4: Update-time checks this dependency at the catalog that names its version
+WARNING Redundant update-time directive set[stale-after=0] for semver in packages/a/package.json:4: Update-time does not find a catalog entry that names this dependency's version
 ```
 
 ### Maven dependencies

@@ -988,9 +988,9 @@ class Logger:
         """Warn that uv's settings do not say whether the project sets an `exclude-newer` for the file."""
         return self._file_fields(path)
 
-    @_debug("Not running %(manager)s for %(location)s: the run for its workspace root %(root)s updates it")
+    @_debug("The %(manager)s run for the workspace root %(root)s updates %(location)s")
     def updated_by_the_workspace_root(self, path: Path, manager: str, root: Path) -> dict[str, object]:
-        """Log that the package manager does not run for a workspace member, since the run for its root updates it."""
+        """Log that the package manager's run for the workspace root updates the member."""
         return self._file_fields(path, manager=manager, root=Location(root))
 
     @_warning(
@@ -1012,6 +1012,11 @@ class Logger:
     @_warning("Could not read %(location)s to find the versions it locks (%(error)s)")
     def unreadable_bun_lock(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
         """Warn that a bun.lock cannot be read, so the versions bun moved in it go unreported."""
+        return self._file_fields(path, error=str(error))
+
+    @_warning("Could not read %(location)s to find the catalogs it holds (%(error)s)")
+    def unreadable_catalogs(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
+        """Warn that a file holding catalogs cannot be read, so the entries of its catalogs go unchecked."""
         return self._file_fields(path, error=str(error))
 
     @_warning("Could not read %(location)s to find whether it sets a cooldown for bun (%(error)s)")
