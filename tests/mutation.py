@@ -9,6 +9,7 @@ mutation is applied in memory, so no file on disk is touched and an interrupted 
 
 import ast
 import functools
+import importlib
 import inspect
 import os
 import sys
@@ -296,16 +297,16 @@ class Mutation:
             cache_clear()
 
     def _run_test_afresh(self, test_name: str, mutated: str) -> unittest.TestResult:
-        """Run the test with the mutated source installed under the module's name.
+        """Run the test with the mutated source installed under the module's name, and bound on its parent package.
 
-        The module is read before the purge drops it, and `sys.modules` is put back however the run ends, so a
-        mutated module never outlives it.
+        The module is read before the purge drops it, and `sys.modules` is put back however the run ends, so a mutated
+        module never outlives it.
         """
         module = self._module
         imported = dict(sys.modules)
         try:
             self._purge(test_name)
-            sys.modules[module.__name__] = _executed_module(mutated, module)
+            _bind_on_parent(_executed_module(mutated, module))
             result = unittest.TestResult()
             _loaded_test(test_name).run(result)
         finally:
@@ -462,14 +463,37 @@ class _SourceError(Exception):
 
 
 def _executed_module(source: str, module: types.ModuleType) -> types.ModuleType:
-    """Return the module the source holds, executed but not yet installed under the name it replaces."""
+    """Return the module the source holds, installed under the name it replaces before the source runs.
+
+    An import installs a module before running it as well, so a module the source imports that imports this one back
+    gets the mutated module.
+    """
     executed = types.ModuleType(module.__name__)
     executed.__file__ = module.__file__
+    if hasattr(module, "__path__"):
+        executed.__path__ = module.__path__
+    sys.modules[module.__name__] = executed
     try:
         exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)  # noqa: S102 # nosec
     except Exception as error:
         raise _SourceError(_reason(error)) from error
     return executed
+
+
+def _bind_on_parent(module: types.ModuleType) -> None:
+    """Bind the module on its parent package, as an import binds a submodule it loads.
+
+    The parent is imported where the module's source did not import it, so a test naming the module by its dotted name
+    reaches it.
+    """
+    parent, _, child = module.__name__.rpartition(".")
+    if not parent:
+        return
+    try:
+        package = importlib.import_module(parent)
+    except Exception as error:
+        raise _SourceError(_reason(error)) from error
+    setattr(package, child, module)
 
 
 def _loaded_test(test_name: str) -> unittest.TestSuite:

@@ -13,9 +13,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, call, patch
 
+import update_time
 from update_time.primitives import timestamp
 
-from tests import helpers, mutation_subject
+import tests.mutation_subject_package.limit
+from tests import helpers, mutation_subject, mutation_subject_package
 from tests import mutation as checker
 from tests.helpers import patch_environ
 from tests.mutation import (
@@ -41,6 +43,7 @@ from tests.mutation_subject import (
     is_positive_even,
     scaled,
 )
+from tests.mutation_subject_package import step, tally
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -67,6 +70,9 @@ _GREETER_TEST_NAME = "tests.test_mutation.GreeterTest.test_a_greeting"
 _SCALED_TEST_NAME = "tests.test_mutation.ScaledTest.test_a_value_scaled_by_the_defaults"
 _INDENTED_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_an_indented_banner"
 _FLUSH_LEFT_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_a_flush_left_banner"
+_COUNTER_TEST_NAME = "tests.test_mutation.CounterTest.test_one_step"
+_TALLY_TEST_NAME = "tests.test_mutation.TallyTest.test_the_summary"
+_LIMIT_TEST_NAME = "tests.test_mutation.LimitTest.test_the_value"
 # The `IsEvenTest` tests `KillsTest` runs to exercise the decorator: one registers a single mutation, one several,
 # one asserts inside a subTest, and one has a patch above its decorator. `IsEvenPatchedInSetUpTest` gives its
 # decorated test the name of the first.
@@ -260,6 +266,30 @@ class DoublerTest(unittest.TestCase):
     def test_three_doubled(self):
         """Test that three doubled is six."""
         self.assertEqual(Doubler().three_doubled, 6)
+
+
+class CounterTest(unittest.TestCase):
+    """Unit tests for the counter of a package, which this module reaches as an attribute of the package's parent."""
+
+    def test_one_step(self):
+        """Test that the count after one step is one."""
+        self.assertEqual(mutation_subject_package.Counter().count(), 1)
+
+
+class TallyTest(unittest.TestCase):
+    """Unit tests for a tally, whose summary a module that imports the tally's module back writes."""
+
+    def test_the_summary(self):
+        """Test that the summary of a tally names its start."""
+        self.assertEqual(tally.Tally().summary(), "starts at 0")
+
+
+class LimitTest(unittest.TestCase):
+    """Unit tests for a limit, which this module reaches by the dotted name of the limit's module."""
+
+    def test_the_value(self):
+        """Test that the limit is ten."""
+        self.assertEqual(tests.mutation_subject_package.limit.Limit.value, 10)
 
 
 def _checked(mutation: Mutation, test_name: str) -> tuple[Result, int]:
@@ -464,6 +494,62 @@ class CheckTest(unittest.TestCase):
 
     @kills(
         Mutation(
+            checker._executed_module,
+            "executed.__path__ = module.__path__",
+            "pass",
+            "a mutated package is not a package, so a test importing a submodule of it ends the check as broken",
+        )
+    )
+    def test_a_mutation_of_a_package_importing_its_own_submodule_is_killed(self):
+        """Test that a mutation of a package whose module imports a submodule of its own reaches the test it breaks."""
+        mutation = Mutation(mutation_subject_package, "start = 0", "start = 1", _ANY_REGRESSION)
+        self.assertEqual(_checked(mutation, _COUNTER_TEST_NAME), (Result(Outcome.KILLED), 1))
+
+    @kills(
+        Mutation(
+            checker._executed_module,
+            "sys.modules[module.__name__] = executed\n"
+            "    try:\n"
+            '        exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)',
+            "try:\n"
+            '        exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)\n'
+            "        sys.modules[module.__name__] = executed",
+            "the mutation survives, since a module importing the mutated one back gets the original",
+        )
+    )
+    def test_a_mutation_of_a_module_that_a_module_it_imports_imports_back_is_killed(self):
+        """Test that a mutation reaches the test it breaks through a module that imports the mutated module back."""
+        mutation = Mutation(tally, "start = 0", "start = 1", _ANY_REGRESSION)
+        self.assertEqual(_checked(mutation, _TALLY_TEST_NAME), (Result(Outcome.KILLED), 1))
+
+    @kills(
+        Mutation(
+            checker._bind_on_parent,
+            "setattr(package, child, module)",
+            "pass",
+            "a test naming the mutated module by a dotted name does not find it on its parent",
+        )
+    )
+    def test_a_mutation_of_a_module_the_test_reaches_by_its_dotted_name_is_killed(self):
+        """Test that a mutation reaches the test it breaks where the test names the mutated module by a dotted name."""
+        mutation = Mutation(tests.mutation_subject_package.limit, "value = 10", "value = 11", _ANY_REGRESSION)
+        self.assertEqual(_checked(mutation, _LIMIT_TEST_NAME), (Result(Outcome.KILLED), 1))
+
+    @kills(
+        Mutation(
+            checker._bind_on_parent,
+            "if not parent:",
+            "if False:",
+            "a mutated top-level package is reported as broken, since the check imports an empty parent name",
+        )
+    )
+    def test_a_mutation_of_a_top_level_package_is_checked_afresh(self):
+        """Test that a mutation of a package without a parent is checked afresh, with nothing to bind it on."""
+        mutation = Mutation(update_time, '"""Update-time main package."""', '"""Update-time."""', _ANY_REGRESSION)
+        self.assertEqual(_checked(mutation, _SUBJECT_TEST_NAME), (Result(Outcome.SURVIVED), 1))
+
+    @kills(
+        Mutation(
             checker.Mutation._mutated_function,
             "return defined.get(",
             "return (vars(self._module) | defined).get(",
@@ -536,6 +622,12 @@ class CheckTest(unittest.TestCase):
             "        raise _SourceError() from error",
             "a mutation the test module cannot import is reported as broken without naming the error",
         ),
+        Mutation(
+            checker._bind_on_parent,
+            "raise _SourceError(_reason(error)) from error",
+            "raise _SourceError() from error",
+            "a mutation that leaves its parent package unimportable is reported as broken without naming the error",
+        ),
     )
     def test_a_mutation_that_cannot_be_judged_is_reported_as_broken(self):
         """Test that a mutation the check could not judge is reported as broken rather than as survived."""
@@ -558,6 +650,11 @@ class CheckTest(unittest.TestCase):
                 "ZeroDivisionError",
             ),
             ("the test module raises when imported", deletes_the_registration, "AttributeError"),
+            (
+                "the parent package raises when imported",
+                Mutation(step, "STEP = 1", "STEPS = 1", _ANY_REGRESSION),
+                "ImportError",
+            ),
         ):
             with self.subTest(case=case):
                 result = mutation.check(_SUBJECT_TEST_NAME)

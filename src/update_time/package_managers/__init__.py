@@ -1,4 +1,4 @@
-"""Drive the external package managers (uv, pip-compile, npm, pnpm, Maven) that update dependency manifests.
+"""Drive the external package managers (uv, pip-compile, npm, pnpm, bun, Maven) that update dependency manifests.
 
 Each module or subpackage provides one ecosystem's operations — detect which manager governs a project, apply
 Update-time's cooldown, run the manager to bump versions, and report what changed — using the `manifests` and

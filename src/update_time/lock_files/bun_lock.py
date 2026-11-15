@@ -8,12 +8,13 @@ from update_time.manifests.package_json import DEPENDENCY_SECTIONS
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.lock_files.locked_versions import LockedVersions
 
 # Why a lock that does not parse, or does not name the version of its format, cannot be read.
 _NOT_A_BUN_LOCK = "it does not hold the JSON bun writes"
 
 
-def locked_versions(lock: Path) -> dict[Path, dict[DependencyName, VersionString]]:
+def locked_versions(lock: Path) -> LockedVersions:
     """Return the version the lock records for each dependency of each workspace, keyed by the workspace's path.
 
     bun writes the lock as JSON with trailing commas, which the YAML parser reads as a flow mapping. Raise an `OSError`

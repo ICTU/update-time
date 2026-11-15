@@ -157,25 +157,32 @@ def _sources(paths: list[str]) -> dict[str, str]:
 
 
 class _InPlaceRenameCommand(RenameCommand):
-    """Rename a name as `RenameCommand` does, but in place where a line imports it alone or its module reaches it.
+    """Rename a name as `RenameCommand` does, but in place where a line imports it or its module reaches it.
 
-    `RenameCommand` deletes such a line and imports the new name at the top of the module instead, which moves an
-    import out of the `if TYPE_CHECKING:` block it sat in.
+    `RenameCommand` deletes the name from such a line and imports the new name at the top of the module instead. That
+    moves an import out of the `if TYPE_CHECKING:` block it sat in, and drops the trailing comma of an import that
+    names several names.
     """
 
     def leave_ImportFrom(  # noqa: N802
         self, original_node: libcst.ImportFrom, updated_node: libcst.ImportFrom
     ) -> libcst.Import | libcst.ImportFrom:
-        """Return the import with the old name renamed in place when it imports that name alone."""
+        """Return the import with the old name renamed in place where it imports that name without an alias."""
         names = updated_node.names
-        if updated_node.module is None or isinstance(names, libcst.ImportStar) or len(names) != 1 or names[0].asname:
+        if updated_node.module is None or isinstance(names, libcst.ImportStar):
             return super().leave_ImportFrom(original_node, updated_node)
-        imported = f"{get_full_name_for_node(updated_node.module)}.{get_full_name_for_node(names[0].name)}"
-        if imported != self.old_name:
+        module = get_full_name_for_node(updated_node.module)
+        matches = [
+            not alias.asname and f"{module}.{get_full_name_for_node(alias.name)}" == self.old_name for alias in names
+        ]
+        if not any(matches):
             return super().leave_ImportFrom(original_node, updated_node)
         self.bypass_import = True  # The import stands renamed, so `leave_Module` does not import the new name again
         new_name = libcst.Name(self.new_name.rpartition(".")[-1])
-        return updated_node.with_changes(names=[names[0].with_changes(name=new_name)])
+        renamed = [
+            alias.with_changes(name=new_name) if match else alias for alias, match in zip(names, matches, strict=True)
+        ]
+        return updated_node.with_changes(names=renamed)
 
     def leave_Attribute(  # noqa: N802
         self, original_node: libcst.Attribute, updated_node: libcst.Attribute
@@ -304,9 +311,10 @@ def _is_module(path: str, module: str) -> bool:
     """Return whether the file at the path is the module, so the definitions the module holds sit in it.
 
     The path is read as the dotted module it spells, which the module ends it with wherever the package root sits:
-    `src/update_time/io/log.py` is the module `update_time.io.log`, and `tools/rename.py` is `tools.rename`.
+    `src/update_time/io/log.py` is the module `update_time.io.log`, `tools/rename.py` is `tools.rename`, and
+    `tools/__init__.py` is `tools`.
     """
-    dotted = path.removesuffix(".py").replace("/", ".")
+    dotted = path.removesuffix(".py").removesuffix("/__init__").replace("/", ".")
     return bool(module) and (dotted == module or dotted.endswith(f".{module}"))
 
 

@@ -12,7 +12,13 @@ from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.package_json import PackageJson
 from update_time.manifests.pnpm_workspace_yaml import PnpmWorkspaceYaml
-from update_time.package_managers import node
+from update_time.package_managers.node.manager_choice import SUPPORTED_MANAGERS, manager_choice
+from update_time.package_managers.node.marker_policy import (
+    MARKER_POLICY,
+    MORE_THAN_ONE_MANAGER_POLICY,
+    CheckedPackageJson,
+)
+from update_time.package_managers.node.pnpm_workspace import update_pnpm_workspace
 from update_time.package_managers.policy import report_markers
 from update_time.primitives.text import prose_list
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_redundant_directives
@@ -44,22 +50,22 @@ def update_package_jsons() -> None:
     package.json. A manager runs only where the project's files name one manager.
     """
     # The run for a workspace root updates its members, so the roots go first, and a member is read as that run left it:
-    catalog_policies = {path: node.update_pnpm_workspace(path) for path in glob_for(PNPM_WORKSPACE_YAML)}
-    supported: list[node.CheckedPackageJson] = []
+    catalog_policies = {path: update_pnpm_workspace(path) for path in glob_for(PNPM_WORKSPACE_YAML)}
+    supported: list[CheckedPackageJson] = []
     for package_json in sorted(glob_for(PACKAGE_JSON), key=lambda path: len(path.parts)):
         _LOG.path(package_json)
         if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:
             continue
-        choice = node.manager_choice(file)
-        if (manager := node.SUPPORTED_MANAGERS.get(name := choice.name)) is None:
-            _LOG.unsupported_package_manager(package_json, name, prose_list(node.SUPPORTED_MANAGERS))
+        choice = manager_choice(file)
+        if (manager := SUPPORTED_MANAGERS.get(name := choice.name)) is None:
+            _LOG.unsupported_package_manager(package_json, name, prose_list(SUPPORTED_MANAGERS))
             continue
         if not (file.declares_a_dependency() or manager.roots_a_workspace(file)):
             _LOG.no_dependencies(package_json, name, "install")
-            checked_package_json: node.CheckedPackageJson | None = node.CheckedPackageJson(file, node.MARKER_POLICY)
+            checked_package_json: CheckedPackageJson | None = CheckedPackageJson(file, MARKER_POLICY)
         elif choice.names_more_than_one_manager():
             _LOG.files_of_more_than_one_manager(package_json, choice.files)
-            checked_package_json = node.CheckedPackageJson(file, node.MORE_THAN_ONE_MANAGER_POLICY)
+            checked_package_json = CheckedPackageJson(file, MORE_THAN_ONE_MANAGER_POLICY)
         else:
             checked_package_json = manager.update_package_json(file)
         if checked_package_json is not None:

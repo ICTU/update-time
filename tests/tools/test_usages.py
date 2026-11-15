@@ -8,9 +8,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
+from tools import usages as usages_module
 from tools.usages import _ROOTS, Position, _LanguageServerError, _python_files, _usages, main
 
 from tests.helpers import mock_path, patch_pathlib_path
+from tests.mutation import Mutation, kills
 
 # The module that defines the name the tests look up, and a module that uses it.
 _DEFINING_MODULE = Path("src/pkg/mod.py")
@@ -132,6 +134,20 @@ class MainTest(unittest.TestCase):
                     self.written.getvalue(),
                     "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n",
                 )
+
+    @kills(
+        Mutation(
+            usages_module._module,
+            'parts = parts[:-1] if parts[-1] == "__init__" else parts',
+            "pass",
+            "the report says nothing defines a name that the `__init__.py` of a package defines",
+        )
+    )
+    def test_a_function_the_init_of_a_package_defines_is_looked_up_by_the_package_s_name(self):
+        """Test that a function the `__init__.py` of a package defines is looked up there, named by the package."""
+        package = Path("src/pkg/__init__.py")
+        self.assertEqual(self.report("pkg.target", {package: "def target():\n    pass\n"}, []), 0)
+        self.requested.assert_called_once_with(Position(package, 0, 4))
 
     def test_a_bare_name_several_definitions_hold(self):
         """Test that a bare name several files define fails the run, naming each, without asking the server."""
