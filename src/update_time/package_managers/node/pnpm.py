@@ -6,9 +6,14 @@ from typing import TYPE_CHECKING
 
 from update_time.io.process import run
 from update_time.lock_files.locked_versions import ROOT_PROJECT, listed_versions
+from update_time.manifests.catalogs_yaml import CatalogsYaml
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS
-from update_time.manifests.pnpm_workspace_yaml import PnpmWorkspaceYaml
-from update_time.package_managers.node.package_manager import ConfiguredCooldown, PackageManager, catalogs_of
+from update_time.package_managers.node.package_manager import (
+    ConfiguredCooldown,
+    CooldownArguments,
+    PackageManager,
+    catalogs_of,
+)
 from update_time.primitives.command import Command
 from update_time.primitives.timestamp import MINUTES_PER_DAY
 
@@ -66,7 +71,7 @@ PNPM = PackageManager(
         keys=("minimumReleaseAge",),
         unset="undefined",  # Rather than pnpm's built-in default
     ).setting,
-    cooldown_option=lambda days: f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",
+    cooldown_arguments=lambda days: CooldownArguments((f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",)),
     locked_versions=_pnpm_locked_versions,
-    catalogs=lambda root: catalogs_of(PnpmWorkspaceYaml.readable(root / _PNPM_WORKSPACE_FILE)),
+    catalogs=lambda root: catalogs_of(CatalogsYaml.readable(root / _PNPM_WORKSPACE_FILE)),
 )

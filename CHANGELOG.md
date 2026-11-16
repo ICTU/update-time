@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Update the dependencies of a `package.json` that yarn 4.10 or later manages, check them and the catalogs of a `.yarnrc.yml`, and check rather than skip a project of an older yarn, which cannot apply a cooldown. Closes [#520](https://github.com/ICTU/update-time/issues/520).
+
+### Changed
+
+- Warn about a workspace locked in a binary `bun.lockb` once, at its root, rather than once for each `package.json` it holds, and point each member at that warning at `DEBUG`. Part of [#520](https://github.com/ICTU/update-time/issues/520).
+
+### Fixed
+
+- Report and check an aliased dependency, such as `"baz": "npm:react-is@^18.0.0"`, as the package it aliases, at the line declaring it, rather than looking the alias up on the npm registry. Part of [#520](https://github.com/ICTU/update-time/issues/520).
 
 ## 0.0.59 - 2026-11-15
 

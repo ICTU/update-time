@@ -9,7 +9,12 @@ from update_time.formats import toml
 from update_time.io.log import get_logger
 from update_time.lock_files import bun_lock
 from update_time.manifests.package_json import PackageJson
-from update_time.package_managers.node.package_manager import PackageManager, catalogs_of
+from update_time.package_managers.node.package_manager import (
+    CooldownArguments,
+    PackageManager,
+    catalogs_of,
+    package_json_workspace_root,
+)
 from update_time.primitives.command import Command
 from update_time.primitives.timestamp import SECONDS_PER_DAY
 
@@ -24,27 +29,6 @@ _BUN_BINARY_LOCK = "bun.lockb"  # The lock bun wrote before version 1.2, and sti
 _BUNFIG_COOLDOWN = "minimumReleaseAge"
 # Why a bunfig.toml whose `install` is not a table cannot be read for the cooldown it sets.
 _INSTALL_NOT_A_TABLE = "its install is not a table"
-
-
-def _bun_workspace_root(directory: Path) -> Path:
-    """Return the nearest ancestor whose package.json declares the directory a workspace member, else the directory.
-
-    bun keeps one lock at the workspace root, and locks a project outside a workspace in the project's own directory.
-    """
-    return next((ancestor for ancestor in directory.parents if _declares_member(ancestor, directory)), directory)
-
-
-def _declares_member(root: Path, directory: Path) -> bool:
-    """Return whether the package.json in the root declares the directory a member of its workspace.
-
-    A pattern that starts with `!` takes out the directories it matches, wherever it sits among the patterns.
-    """
-    if (readable := PackageJson.readable(root / "package.json")) is None:
-        return False
-    member = directory.relative_to(root)
-    patterns = readable.workspace_patterns()
-    excluded = any(member.full_match(pattern.removeprefix("!")) for pattern in patterns if pattern.startswith("!"))
-    return not excluded and any(member.full_match(pattern) for pattern in patterns if not pattern.startswith("!"))
 
 
 def _bun_locked_versions(directory: Path) -> LockedVersions:
@@ -98,12 +82,13 @@ BUN = PackageManager(
     # `-r` updates every workspace, from the root and from a member alike, as `npm update` does. Deliberately without
     # `--latest`, which would cross the version ranges declared in package.json.
     update=Command("bun", "update", "-r"),
-    find_workspace_root=_bun_workspace_root,
+    # bun keeps one lock at the workspace root, and locks a project outside a workspace in the project's own directory.
+    find_workspace_root=package_json_workspace_root,
     lock_files=(_BUN_LOCK,),
     binary_lock=_BUN_BINARY_LOCK,
     workspace_file=None,
     cooldown_setting=_bun_cooldown_setting,
-    cooldown_option=lambda days: f"--minimum-release-age={days * SECONDS_PER_DAY}",
+    cooldown_arguments=lambda days: CooldownArguments((f"--minimum-release-age={days * SECONDS_PER_DAY}",)),
     locked_versions=_bun_locked_versions,
     catalogs=lambda root: catalogs_of(PackageJson.readable(root / "package.json")),
 )

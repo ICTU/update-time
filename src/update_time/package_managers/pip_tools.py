@@ -34,7 +34,7 @@ class PipCompile(RequirementsCompiler):
             reason = config.stderr.strip() or "pip failed without saying why"
         else:
             return bool(_CONFIG_UPLOADED_PRIOR_TO.search(config.stdout))
-        self.log.pip_settings_unreadable(self.compiled.path, reason)
+        self.log.settings_unreadable(self.compiled.path, "pip", "uploaded-prior-to", reason)
         return False
 
     @override

@@ -63,7 +63,7 @@ Update-time rewrites the files in place and logs what it did:
   - [Invalid markers](#invalid-markers)
 - [📖 Details per dependency type](#-details-per-dependency-type)
   - [Python dependencies](#python-dependencies)
-  - [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies)
+  - [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies)
   - [Maven dependencies](#maven-dependencies)
   - [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)
   - [Node engine version and Python version](#node-engine-version-and-python-version)
@@ -102,10 +102,10 @@ usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
 Scan the PATH for pinned dependencies and update them to their latest
 versions, rewriting the pinned versions in place. Looks at pyproject.toml,
 requirements.txt, PEP 723 inline script metadata, package.json, pnpm-
-workspace.yaml, pom.xml, .python-version, Dockerfiles, CircleCI configs,
-.gitlab-ci.yml, Docker Compose files, Helm charts, devcontainer configs, YAML
-files under .github/, .pre-commit-config.yaml, and Sphinx config. A cooldown
-period holds back releases that are too fresh to trust.
+workspace.yaml, .yarnrc.yml, pom.xml, .python-version, Dockerfiles, CircleCI
+configs, .gitlab-ci.yml, Docker Compose files, Helm charts, devcontainer
+configs, YAML files under .github/, .pre-commit-config.yaml, and Sphinx
+config. A cooldown period holds back releases that are too fresh to trust.
 
 positional arguments:
   PATH                  the directory to scan recursively for dependencies to
@@ -233,7 +233,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | Dependency type | Files | Source | Updated by |
 | :-------------- | :---- | :----- | :--------- |
 | [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt` and the sources of a compiled one, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time, uv, or pip-compile |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | `package.json` and `pnpm-workspace.yaml` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm, pnpm, or bun, whichever manages the `package.json` |
+| [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | `package.json`, `pnpm-workspace.yaml`, `.yarnrc.yml`, and the lock files | [npm registry](https://registry.npmjs.org) | delegated to npm, pnpm, yarn, or bun, whichever manages the `package.json` |
 | [Maven dependencies](#maven-dependencies) | `pom.xml` | the repositories the project's Maven build resolves from | delegated to Maven's [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/) |
 | [Node engine version](#node-engine-version-and-python-version) | `package.json` | the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
 | [Python version](#node-engine-version-and-python-version) | `.python-version` | the latest [Python](https://hub.docker.com/_/python) release on Docker Hub | Update-time |
@@ -242,7 +242,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) | Update-time |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | Sphinx config | [npm registry](https://registry.npmjs.org) | Update-time |
 
-Update-time updates the pins in a `requirements.txt` and in the sources of a compiled one, which uv or pip-compile then recompiles, whichever compiled it. In a `pyproject.toml` and in inline script metadata, uv resolves the versions and Update-time writes the pins, because uv does not have a [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794). uv, npm, pnpm, and bun keep the project's lock files in step.
+Update-time updates the pins in a `requirements.txt` and in the sources of a compiled one, which uv or pip-compile then recompiles, whichever compiled it. In a `pyproject.toml` and in inline script metadata, uv resolves the versions and Update-time writes the pins, because uv does not have a [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794). uv, npm, pnpm, yarn, and bun keep the project's lock files in step.
 
 ### 📌 Pinning
 
@@ -298,7 +298,7 @@ What Update-time adds depends on what the reference can hold:
 | Dependency type | What Update-time adds |
 | :-------------- | :-------------------- |
 | [Python dependencies](#python-dependencies) | nothing: a pin names a version, and Update-time writes no hash beside it |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | nothing: the integrity hashes live in the package manager's lock file |
+| [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | nothing: the integrity hashes live in the package manager's lock file |
 | [Maven dependencies](#maven-dependencies) | nothing: a pom names a version, and Maven records an artefact's checksum beside the artefact |
 | [Node engine version](#node-engine-version-and-python-version) | nothing: it names a Node version, not an artefact that could be hashed |
 | [Python version](#node-engine-version-and-python-version) | nothing: it names a Python version, not an artefact that could be hashed |
@@ -340,7 +340,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 | Dependency type | Applied by | Measured against |
 | :-------------- | :--------- | :--------------- |
 | [Python dependencies](#python-dependencies) | Update-time for `requirements.txt` and the sources of a compiled one, pip-compile for a compiled file it recompiles, uv for the rest | the release's publication date on PyPI |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | npm, pnpm, and bun | the release's age on the npm registry |
+| [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | npm, pnpm, yarn, and bun | the release's age on the npm registry |
 | [Maven dependencies](#maven-dependencies) | Update-time, for the artefacts Maven Central serves | the version's publication date on Maven Central |
 | [Node engine version](#node-engine-version-and-python-version) | Update-time | the Node image tag's push date |
 | [Python version](#node-engine-version-and-python-version) | Update-time | the Python image tag's push date |
@@ -356,16 +356,16 @@ DEBUG Holding back version 4.38.3 of github/codeql-action/init in .github/workfl
 DEBUG Holding back version 3.15.0 of python in Dockerfile:2: published 2026-10-08 13:01 UTC, within the cooldown of 30 days until 2026-11-07 13:01 UTC (update-time: set[cooldown=30])
 ```
 
-Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, pnpm, or bun. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Update-time does not hand the value over where the package manager's own settings already hold a cooldown. It names the setting that holds the cooldown instead, at `DEBUG`, so the log shows a `--cooldown` that does not reach a project:
+Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, pnpm, yarn, or bun. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Update-time does not hand the value over where the package manager's own settings already hold a cooldown. It names the setting that holds the cooldown instead, at `DEBUG`, so the log shows a `--cooldown` that does not reach a project:
 
 ```console
 DEBUG Not applying the cooldown of 7 days to package.json: bun minimumReleaseAge sets one
 DEBUG Not applying the cooldown of 7 days to pyproject.toml: uv exclude-newer sets one
 ```
 
-[Python dependencies](#python-dependencies) and [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) describe what that means per dependency type.
+[Python dependencies](#python-dependencies) and [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) describe what that means per dependency type.
 
-A lock file or a compiled requirements file can hold a version younger than the cooldown. That happens, for example, on the first run that applies a cooldown, and on a run with a longer cooldown than the run before. uv, pip-compile, npm, and bun then move that version back to the newest version older than the cooldown, and pnpm refuses to update. Update-time reports a version moved back at `INFO`:
+A lock file or a compiled requirements file can hold a version younger than the cooldown. That happens, for example, on the first run that applies a cooldown, and on a run with a longer cooldown than the run before. uv, pip-compile, npm, yarn, and bun then move that version back to the newest version older than the cooldown, and pnpm refuses to update. Update-time reports a version moved back at `INFO`:
 
 ```console
 INFO uv moved humanize in docs/requirements.in:2 back from 4.16.0 to 4.11.0
@@ -394,7 +394,7 @@ Update-time checks the dependencies it asks a source about for staleness, agains
 | Dependency type | Measured against |
 | :-------------- | :--------------- |
 | [Python dependencies](#python-dependencies) | the newest release of the package on PyPI |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | the newest release on the npm registry, for the dependencies that resolve to one |
+| [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | the newest release on the npm registry, for the dependencies that resolve to one |
 | [Maven dependencies](#maven-dependencies) | the newest release on Maven Central, of each `pom.xml` dependency and plugin |
 | [Node engine version](#node-engine-version-and-python-version) | the newest Node release on Docker Hub |
 | [Python version](#node-engine-version-and-python-version) | the newest Python release on Docker Hub |
@@ -420,7 +420,7 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 | Dependency type | Yank check |
 | :-------------- | :--------- |
 | [Python dependencies](#python-dependencies) | exact pins in `requirements.txt`, the sources of a compiled one, `pyproject.toml`, and inline script metadata, and the version a compiled file pins for a source's requirement without an exact pin, against PyPI's yank metadata |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | exact pins in a `package.json` and in a catalog, against the npm registry's deprecation of the pinned version |
+| [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | exact pins in a `package.json` and in a catalog, against the npm registry's deprecation of the pinned version |
 | [Maven dependencies](#maven-dependencies) | none: Maven Central does not report a withdrawal |
 | [Node engine version](#node-engine-version-and-python-version) | none: its source does not record a yank |
 | [Python version](#node-engine-version-and-python-version) | none: its source does not record a yank |
@@ -454,7 +454,7 @@ Which dependencies are checked follows from what OSV holds advisories for:
 | Dependency type | Vulnerability check |
 | :-------------- | :------------------ |
 | [Python dependencies](#python-dependencies) | exact pins in `requirements.txt`, the sources of a compiled one, `pyproject.toml`, and inline script metadata, and the version a compiled file pins for a source's requirement without an exact pin, against OSV's PyPI advisories |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | exact pins in a `package.json` and in a catalog, against OSV's npm advisories |
+| [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | exact pins in a `package.json` and in a catalog, against OSV's npm advisories |
 | [Maven dependencies](#maven-dependencies) | the version each `pom.xml` dependency and plugin is left on, against OSV's Maven advisories |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
@@ -481,7 +481,7 @@ Which dependencies are checked follows from where an archival declaration can be
 | Dependency type | Archival check |
 | :-------------- | :------------- |
 | [Python dependencies](#python-dependencies) | the project status PyPI publishes for the package a Python file declares |
-| [npm, pnpm, and bun dependencies](#npm-pnpm-and-bun-dependencies) | none: the npm registry does not publish an archival signal |
+| [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | none: the npm registry does not publish an archival signal |
 | [Maven dependencies](#maven-dependencies) | whether GitHub reports the source repository of each `pom.xml` dependency and plugin as archived |
 | [Node engine version](#node-engine-version-and-python-version) | none: Docker Hub does not publish an archival signal |
 | [Python version](#node-engine-version-and-python-version) | none: Docker Hub does not publish an archival signal |
@@ -620,7 +620,7 @@ To adopt new releases for one reference as soon as they ship, write `set[cooldow
 
 Run with `--log-level DEBUG` to see the version the cooldown holds back (see [Cooldown](#-cooldown)).
 
-The override reaches the dependencies whose cooldown Update-time enforces itself, and the packages of a requirements file uv recompiles (see [Python dependencies](#cooldown)). It does nothing for the other dependencies handed to uv, pip-compile, npm, pnpm, or bun, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
+The override reaches the dependencies whose cooldown Update-time enforces itself, and the packages of a requirements file uv recompiles (see [Python dependencies](#cooldown)). It does nothing for the other dependencies handed to uv, pip-compile, npm, pnpm, yarn, or bun, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
 
 #### Setting a risk level
 
@@ -755,7 +755,7 @@ A marker is written in one of three places, and the file's format decides which:
   "update-time": { "engines": { "node": "ignore[update]" }, "dependencies": { "left-pad": "set[stale-after=0]" } }
   ```
 
-  npm, pnpm, and bun keep a field they do not know, so the marker survives an `npm update`, a `pnpm update`, and a `bun update`.
+  npm, pnpm, yarn, and bun keep a field they do not know, so the marker survives an `npm update`, a `pnpm update`, a `yarn up`, and a `bun update`.
 
 A reference in any other file takes its marker in a comment: a `//` comment in a `devcontainer.json`, a `<!-- … -->` comment in a `pom.xml`, and a `#` comment everywhere else. An inline marker steers only a reference on its own line, never on the line below it.
 
@@ -773,7 +773,7 @@ A marker written with the block's own `#` alone uncomments to `update-time: igno
 
 A dependency array can put several declarations on one line, or each on a line of its own, so two rules decide which declaration a marker steers. An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both. A marker on the line above steers whatever the line below it declares, wherever in the array that declaration sits. So a marker above the `dependencies = [` line steers nothing, since that line declares no dependency.
 
-A `package.json` dependency takes its marker under the section that declares it, and a catalog entry takes its marker under the path of its catalog (see [npm, pnpm, and bun dependencies](#markers-1)).
+A `package.json` dependency takes its marker under the section that declares it, and a catalog entry takes its marker under the path of its catalog (see [npm, pnpm, yarn, and bun dependencies](#markers-1)).
 
 #### Confirming a marker was understood
 
@@ -814,7 +814,7 @@ WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:
 Update-time also leaves these references unchecked, although it checks other references of their dependency type:
 
 - a dependency that its source does not serve a release for, such as a `pyproject.toml` dependency pointing at a git repository or a `package.json` dependency given as a git URL
-- a `package.json` dependency that takes its version from a catalog, since Update-time checks that version at the catalog's entry, if it finds one (see [npm, pnpm, and bun dependencies](#markers-1))
+- a `package.json` dependency that takes its version from a catalog, since Update-time checks that version at the catalog's entry, if it finds one (see [npm, pnpm, yarn, and bun dependencies](#markers-1))
 - an image that the file does not pull, such as a CircleCI machine-executor image or an image a Docker Compose file builds, or a reference that goes through a variable or a template Update-time cannot substitute, such as `redis:7.2-${VARIANT}`, since Update-time does not ask a registry about either
 - for the `stale` scope, an image on a registry other than Docker Hub, since such a registry does not report a publication date
 - a `pom.xml` declaration that leaves its version to the declaration managing it (see [Maven dependencies](#markers-2))
@@ -872,7 +872,8 @@ An `ignore[update]`, a bound, and a `set[cooldown=…]` each steer the update. U
 
 - a `requirements.txt` requirement that does not pin an exact version, outside the source of a file Update-time recompiles (see [Python dependencies](#markers))
 - a `pom.xml` dependency or plugin whose version Maven does not update (see [What dependencies are updated?](#what-dependencies-are-updated-2)), or whose pom's versions plugin configuration names rules of its own, which Maven follows instead of the marker (see [Maven dependencies](#markers-2))
-- a dependency of a `pyproject.toml` that uv does not manage, of a `package.json` whose project does not have a lock file, has a binary `bun.lockb`, or holds the files of more than one package manager, or of a workspace whose root lies outside the scan root
+- a dependency of a `pyproject.toml` that uv does not manage, or of a workspace whose root lies outside the scan root
+- a dependency of a `package.json` whose project does not have a lock file, has a binary `bun.lockb` or a yarn that cannot apply a cooldown, or holds the files of more than one package manager
 - an image that the file does not pull, or a reference that goes through a variable or a template Update-time cannot substitute (see [Docker images](#what-dependencies-are-updated-5))
 - a GitHub Action or pre-commit hook that names a full commit SHA without a comment (see [GitHub Actions and pre-commit hooks](#pinning-3))
 
@@ -894,7 +895,7 @@ WARNING Redundant update-time directive ignore[update] for actions/checkout in .
 
 Update-time also reports a `set[cooldown=…]` as redundant on a reference whose cooldown holds nothing back. Besides the references under [Where a marker does not steer the update](#where-a-marker-does-not-steer-the-update), those are:
 
-- a dependency that uv, pip-compile, npm, pnpm, or bun updates, since they take one cooldown per run rather than per dependency (see [Cooldown](#-cooldown))
+- a dependency that uv, pip-compile, npm, pnpm, yarn, or bun updates, since they take one cooldown per run rather than per dependency (see [Cooldown](#-cooldown))
 - an image on a registry other than Docker Hub, or an artefact Maven Central does not serve, since their sources do not report a publication date
 - a GitHub Action or pre-commit hook that names a commit SHA
 
@@ -974,7 +975,7 @@ WARNING Redundant update-time directive ignore[update>=3.12] for python in Docke
 
 Update-time also reports a bound as redundant on a reference whose version the bound cannot narrow. Besides the references under [Where a marker does not steer the update](#where-a-marker-does-not-steer-the-update), those are:
 
-- a `package.json` dependency, since npm, pnpm, and bun move it within the range the file declares, whatever its marker says
+- a `package.json` dependency, since npm, pnpm, yarn, and bun move it within the range the file declares, whatever its marker says
 - a dependency that does not pin an exact version, in a `pyproject.toml` or a script that does not have a lock before the run, since uv resolves it afresh on every run
 - a `pyproject.toml` build requirement, since uv does not lock it and Update-time leaves its pin as it is
 - a `pyproject.toml` or inline script metadata dependency given as a direct URL, since it names a URL rather than a version
@@ -1237,13 +1238,13 @@ pip-compile takes one cooldown for the whole file, so Update-time reports a `set
 
 Update-time reports every warning scope as redundant on a dependency PyPI does not serve a release for: one pointing at a URL or a git repository, or one uv resolves through a `[tool.uv] sources` entry.
 
-### npm, pnpm, and bun dependencies
+### npm, pnpm, yarn, and bun dependencies
 
 #### What files are updated?
 
-Update-time looks for `package.json` and `pnpm-workspace.yaml` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm, and `bun.lock` for bun. Update-time finds the manager in the nearest directory that names one, from the `package.json`'s own upwards. A directory names a manager in the `packageManager` field of its `package.json`, or else in the lock files and the `pnpm-workspace.yaml` it holds.
+Update-time looks for `package.json`, `pnpm-workspace.yaml`, and `.yarnrc.yml` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm, `yarn.lock` for yarn, and `bun.lock` for bun. Update-time finds the manager in the nearest directory that names one, from the `package.json`'s own upwards. A directory names a manager in the `packageManager` field of its `package.json`, or else in the lock files and the `pnpm-workspace.yaml` it holds.
 
-Update-time runs npm, pnpm, or bun only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. It runs npm and bun for the root of a workspace as well, whose `workspaces` field names the members. It runs pnpm for the root of a workspace whose `pnpm-workspace.yaml` names the members, whether or not that root holds a `package.json`. The managers would write a lock file beside any other `package.json`, so Update-time does not run them for such a file, and reports it at `DEBUG`:
+Update-time runs npm, pnpm, yarn, or bun only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. It runs npm, yarn, and bun for the root of a workspace as well, whose `workspaces` field names the members. It runs pnpm for the root of a workspace whose `pnpm-workspace.yaml` names the members, whether or not that root holds a `package.json`. The managers would write a lock file beside any other `package.json`, so Update-time does not run them for such a file, and reports it at `DEBUG`:
 
 ```console
 DEBUG Not running npm for ui/static/package.json: it does not declare dependencies for npm to install
@@ -1256,12 +1257,30 @@ DEBUG Not running npm for web/package.json: it does not have a lock file, and np
 DEBUG Not running pnpm for packages/ui/package.json: it does not have a lock file, and pnpm would write pnpm-lock.yaml
 ```
 
-To have Update-time update such a project, run `npm install`, `pnpm install`, or `bun install` once.
+To have Update-time update such a project, run `npm install`, `pnpm install`, `yarn install`, or `bun install` once.
 
 bun wrote its lock as a binary `bun.lockb` before version 1.2, which Update-time cannot read. So Update-time does not run bun for a project locked in a `bun.lockb` either. It still checks the dependencies, and says how to convert the lock at `WARNING`:
 
 ```console
 WARNING Not running bun for package.json: it locks its dependencies in the binary bun.lockb, which Update-time cannot read; run bun install --save-text-lockfile to convert it to bun.lock
+```
+
+yarn applies a cooldown from version 4.10 on. yarn classic, version 1, has none, and a yarn from 2.0 to 4.9 refuses to run where Update-time passes one. So Update-time does not run a yarn before 4.10 either. It asks the yarn that runs at the workspace root for its version. Where a `.yarnrc.yml` names a `yarnPath`, that yarn is the release the path names. It still checks the dependencies, and says how to switch at `WARNING`:
+
+```console
+WARNING Not running yarn for package.json: the yarn that runs in . is version 1.22.22, which cannot apply a cooldown; run yarn set version stable to switch the project to a yarn that can
+```
+
+Where yarn does not report its version, Update-time does not run it either, and warns why:
+
+```console
+WARNING Could not determine the version of yarn in .: Usage Error: Parse error when loading .yarnrc.yml; please check it's proper Yaml
+```
+
+Update-time gives the warning about a binary `bun.lockb` or about yarn's version once per workspace, at its root. It points each member at that warning, at `DEBUG`:
+
+```console
+DEBUG Not running yarn for packages/ui/package.json: the warning about its workspace root package.json says why
 ```
 
 Where the files of a directory name more than one manager, as a `pnpm-lock.yaml` beside a `bun.lockb` does, Update-time cannot tell which one the project uses, so it runs none of them. It still checks the dependencies, and says how to choose at `WARNING`:
@@ -1277,13 +1296,13 @@ DEBUG Not running npm for package.json: its npm workspace root ../package.json l
 DEBUG Not running pnpm for package.json: its pnpm workspace root ../pnpm-workspace.yaml lies outside the scan root
 ```
 
-Where npm, pnpm, or bun is not on the path, Update-time still checks the dependencies, and reports the missing package manager at `ERROR`:
+Where npm, pnpm, yarn, or bun is not on the path, Update-time still checks the dependencies, and reports the missing package manager at `ERROR`:
 
 ```console
 ERROR Could not update the dependencies in web/package.json: pnpm is not on the path
 ```
 
-A workspace can name the versions of its dependencies once, in a catalog at its root. bun keeps its catalogs in the root's `package.json`: the unnamed catalog under `workspaces.catalog` and a named one under `workspaces.catalogs.<name>`, or else at the top level, as `catalog` and `catalogs`. pnpm keeps them in `pnpm-workspace.yaml`, under `catalog` and `catalogs.<name>`. Update-time warns about a `pnpm-workspace.yaml` that it cannot read:
+A workspace can name the versions of its dependencies once, in a catalog at its root. bun keeps its catalogs in the root's `package.json`: the unnamed catalog under `workspaces.catalog` and a named one under `workspaces.catalogs.<name>`, or else at the top level, as `catalog` and `catalogs`. pnpm keeps them in `pnpm-workspace.yaml`, under `catalog` and `catalogs.<name>`, and yarn keeps them in `.yarnrc.yml`, under the same keys. Update-time warns about a `pnpm-workspace.yaml` or a `.yarnrc.yml` that it cannot read:
 
 ```console
 WARNING Could not read pnpm-workspace.yaml to find the catalogs it holds ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)
@@ -1291,15 +1310,17 @@ WARNING Could not read pnpm-workspace.yaml to find the catalogs it holds ('utf-8
 
 #### What dependencies are updated?
 
-Update-time delegates updating Node dependencies to the package manager that manages the `package.json`. If that is npm, it runs `npm update --save --include=dev`. If it is pnpm, it runs `pnpm update -r`. If it is bun, it runs `bun update -r`.
+Update-time delegates updating Node dependencies to the package manager that manages the `package.json`. If that is npm, it runs `npm update --save --include=dev`. If it is pnpm, it runs `pnpm update -r`. If it is yarn, it runs `yarn up -R --mode=update-lockfile`, naming each dependency the workspaces declare that resolves to the npm registry, since yarn updates only the packages a run names. If it is bun, it runs `bun update -r`.
 
-pnpm and bun update the entries of a workspace's catalogs as well. A member of a workspace declares a dependency as `catalog:` to take its version from the unnamed catalog, and as `catalog:<name>` to take it from a named one. `catalog:default` and a catalog named `default` stand for the unnamed catalog. npm has no catalogs, and refuses a `catalog:` dependency.
+pnpm, yarn, and bun update the entries of a workspace's catalogs as well. A member of a workspace declares a dependency as `catalog:` to take its version from the unnamed catalog, and as `catalog:<name>` to take it from a named one. pnpm and bun read `catalog:default`, and a catalog named `default`, as the unnamed catalog. yarn reads `catalog:default` as the catalog named `default`. npm has no catalogs, and refuses a `catalog:` dependency.
+
+An alias, such as `"baz": "npm:react-is@^18.0.0"`, stands for the package it names. Update-time reports a new version of `react-is` at the line declaring `baz`, and checks the alias as `react-is`.
 
 #### What versions are updated?
 
-Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. npm, pnpm, and bun update a dependency to the newest version that satisfies the range declared in the `package.json`, or in the catalog that a `catalog:` dependency takes its version from. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved up.
+Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. npm, pnpm, yarn, and bun update a dependency to the newest version that satisfies the range declared in the `package.json`, or in the catalog that a `catalog:` dependency takes its version from. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved up.
 
-The managers also write the version they resolve into the declared range. They do so whether or not the version in the lock file moved. bun rewrites a `^` or a `~` range alone, and leaves a range such as `>=1.0.0` or `1.x` as written. Where the workspace root's `bunfig.toml`, or your global `.bunfig.toml`, sets `exact = true` under `[install]`, bun replaces a `^` or a `~` range with the version it resolves, so `^7.6.0` becomes `7.8.6`. From then on, bun leaves the dependency on that version, as it leaves any exact pin. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
+npm, pnpm, and bun also write the version they resolve into the declared range, whether or not the version in the lock file moved. yarn leaves the range as it is. bun rewrites a `^` or a `~` range alone, and leaves a range such as `>=1.0.0` or `1.x` as written. Where the workspace root's `bunfig.toml`, or your global `.bunfig.toml`, sets `exact = true` under `[install]`, bun replaces a `^` or a `~` range with the version it resolves, so `^7.6.0` becomes `7.8.6`. From then on, bun leaves the dependency on that version, as it leaves any exact pin. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
 
 ```console
 INFO npm rewrote the range of minimatch in dev/package.json:5 from ^3.1.2 to ^3.1.5; the version in the lock file is unchanged at 3.1.5
@@ -1312,7 +1333,7 @@ pnpm and bun rewrite the range of a catalog entry as they rewrite the range of a
 INFO pnpm rewrote the range of semver in pnpm-workspace.yaml:4 from ^7.0.0 to ^7.8.6; the version in the lock file is unchanged at 7.8.6
 ```
 
-npm, pnpm, and bun move and rewrite the dependencies of a workspace's members along with those of its root. So Update-time runs them for the root alone, and reports each member's new versions at the member's `package.json`. It reports at `DEBUG` which run updates a member:
+npm, pnpm, yarn, and bun move the dependencies of a workspace's members along with those of its root. So Update-time runs them for the root alone, and reports each member's new versions at the member's `package.json`. It reports at `DEBUG` which run updates a member:
 
 ```console
 DEBUG The bun run for the workspace root package.json updates packages/ui/package.json
@@ -1324,11 +1345,22 @@ Update-time reads the versions bun locks from `bun.lock`. Where it cannot read t
 WARNING Could not read bun.lock to find the versions it locks (it does not hold the JSON bun writes)
 ```
 
-See the documentation of [npm update](https://docs.npmjs.com/cli/v12/commands/npm-update), [pnpm update](https://pnpm.io/cli/update), and [bun update](https://bun.sh/docs/cli/update) for the finer points of how each manager resolves versions.
+Update-time reads the versions yarn locks with `yarn info`. Update-time reports what yarn printed at `ERROR` where `yarn info` or `yarn up` fails, since yarn reports its errors on stdout:
+
+```console
+ERROR yarn up -R --mode=update-lockfile left-pad failed:
+➤ YN0000: · Yarn 4.18.1
+➤ YN0000: ┌ Resolution step
+➤ YN0001: │ RequestError: getaddrinfo ENOTFOUND registry.yarnpkg.com
+➤ YN0000: └ Completed
+➤ YN0000: · Failed with errors in 0s 75ms
+```
+
+See the documentation of [npm update](https://docs.npmjs.com/cli/v12/commands/npm-update), [pnpm update](https://pnpm.io/cli/update), [yarn up](https://yarnpkg.com/cli/up), and [bun update](https://bun.sh/docs/cli/update) for the finer points of how each manager resolves versions.
 
 #### Pinning
 
-Update-time does not add a hash pin to an npm, pnpm, or bun dependency. The integrity hash of each resolved package lives in the lock file, which the managers maintain themselves and Update-time updates by running them.
+Update-time does not add a hash pin to an npm, pnpm, yarn, or bun dependency. The integrity hash of each resolved package lives in the lock file, which the managers maintain themselves and Update-time updates by running them.
 
 #### Cooldown
 
@@ -1342,15 +1374,17 @@ For bun, Update-time passes the cooldown via bun's `--minimum-release-age` optio
 WARNING Could not read bunfig.toml to find whether it sets a cooldown for bun (Expected ']' at the end of a table declaration (at line 1, column 9))
 ```
 
-Where the lock file holds a version younger than the cooldown, npm and bun move that version back, and rewrite the range in the `package.json` to it as they rewrite it for an update. Update-time reports the version moved back (see [Cooldown](#-cooldown)). bun leaves the version as it is where the declared range does not admit an older version. pnpm refuses to update instead, and Update-time logs pnpm's error at `WARNING`. The error names each version pnpm rejects.
+For yarn, Update-time passes the cooldown via yarn's `npmMinimalAgeGate` setting, in the `YARN_NPM_MINIMAL_AGE_GATE` environment variable, measured in minutes. If a `.yarnrc.yml` of the project or of your home directory sets `npmMinimalAgeGate`, or the environment does, Update-time leaves that in place instead of overriding it.
+
+Where the lock file holds a version younger than the cooldown, npm, yarn, and bun move that version back. npm and bun rewrite the range in the `package.json` to it, as they rewrite it for an update. Update-time reports the version moved back (see [Cooldown](#-cooldown)). bun leaves the version as it is where the declared range does not admit an older version. pnpm refuses to update instead, and Update-time logs pnpm's error at `WARNING`. The error names each version pnpm rejects.
 
 #### Stale dependencies
 
-Update-time checks each dependency and each entry of a catalog against its newest release on the npm registry, and reports the stale ones. It checks a `catalog:` dependency at the catalog's entry. It skips dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references, since they don't resolve to a registry release. A dependency's marker can set a threshold of its own, such as `set[stale-after=90]`, or silence the warning with `set[stale-after=0]` (see [Markers](#markers-1)).
+Update-time checks each dependency and each entry of a catalog against its newest release on the npm registry, and reports the stale ones. It checks a `catalog:` dependency at the catalog's entry. It skips dependencies given as git, file, link, workspace, or GitHub-shorthand references, since they don't resolve to a registry release. A dependency's marker can set a threshold of its own, such as `set[stale-after=90]`, or silence the warning with `set[stale-after=0]` (see [Markers](#markers-1)).
 
 #### Yanked dependencies
 
-Update-time checks a dependency or a catalog entry pinned to an exact version, such as `"left-pad": "1.3.0"` or `"left-pad": "=1.3.0"`, against the npm registry's deprecation of that version. npm, pnpm, and bun leave such a dependency on the version it names, so they never move it off a deprecated one.
+Update-time checks a dependency or a catalog entry pinned to an exact version, such as `"left-pad": "1.3.0"` or `"left-pad": "=1.3.0"`, against the npm registry's deprecation of that version. npm, pnpm, yarn, and bun leave such a dependency on the version it names, so they never move it off a deprecated one.
 
 #### Vulnerable dependencies
 
@@ -1375,14 +1409,14 @@ A dependency's marker goes in the `package.json`'s `update-time` field (see [Whe
 }
 ```
 
-An entry of a catalog takes a marker as well. In a `package.json`, the marker sits in the `update-time` field under the catalog's path, as in `"update-time": { "workspaces": { "catalog": { "semver": "set[stale-after=0]" } } }`. In a `pnpm-workspace.yaml`, the marker is a comment on the entry's line or on the line above:
+An entry of a catalog takes a marker as well. In a `package.json`, the marker sits in the `update-time` field under the catalog's path, as in `"update-time": { "workspaces": { "catalog": { "semver": "set[stale-after=0]" } } }`. In a `pnpm-workspace.yaml` or a `.yarnrc.yml`, the marker is a comment on the entry's line or on the line above:
 
 ```yaml
 catalog:
   semver: ^7.0.0  # update-time: set[stale-after=0]
 ```
 
-A marker steers the checks rather than the update, since npm, pnpm, and bun move a dependency within the range its `package.json` or its catalog declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
+A marker steers the checks rather than the update, since npm, pnpm, yarn, and bun move a dependency within the range its `package.json` or its catalog declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
 
 Update-time reports every scope as redundant on a dependency that does not resolve to a registry release, such as a git URL:
 

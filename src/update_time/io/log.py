@@ -988,6 +988,11 @@ class Logger:
         """Warn that uv's settings do not say whether the project sets an `exclude-newer` for the file."""
         return self._file_fields(path)
 
+    @_debug("Not running %(manager)s for %(location)s: the warning about its workspace root %(root)s says why")
+    def left_with_the_workspace_root(self, path: Path, manager: str, root: Path) -> dict[str, object]:
+        """Log that the manager does not run for a member, for the reason the warning about its workspace root gives."""
+        return self._file_fields(path, manager=manager, root=Location(root))
+
     @_debug("The %(manager)s run for the workspace root %(root)s updates %(location)s")
     def updated_by_the_workspace_root(self, path: Path, manager: str, root: Path) -> dict[str, object]:
         """Log that the package manager's run for the workspace root updates the member."""
@@ -1000,6 +1005,14 @@ class Logger:
     def binary_lock(self, path: Path, lock: Path, text_lock: Path) -> dict[str, object]:
         """Warn that bun does not run for a file whose lock is binary, and say how to convert the lock."""
         return self._file_fields(path, lock=Location(lock), text_lock=Location(text_lock))
+
+    @_warning(
+        "Not running yarn for %(location)s: the yarn that runs in %(directory)s is version %(version)s, which cannot "
+        "apply a cooldown; run yarn set version stable to switch the project to a yarn that can"
+    )
+    def yarn_without_a_cooldown(self, path: Path, directory: Path, version: str) -> dict[str, object]:
+        """Warn that yarn does not run for a file whose workspace root runs a yarn that cannot apply a cooldown."""
+        return self._file_fields(path, directory=Location(directory), version=version)
 
     @_warning(
         "Not running a package manager for %(location)s: %(files)s name different ones; set the packageManager field "
@@ -1025,12 +1038,12 @@ class Logger:
         return self._file_fields(path, error=str(error))
 
     @_warning(
-        "Could not read from pip's settings whether they set an uploaded-prior-to for %(location)s (%(reason)s); "
+        "Could not read from %(tool)s's settings whether they set an %(setting)s for %(location)s (%(reason)s); "
         "applying the cooldown"
     )
-    def pip_settings_unreadable(self, path: Path, reason: str) -> dict[str, object]:
-        """Warn that pip does not list its settings, which say whether they set an `uploaded-prior-to` for the file."""
-        return self._file_fields(path, reason=reason)
+    def settings_unreadable(self, path: Path, tool: str, setting: str, reason: str) -> dict[str, object]:
+        """Warn that a tool does not report its settings, which say whether they set a cooldown for the file."""
+        return self._file_fields(path, tool=tool, setting=setting, reason=reason)
 
     @_error("Could not update the dependencies in %(location)s: %(tool)s failed")
     def uv_dependencies_not_updated(self, path: Path, tool: str) -> dict[str, object]:
@@ -1319,9 +1332,10 @@ class Logger:
         return {"executable": executable, "directory": Location(directory), "version": version}
 
     @_debug("Running %(command)s in %(directory)s")
-    def command_run(self, command: Command, directory: Path) -> dict[str, object]:
-        """Log a command, with its arguments and options, and the directory it runs in."""
-        return {"command": command, "directory": Location(directory)}
+    def command_run(self, command: Command, directory: Path, environment: Mapping[str, str]) -> dict[str, object]:
+        """Log a command, with the variables it adds to the environment, and the directory it runs in."""
+        variables = [f"{name}={value}" for name, value in environment.items()]
+        return {"command": " ".join((*variables, *command)), "directory": Location(directory)}
 
     @_warning("Could not determine the version of %(executable)s in %(directory)s: %(reason)s")
     def tool_version_unknown(self, executable: str, directory: Path, reason: str) -> dict[str, object]:

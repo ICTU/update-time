@@ -18,7 +18,7 @@ from update_time.updaters.update_requirements_txt import _compiler_for
 
 from tests.helpers import FakeFiles, patch_environ
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import message_of, published_version
+from tests.update_time.helpers import SUBPROCESS_RUN_OPTIONS, message_of, published_version
 from tests.update_time.lock_files.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
 from tests.update_time.package_managers.helpers import (
     CONFIGURED_EXCLUDE_NEWER,
@@ -117,7 +117,7 @@ class RecompileTest(UvSettingsTestCase):
     def assert_recompiled(self, *options: str, command: tuple[str, ...] = _UV_COMMAND, cwd: Path = _ROOT) -> None:
         """Assert that the tool ran the command the header records, quietly and with the options, in the directory."""
         recompile = Command(*command, "--quiet", *options)
-        self.mock_run.assert_any_call(recompile, capture_output=True, text=True, check=True, cwd=cwd)
+        self.mock_run.assert_any_call(recompile, **SUBPROCESS_RUN_OPTIONS, cwd=cwd)
 
     @kills(
         Mutation(
@@ -151,7 +151,7 @@ class RecompileTest(UvSettingsTestCase):
                     "--exclude-newer", "7 days", *upgrades, command=(*_UV_TOOL, *header), cwd=directory
                 )
                 settings = Command(*_UV_TOOL, *header, "--show-settings")
-                self.mock_run.assert_any_call(settings, capture_output=True, text=True, check=True, cwd=directory)
+                self.mock_run.assert_any_call(settings, **SUBPROCESS_RUN_OPTIONS, cwd=directory)
 
     def test_a_file_pip_compile_compiled_is_recompiled_with_the_command_its_header_records(self):
         """Test that pip-compile runs the header's command where the file was compiled, upgrading every pin."""
@@ -309,7 +309,11 @@ class RecompileTest(UvSettingsTestCase):
                 self.assert_recompiled("--uploaded-prior-to", "P7D", "--upgrade-package", "flask", command=_PIP_COMMAND)
                 self.assertEqual(files[_SOURCE], f"{_PIP_MANAGED_BY_COMMENT_LINE}\nflask==1.0\n")
                 self.assert_logged(
-                    message_of(Logger.pip_settings_unreadable), location=Location(_COMPILED), reason=reason
+                    message_of(Logger.settings_unreadable),
+                    location=Location(_COMPILED),
+                    tool="pip",
+                    setting="uploaded-prior-to",
+                    reason=reason,
                 )
 
     def test_a_cutoff_the_header_records_is_passed_on_to_pip_compile_where_no_source_carries_the_comment(self):

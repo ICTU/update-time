@@ -59,6 +59,11 @@ class Result:
         object.__setattr__(self, "stderr", self.stderr.rstrip())
 
     @property
+    def error(self) -> str:
+        """Return the first line the command printed on stderr, or else on stdout, where a failed run says why."""
+        return next(iter((self.stderr or self.stdout).strip().splitlines()), "")
+
+    @property
     def json(self) -> dict | list:
         """Return the stdout parsed as JSON, or an empty dict when the command produced no output."""
         return loads(self.stdout) if self.stdout.strip() else {}

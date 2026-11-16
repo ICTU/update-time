@@ -938,6 +938,9 @@ def published_version(version: str, published: str | datetime) -> str:
 # The tests scan this directory, and patch it in as the working directory.
 SCAN_ROOT = pathlib.Path("/")
 
+# What Update-time passes to subprocess.run besides the working directory, where it does not add environment variables.
+SUBPROCESS_RUN_OPTIONS = {"capture_output": True, "text": True, "check": True, "env": None}
+
 # The artefact most Maven tests declare.
 GUAVA = "com.google.guava:guava"
 

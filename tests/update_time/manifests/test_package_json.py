@@ -41,7 +41,8 @@ class DependencyLocationsTest(unittest.TestCase):
     @staticmethod
     def locations(path: Mock) -> dict[str, list[Location]]:
         """Return each direct registry dependency of the package.json and where its entries sit."""
-        return package_json.PackageJson.read(path).dependency_locations(Catalogs())
+        references = package_json.PackageJson.read(path).dependency_references(Catalogs())
+        return {name: [reference.location for reference in each] for name, each in references.items()}
 
     def test_every_entry_across_the_sections(self):
         """Test that every entry in the dependency sections is returned, in order, each at its own line."""
@@ -86,7 +87,7 @@ class DependencyLocationsTest(unittest.TestCase):
         )
 
     def test_non_registry_specs_skipped(self):
-        """Test that git, file, workspace, alias and github-shorthand specs are skipped (only registry ranges kept)."""
+        """Test that git, file, workspace and github-shorthand specs are skipped (only registry ranges kept)."""
         contents = json.dumps(
             {
                 "dependencies": {
@@ -94,7 +95,6 @@ class DependencyLocationsTest(unittest.TestCase):
                     "bats": "git+https://github.com/calj/bats.git",  # git: has ':'
                     "local": "file:../local",  # file: has ':'
                     "shared": "workspace:*",  # workspace: has ':'
-                    "aliased": "npm:other@^1.0.0",  # alias: has ':'
                     "forked": "github:org/repo",  # github shorthand: has ':' and '/'
                 }
             }

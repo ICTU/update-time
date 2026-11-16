@@ -36,6 +36,7 @@ from update_time.io.log import Logger
 from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.markers.parser import parse_directives
 from update_time.package_managers.maven.versions_plugin import OverrideConsequence
+from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
 
@@ -472,6 +473,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_manifests_without_dependencies(log, capture),
         **_package_jsons_without_a_lock_file(log, capture),
         **_bun_files_left_unread(log, capture),
+        **_yarn_reports(log, capture),
         **_files_of_more_than_one_manager(log, capture),
         **_project_cooldowns(log, capture),
         **_members_left_to_their_root(log, capture),
@@ -582,10 +584,35 @@ def _bun_files_left_unread(log: Logger, capture: _Capture) -> dict[str, str]:
     }
 
 
+def _yarn_reports(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that yarn classic does not run for a project, that yarn's version is unknown, and that a command failed."""
+    log.yarn_without_a_cooldown(Path("package.json"), Path(), "1.22.22")
+    without_a_cooldown = capture.take()
+    log.tool_version_unknown(
+        "yarn", Path(), "Usage Error: Parse error when loading .yarnrc.yml; please check it's proper Yaml"
+    )
+    version_unknown = capture.take()
+    output = (
+        "➤ YN0000: · Yarn 4.18.1\n"
+        "➤ YN0000: ┌ Resolution step\n"
+        "➤ YN0001: │ RequestError: getaddrinfo ENOTFOUND registry.yarnpkg.com\n"
+        "➤ YN0000: └ Completed\n"
+        "➤ YN0000: · Failed with errors in 0s 75ms"
+    )
+    log.command_failed(Command("yarn", "up", "-R", "--mode=update-lockfile", "left-pad"), output)
+    return {
+        "@@YARN_WITHOUT_A_COOLDOWN@@": without_a_cooldown,
+        "@@YARN_VERSION_UNKNOWN@@": version_unknown,
+        "@@YARN_COMMAND_FAILED@@": capture.take(),
+    }
+
+
 def _members_left_to_their_root(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that bun does not run for a workspace member, which the run for its workspace root updates."""
+    """Log that bun does not run for a member its root's run updates, and yarn not for one its root is left with."""
     log.updated_by_the_workspace_root(Path("packages/ui/package.json"), "bun", Path("package.json"))
-    return {"@@NODE_MEMBER_LEFT_TO_ITS_ROOT@@": capture.take()}
+    updated = capture.take()
+    log.left_with_the_workspace_root(Path("packages/ui/package.json"), "yarn", Path("package.json"))
+    return {"@@NODE_MEMBER_LEFT_TO_ITS_ROOT@@": updated, "@@NODE_MEMBER_LEFT_WITH_ITS_ROOT@@": capture.take()}
 
 
 def _workspace_roots_outside_the_scan(log: Logger, capture: _Capture) -> dict[str, str]:
@@ -699,7 +726,7 @@ def _recompiles(log: Logger, capture: _Capture) -> dict[str, str]:
     managed_by_comment_written = capture.take()
     log.uv_settings_unreadable(compiled)
     uv_settings_unreadable = capture.take()
-    log.pip_settings_unreadable(compiled, "[Errno 2] No such file or directory: 'pip'")
+    log.settings_unreadable(compiled, "pip", "uploaded-prior-to", "[Errno 2] No such file or directory: 'pip'")
     return {
         "@@COMPILED_FILE_NOT_RECOMPILED@@": not_recompiled,
         "@@MANAGED_BY_COMMENT_WRITTEN@@": managed_by_comment_written,
