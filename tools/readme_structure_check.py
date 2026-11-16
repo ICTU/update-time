@@ -9,10 +9,9 @@ anchor that no heading provides fails no other check and shows up only when a re
 
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 
-from tools.markdown import anchor, headings, without_code_blocks
+from tools.markdown import anchor, anchors, headings, without_code_blocks
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 
 _DETAILS_CHAPTER = "Details per dependency type"
@@ -59,22 +58,11 @@ def _sections(markdown: str) -> dict[str, list[str]]:
     return {title: re.findall(r"(?m)^#### (.+)$", body) for title, body in _section_bodies(markdown).items()}
 
 
-def _anchors(markdown: str) -> set[str]:
-    """Return the anchor that each heading in the document provides, numbering each repeat as GitHub does."""
-    repeats: Counter[str] = Counter()
-    anchors = set()
-    for _level, title in headings(markdown):
-        base = anchor(title)
-        anchors.add(f"{base}-{repeats[base]}" if repeats[base] else base)
-        repeats[base] += 1
-    return anchors
-
-
 def _anchor_problems(markdown: str) -> list[str]:
     """Return a message for each internal link that points at an anchor no heading in the document provides."""
-    anchors = _anchors(markdown)
+    provided = anchors(markdown)
     links = re.findall(r"\]\((#[^)]+)\)", markdown)
-    return [f"no heading provides the anchor '{link}'" for link in links if link not in anchors]
+    return [f"no heading provides the anchor '{link}'" for link in links if link not in provided]
 
 
 def _tables(markdown: str) -> dict[str, list[tuple[str, str]]]:

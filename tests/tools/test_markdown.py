@@ -3,7 +3,7 @@
 import unittest
 
 from tools import markdown
-from tools.markdown import anchor, headings, lines_without_code_blocks, without_code_blocks
+from tools.markdown import anchor, anchors, headings, lines_without_code_blocks, without_code_blocks
 
 from mutation_time.mutation import Mutation, kills
 
@@ -55,16 +55,29 @@ class AnchorTest(unittest.TestCase):
     )
     def test_github_anchor_rules(self):
         """Test that the anchor is lower-cased, drops punctuation and emoji, keeps marks, and hyphenates spaces."""
-        anchors = {
+        cases = {
             "⏳ Cooldown": "#-cooldown",
             "\u26a0\ufe0f Warnings": "#\ufe0f-warnings",
             "Cafe\u0301": "#cafe\u0301",
             "What files are updated?": "#what-files-are-updated",
             "`pyproject.toml` dependencies": "#pyprojecttoml-dependencies",
         }
-        for heading, expected in anchors.items():
+        for heading, expected in cases.items():
             with self.subTest(heading=heading):
                 self.assertEqual(anchor(heading), expected)
+
+
+class AnchorsTest(unittest.TestCase):
+    """Unit tests for the anchors the headings of a document provide."""
+
+    def test_comment_in_a_code_block_provides_no_anchor(self):
+        """Test that a comment in a fenced code block is not read as a heading, so a link can't resolve against it."""
+        document = "# Update-time\n\n```dockerfile\n# update-time: ignore\nFROM python:3.12\n```\n"
+        self.assertEqual(anchors(document), {"#update-time"})
+
+    def test_a_repeated_heading_provides_a_numbered_anchor(self):
+        """Test that each repeat of a heading provides the anchor GitHub numbers it by."""
+        self.assertEqual(anchors("# Markers\n\n## Markers\n\n### Markers\n"), {"#markers", "#markers-1", "#markers-2"})
 
 
 class LinesWithoutCodeBlocksTest(unittest.TestCase):

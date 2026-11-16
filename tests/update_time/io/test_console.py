@@ -2,7 +2,6 @@
 
 import io
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import TestCase
 from unittest.mock import patch
@@ -17,6 +16,7 @@ from update_time.io import console as console_module
 from update_time.io.console import (
     _MARKDOWN_PARSER,
     LOG_THEME,
+    MESSAGE_NAME,
     LogHighlighter,
     configure_logging,
 )
@@ -66,6 +66,11 @@ class RecordRenderingTests(TestCase):
         version = DependencyVersion("1.2.0", changes)
         log.new_version(reference("pkg", create_location("requirements.txt", 3)), version)
 
+    @staticmethod
+    def report_pin(log: Logger) -> None:
+        """Report that `pkg` was pinned to a version."""
+        log.pinned_version(reference("pkg", create_location("requirements.txt", 3)), DependencyVersion("1.2.0"))
+
     @classmethod
     def report_new_version_twice(cls, log: Logger) -> None:
         """Report the same new version of `pkg` twice, so the second report suppresses the changelog."""
@@ -87,7 +92,7 @@ class RecordRenderingTests(TestCase):
 
     @kills(
         Mutation(
-            console_module._ChangelogHandler._changes_markup,
+            console_module._LogHandler._changes_markup,
             "return _ChangelogMarkdown(changes, hyperlinks=self.console.is_terminal)",
             "return _ChangelogMarkdown(changes, hyperlinks=True)",
             "a link's URL is written into an escape nothing renders, so a file or a CI log holds the text alone",
@@ -99,21 +104,74 @@ class RecordRenderingTests(TestCase):
         rendered = self.rendered_changes(Changes(f"- A fix ([#42]({url}))", markdown=True, url=""))
         self.assertIn(url, rendered)
 
-    @kills(
-        Mutation(
-            console_module._ChangelogHandler.render_message,
-            'if note := getattr(record, NOTE, ""):\n'
-            "            return Group(rendered, Text(note))\n"
-            "        return rendered",
-            'return Group(rendered, Text(getattr(record, NOTE, "")))',
-            "every record without changes gets a blank line below it",
-        )
-    )
     def test_a_record_without_changes_gets_no_empty_block(self):
         """Test that a record carrying no changes renders as its message alone."""
-        rendered = self.rendered(lambda log: log.configured_uv_cooldown(Path("a.txt"), "7 days"))
-        self.assertIn("Set uv exclude-newer to '7 days' in a.txt to apply the cooldown", rendered)
+        rendered = self.rendered(self.report_pin)
+        self.assertIn("Pinned pkg in requirements.txt:3 to 1.2.0", rendered)
         self.assertEqual(rendered.splitlines()[1:], [])
+
+    @kills(
+        Mutation(
+            console_module.named_message,
+            'len(message.plain.partition("\\n")[0])',
+            "len(message.plain)",
+            "the name of a command's failure follows the output the command wrote, so it reads as part of that output",
+        )
+    )
+    def test_the_name_of_a_message_of_several_lines_ends_its_first_line(self):
+        """Test that a message of several lines, such as a command's output, carries its name on its first line."""
+        rendered = self.rendered(
+            lambda _: logging.getLogger("update-time").error(
+                "npm audit failed:\nfound 3 vulnerabilities", extra={MESSAGE_NAME: "command-failed"}
+            )
+        )
+        lines = [line.strip() for line in rendered.splitlines()]
+        self.assertTrue(lines[0].endswith("npm audit failed: (command-failed)"), rendered)
+        self.assertEqual(lines[1:], ["found 3 vulnerabilities"])
+
+    def test_the_name_of_a_message_with_lines_below_it_ends_the_first_line(self):
+        """Test that a message with changes boxed below it, or a note, carries its name on the message's own line."""
+        cases = {"changes": Changes("Fixed bug A", markdown=False, url=""), "a note": NO_CHANGES}
+        for case, changes in cases.items():
+            with self.subTest(below=case):
+                first_line = self.rendered_changes(changes).splitlines()[0]
+                self.assertTrue(first_line.rstrip().endswith("requirements.txt:3: 1.2.0 (new-version)"), first_line)
+
+    @kills(
+        Mutation(
+            console_module.named_message,
+            "append(name, link)",
+            "append(name)",
+            "the name of the log message is plain text, so a terminal cannot open its entry in the index",
+        )
+    )
+    def test_the_name_of_a_message_is_a_hyperlink(self):
+        """Test that the name of a log message is a link a terminal can open, to the name's heading in the index."""
+        url = "https://github.com/ICTU/update-time/blob/main/docs/log-messages.md#pinned-to-version"
+        self.assertIn(f";{url}\x1b\\", self.rendered(self.report_pin, styles=True))
+
+    @kills(
+        Mutation(
+            console_module.named_message,
+            "named.stylize(_MESSAGE_NAME_STYLE, first_line_end)",
+            'named.stylize("", first_line_end)',
+            "the name of a log message is as bright as the message, so the message no longer stands out",
+        ),
+        Mutation(
+            console_module.named_message,
+            "named.stylize(_MESSAGE_NAME_STYLE, first_line_end)",
+            "named.stylize(_MESSAGE_NAME_STYLE, 0)",
+            "the message is as dim as its name, so the message no longer stands out",
+        ),
+    )
+    def test_the_name_of_a_message_is_dim(self):
+        """Test that the name of a log message renders dim, with the parentheses around it, and the message does not."""
+        rendered = self.rendered(self.report_pin, styles=True)
+        self.assertIn("\x1b[2m (\x1b[0m", rendered)
+        self.assertIn("\x1b\\\x1b[2mpinned-to-version\x1b[0m", rendered)
+        self.assertIn("\x1b[2m)\x1b[0m", rendered)
+        self.assertIn("Pinned", rendered)
+        self.assertNotIn("\x1b[2mPinned", rendered)
 
     @kills(
         Mutation(
@@ -262,7 +320,7 @@ class RecordRenderingTests(TestCase):
 
     @kills(
         Mutation(
-            console_module._ChangelogHandler.render_message,
+            console_module._LogHandler.render_message,
             "return Group(rendered, Text(note))",
             "return Group(rendered, Panel(Text(note)))",
             "Update-time's own note about a changelog is boxed as if it were a changelog's changes",
@@ -308,14 +366,6 @@ class RecordRenderingTests(TestCase):
         rendered = self.rendered_changes(Changes("Fixed bug A", markdown=False, url=url), styles=True)
         self.assertIn(f";{url}\x1b\\{url}", rendered)
 
-    @kills(
-        Mutation(
-            console_module._ChangelogHandler.render_message,
-            "rendered = super().render_message(record, message)",
-            "rendered = Markdown(super().render_message(record, message).plain)",
-            "the message is rendered as Markdown too, mangling a command's stderr",
-        )
-    )
     def test_a_message_is_not_rendered_as_markdown(self):
         """Test that a command's stderr keeps the Markdown markup it wrote."""
         stderr = "# npm audit report\n- run `npm audit fix` to fix them"

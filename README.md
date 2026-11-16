@@ -13,6 +13,7 @@ Update-time rewrites the files in place and logs what it did:
 
 ```console
 [09:14:03] INFO     New version available for humanize in docs/requirements.txt:12: 4.15.0
+                    (new-version)
                     ╭──────────────────────────────────────────────────────────────────────────────╮
                     │ Changed in 4.15.0                                                            │
                     │                                                                              │
@@ -22,13 +23,15 @@ Update-time rewrites the files in place and logs what it did:
                     Changelog: https://github.com/python-humanize/humanize/releases/tag/4.15.0
            INFO     Pinned python in Dockerfile:1 to
                     3.14.6@sha256:9f2c1e7bd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
+                    (pinned-to-hash)
            INFO     New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0
+                    (new-version)
                     No changelog available!
            WARNING  Stale dependency left-pad in package.json:24: newest release 1.3.0 was published
-                    512 days ago (> 365)
+                    512 days ago (> 365) (stale-dependency)
            WARNING  Vulnerable dependency django in docs/requirements.txt:12: version 3.2.0 has a
                     critical vulnerability, "SQL Injection in Django" (GHSA-2gwj-7jmv-h26r,
-                    https://osv.dev/GHSA-2gwj-7jmv-h26r)
+                    https://osv.dev/GHSA-2gwj-7jmv-h26r) (vulnerable-dependency)
 ```
 
 </details>
@@ -184,6 +187,8 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | ⚠️ | `WARNING` | what needs your attention: a [stale](#️-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#️-vulnerable-dependencies), or [archived](#️-archived-dependencies) dependency, [hash drift](#hash-drift), a [Python version outside the project's `requires-python`](#what-versions-are-updated-4), a source it cannot reach or whose answer it cannot read, a file it cannot parse, an advisory it cannot read, a marker that is [invalid](#invalid-markers) or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not on the path or a [GitHub rate limit](#increasing-rate-limits) that is used up, and a signal such as Ctrl-C that stops the run |
 
+Update-time ends each message it logs in the message's name, such as `(new-version)`. A message of several lines, such as a command's output, carries the name at the end of its first line. The [index of the log messages](https://github.com/ICTU/update-time/blob/main/docs/log-messages.md) explains each message under its name. In a terminal, the name links to the message's entry in the index.
+
 ### Workflow
 
 The recommended workflow is to run Update-time on a dedicated branch, push it, and let CI do the verification:
@@ -208,17 +213,9 @@ To raise API rate limits while updating, set the following environment variables
 - `GITHUB_TOKEN` — increases the GitHub API rate limit when updating GitHub Actions and pre-commit hooks, and when checking whether a repository is archived. The token only needs to read public data about a repository, its releases, and its commits, so it does not need a specific scope. A classic token with no scopes selected works. So does a fine-grained token with default read-only access to public repositories.
 - `DOCKER_HUB_USERNAME` and `DOCKER_HUB_TOKEN` — authenticate to the Docker Hub API (both must be set) to increase its rate limit when updating Docker images.
 
-Once GitHub's rate limit is used up, Update-time reports it, saying when the limit resets:
+Once GitHub's rate limit is used up, Update-time reports it, saying when the limit resets.
 
-```console
-ERROR GitHub's API rate limit of 60 requests is used up until 2026-10-17 15:42 UTC; set GITHUB_TOKEN to raise it
-```
-
-Run with `--log-level DEBUG` to see which of these variables are set. The line names each variable but not its value:
-
-```console
-DEBUG Credentials: GITHUB_TOKEN set, DOCKER_HUB_USERNAME set, DOCKER_HUB_TOKEN not set
-```
+Run with `--log-level DEBUG` to see which of these variables are set. The log names each variable but not its value.
 
 ## 🔄 Updating
 
@@ -254,20 +251,11 @@ A **hash pin** adds a cryptographic hash of the artefact the version resolves to
 
 #### Floating image tags
 
-A floating image tag does not pin a version: what the project pulls is whatever the registry serves under that tag at that moment. Update-time replaces it with the version and digest it serves at the time of the run, which is the image the project pulls today:
-
-```console
-INFO Pinned python in Dockerfile:1 to 3.14.7@sha256:…
-```
+A floating image tag does not pin a version: what the project pulls is whatever the registry serves under that tag at that moment. Update-time replaces it with the version and digest it serves at the time of the run, which is the image the project pulls today.
 
 A reference without a tag floats the same way: `FROM python` and `image: redis` ask for whatever their registry serves under `latest`. Update-time pins such a reference to the version and digest that the tag resolves to, writing the tag after the image's name, so `FROM python` becomes `FROM python:3.14.7@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df`.
 
-Registries may name one image under several tags, so a floating tag shares its digest with the version tags naming the same image. For example, `python:latest` names the same image as `python:3.14.7`, `python:3.14`, and `python:3`. Update-time can pin the reference to any of those versions. It picks between them using these rules:
-
-1. Update-time keeps a label the floating tag shares with a version tag, so `node:trixie` lands on `26.7.0-trixie` rather than on `26.7.0`, and `python:slim` on `3.14.7-slim`. It drops a label naming a channel — `latest`, `lts`, `stable`, or `edge` — to stop the tag from floating. So `node:lts-alpine` keeps `alpine` and drops `lts`.
-2. The most precise version wins, so `3.14.7` is preferred over `3.14` and `3`.
-3. Next, Update-time prefers the most precise version of the variant, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
-4. The shortest name comes last, so `node:latest` lands on `26.7.0` rather than on `26.7.0-trixie`, and `amazoncorretto:latest` on `8` rather than on `8-al2023`. This prevents adopting a label the floating tag doesn't have.
+Registries may name one image under several tags, so a floating tag shares its digest with the version tags naming the same image. For example, `python:latest` names the same image as `python:3.14.7`, `python:3.14`, and `python:3`. Update-time picks the most precise version tag that keeps the floating tag's own labels, and drops a label naming a channel, such as `latest` or `lts`. So `node:trixie` lands on `26.7.0-trixie`, `node:lts-alpine` on `24.19.0-alpine3.24`, and `node:latest` on `26.7.0`.
 
 A [bound](#bounding-an-update) does not prevent pinning, so `allow[update<3.13]` on `python:latest` still pins to `3.14.7`, the version that tag serves. From the next run on, the reference is a version pin like any other, and Update-time updates, bounds, and checks it as one.
 
@@ -277,8 +265,8 @@ A [bound](#bounding-an-update) does not prevent pinning, so `allow[update<3.13]`
 Update-time leaves a floating tag as it is where it does not find a version tag serving the same image, or cannot read the digest the tag serves. It reports why at `DEBUG`:
 
 ```console
-DEBUG Floating tag acme/api:dev in docker-compose.yml:7 was left as it is: no tag naming a version serves the same image
-DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry does not serve a manifest for edge, so what that tag serves is unknown
+DEBUG Floating tag acme/api:dev in docker-compose.yml:7 was left as it is: no tag naming a version serves the same image (floating-tag-left-as-is)
+DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry does not serve a manifest for edge, so what that tag serves is unknown (floating-tag-left-as-is)
 ```
 
 Where Update-time reads the digest but does not find a version tag, and the reference records another digest, it warns about the [hash drift](#hash-drift) instead. Where it cannot read the digest at all, it does not warn about drift, since it cannot tell whether the floating tag was re-pointed.
@@ -312,11 +300,11 @@ What Update-time adds depends on what the reference can hold:
 Sometimes a reference already carries a hash pin, and only what it points at changed. Update-time warns about that and leaves the pin unchanged. It never silently adopts a changed target, which would defeat the immutability a pin exists to provide. Hash drift takes five forms:
 
 ```console
-WARNING Digest drift for python:3.14 in Dockerfile:1: pinned to sha256:… but the registry now serves sha256:…; the pin was left unchanged, verify the change is expected before updating the pin
-WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pinned to commit … but the tag now points at …; the pin was left unchanged, verify the tag was moved deliberately before updating the pin
-WARNING Branch drift for actions/checkout@main in .github/workflows/ci.yml:17: pinned to commit … but the branch has moved on to …; the pin was left unchanged, verify the branch moved to a commit you trust before updating the pin
-WARNING Ref drift for actions/checkout@stable-2024 in .github/workflows/ci.yml:17: pinned to commit … but the ref now points at …; the pin was left unchanged, verify the ref moved to a commit you trust before updating the pin
-WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares sha256-… but jsDelivr serves sha256-…; the hash was left unchanged, and since npm does not republish a version it is probably the declared hash that is wrong
+WARNING Digest drift for python:3.14 in Dockerfile:1: pinned to sha256:… but the registry now serves sha256:…; the pin was left unchanged, verify the change is expected before updating the pin (digest-drift)
+WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pinned to commit … but the tag now points at …; the pin was left unchanged, verify the tag was moved deliberately before updating the pin (ref-drift)
+WARNING Branch drift for actions/checkout@main in .github/workflows/ci.yml:17: pinned to commit … but the branch has moved on to …; the pin was left unchanged, verify the branch moved to a commit you trust before updating the pin (ref-drift)
+WARNING Ref drift for actions/checkout@stable-2024 in .github/workflows/ci.yml:17: pinned to commit … but the ref now points at …; the pin was left unchanged, verify the ref moved to a commit you trust before updating the pin (ref-drift)
+WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares sha256-… but jsDelivr serves sha256-…; the hash was left unchanged, and since npm does not republish a version it is probably the declared hash that is wrong (integrity-hash-mismatch)
 ```
 
 *Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest.
@@ -349,28 +337,13 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | Update-time | the release's publication date, or the date of the commit a tag or branch points at |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | Update-time | the release's publication date on the npm registry |
 
-Where Update-time applies the cooldown itself, it holds back every version published inside the cooldown. For every dependency type but Maven, it logs the newest version it holds back at `DEBUG`, with the date the cooldown ends for it. Where a marker sets the cooldown, the line names the marker's directive:
+Where Update-time applies the cooldown itself, it holds back every version published inside the cooldown. For every dependency type but Maven, it logs the newest version it holds back at `DEBUG`, with the date the cooldown ends for it. Where a marker sets the cooldown, the line names the marker's directive.
 
-```console
-DEBUG Holding back version 4.38.3 of github/codeql-action/init in .github/workflows/ci.yml:5: published 2026-10-08 13:01 UTC, within the cooldown of 7 days until 2026-10-15 13:01 UTC
-DEBUG Holding back version 3.15.0 of python in Dockerfile:2: published 2026-10-08 13:01 UTC, within the cooldown of 30 days until 2026-11-07 13:01 UTC (update-time: set[cooldown=30])
-```
-
-Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, pnpm, yarn, or bun. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Update-time does not hand the value over where the package manager's own settings already hold a cooldown. It names the setting that holds the cooldown instead, at `DEBUG`, so the log shows a `--cooldown` that does not reach a project:
-
-```console
-DEBUG Not applying the cooldown of 7 days to package.json: bun minimumReleaseAge sets one
-DEBUG Not applying the cooldown of 7 days to pyproject.toml: uv exclude-newer sets one
-```
+Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, pnpm, yarn, or bun. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Update-time does not hand the value over where the package manager's own settings already hold a cooldown. It names the setting that holds the cooldown instead, at `DEBUG`, so the log shows a `--cooldown` that does not reach a project.
 
 [Python dependencies](#python-dependencies) and [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) describe what that means per dependency type.
 
-A lock file or a compiled requirements file can hold a version younger than the cooldown. That happens, for example, on the first run that applies a cooldown, and on a run with a longer cooldown than the run before. uv, pip-compile, npm, yarn, and bun then move that version back to the newest version older than the cooldown, and pnpm refuses to update. Update-time reports a version moved back at `INFO`:
-
-```console
-INFO uv moved humanize in docs/requirements.in:2 back from 4.16.0 to 4.11.0
-INFO npm moved typescript in package.json:3 back from 5.9.3 to 5.8.3
-```
+A lock file or a compiled requirements file can hold a version younger than the cooldown. That happens, for example, on the first run that applies a cooldown, and on a run with a longer cooldown than the run before. uv, pip-compile, npm, yarn, and bun then move that version back to the newest version older than the cooldown, and pnpm refuses to update. Update-time reports a version moved back at `INFO`.
 
 > [!NOTE]
 > The cooldown holds back updates and the adoption of [hash drift](#hash-drift). Pinning does not change what the reference resolves to, so the cooldown does not hold back a [pin](#-pinning).
@@ -384,7 +357,7 @@ Update-time reports what an update cannot fix: a stale, yanked, vulnerable, or a
 Update-time warns when a dependency's newest release is older than a threshold. That may mean the project was abandoned or superseded. The threshold defaults to **365 days**, and `--stale-after DAYS` sets it. Pass `--stale-after 0` to disable the check. A marker can set a threshold of its own for a reference, or leave the check out (see [Setting a staleness threshold](#setting-a-staleness-threshold)). For example, Update-time reports a pin whose newest release is well over a year old as:
 
 ```console
-WARNING Stale dependency humanize in docs/requirements.txt:12: newest release 4.15.0 was published 512 days ago (> 365)
+WARNING Stale dependency humanize in docs/requirements.txt:12: newest release 4.15.0 was published 512 days ago (> 365) (stale-dependency)
 ```
 
 The date compared against the threshold is the publication date of the dependency's *newest* release. So Update-time never reports a project that just published a release as stale, not even when that release is still within the [cooldown](#-cooldown).
@@ -408,7 +381,7 @@ Update-time checks the dependencies it asks a source about for staleness, agains
 A yank means "stop using this": a release the maintainer withdrew because it was broken, botched, or insecure. An exact pin keeps installing one anyway, so Update-time warns when the version a dependency is pinned to was yanked. Update-time includes the maintainer's reason when they gave one:
 
 ```console
-WARNING Yanked dependency humanize in docs/requirements.txt:12: version 4.15.0 was yanked ("accidentally broke Python 3.10 support")
+WARNING Yanked dependency humanize in docs/requirements.txt:12: version 4.15.0 was yanked ("accidentally broke Python 3.10 support") (yanked-dependency)
 ```
 
 When no reason was given, the message reports `(reason not specified)` instead.
@@ -434,7 +407,7 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 Update-time queries the [OSV](https://osv.dev) database about the pinned version. OSV aggregates GitHub's advisory database, PyPI's advisory database, and others. Update-time warns when an advisory names that version as affected. The warning names the risk level, what the advisory says, and where to read the advisory in full:
 
 ```console
-WARNING Vulnerable dependency django in docs/requirements.txt:12: version 3.2.0 has a critical vulnerability, "SQL Injection in Django" (GHSA-2gwj-7jmv-h26r, https://osv.dev/GHSA-2gwj-7jmv-h26r)
+WARNING Vulnerable dependency django in docs/requirements.txt:12: version 3.2.0 has a critical vulnerability, "SQL Injection in Django" (GHSA-2gwj-7jmv-h26r, https://osv.dev/GHSA-2gwj-7jmv-h26r) (vulnerable-dependency)
 ```
 
 OSV holds an advisory per database that carries a vulnerability, each under an identifier of its own. Update-time warns about each vulnerability once, at the most severe risk level any of those advisories gives it, and names that advisory.
@@ -468,8 +441,8 @@ Which dependencies are checked follows from what OSV holds advisories for:
 An archived dependency is one its maintainer declared finished: expect no further release. Update-time warns when a dependency's source declares it archived. For example, Update-time reports an archived project and an archived repository as:
 
 ```console
-WARNING Archived dependency aioredis in docs/requirements.txt:12: the project was archived
-WARNING Archived dependency actions/setup-ruby in .github/workflows/ci.yml:17: the repository was archived
+WARNING Archived dependency aioredis in docs/requirements.txt:12: the project was archived (archived-dependency)
+WARNING Archived dependency actions/setup-ruby in .github/workflows/ci.yml:17: the repository was archived (archived-dependency)
 ```
 
 The clause after the colon names what the source archived: PyPI archives a project, GitHub a repository. The warning quotes a reason if the source publishes one.
@@ -640,12 +613,7 @@ django==3.2.0  # update-time: set[vulnerability-level=high] (we act on high and 
 
 ### Keeping a pin floating
 
-`# update-time: allow[floating-pin]` keeps a floating pin as it is: a [floating image tag](#floating-image-tags) such as `python:latest`, a branch such as `actions/checkout@main`, or a tag such as `stable-2024`. Update-time would otherwise pin the image tag to the version and digest it serves, and the branch or tag to the commit it points at (see [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). Use the marker for a reference you want to follow a channel or a branch, such as an image you rebuild from `latest` on purpose. Run with `--log-level DEBUG` to see what the marker held back. That line names what dropping the marker would pin the reference to:
-
-```console
-DEBUG Keeping the floating tag python:latest in Dockerfile:2: it resolves to 3.14.7@sha256:… (update-time: allow[floating-pin])
-DEBUG Keeping the branch actions/checkout@main in .github/workflows/ci.yml:17: it resolves to 4.3.0@… (update-time: allow[floating-pin])
-```
+`# update-time: allow[floating-pin]` keeps a floating pin as it is: a [floating image tag](#floating-image-tags) such as `python:latest`, a branch such as `actions/checkout@main`, or a tag such as `stable-2024`. Update-time would otherwise pin the image tag to the version and digest it serves, and the branch or tag to the commit it points at (see [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). Use the marker for a reference you want to follow a channel or a branch, such as an image you rebuild from `latest` on purpose. Run with `--log-level DEBUG` to see what the marker held back, and what dropping the marker would pin the reference to.
 
 Update-time keeps a reference without a tag the same way.
 
@@ -675,7 +643,7 @@ image: redis:7.2  # update-time: allow[update==7.*]
 uses: actions/checkout@v4  # update-time: ignore[update>=5]
 ```
 
-Update-time filters the candidate versions *before* it picks the highest one, so a bounded reference still advances as far as the bound allows. On `3.12.8`, `allow[update<3.13]` still adopts a freshly published `3.12.9`. It just never crosses into `3.13`.
+A bounded reference still advances as far as the bound allows. On `3.12.8`, `allow[update<3.13]` still adopts a freshly published `3.12.9`. It just never crosses into `3.13`.
 
 `allow` and `ignore` are complements, which matters for ranges. For a one-sided bound the two are interchangeable — `allow[update<3.13]` and `ignore[update>=3.13]` express the same ceiling. For a *range* they are opposites. With versions `3.13` through `3.16` available, `allow[update>=3.13,<3.15]` keeps the reference *within* `[3.13, 3.15)` and picks `3.14`. `ignore[update>=3.13,<3.15]` *excludes* that range and skips to `3.16`.
 
@@ -780,24 +748,16 @@ A `package.json` dependency takes its marker under the section that declares it,
 Run with `--log-level DEBUG` to confirm a marker is recognised. Update-time reports a marker it recognised as:
 
 ```console
-DEBUG Recognised update-time marker ignore[yanked] for humanize in docs/requirements.txt:12
+DEBUG Recognised update-time marker ignore[yanked] for humanize in docs/requirements.txt:12 (marker-recognised)
 ```
 
 That line says the marker was read. It quotes the marker as the file writes it, and in a `package.json` it quotes the whole `update-time` field as JSON. A `Recognised` line without an `Invalid` warning beside it says the marker was understood as well. No `Recognised` line at all means the marker was not read. The prefix and the verbs are case-sensitive, and a field marker is read by name. So a typo in any of them leaves the reference updated as usual. A typo inside the brackets does too, and Update-time warns about it at `WARNING` as an invalid item (see [Invalid markers](#invalid-markers)).
 
 ### Seeing what a marker did
 
-Run with `--log-level DEBUG` to see what a marker held back or silenced. Update-time logs every update held back, every pin kept floating, and every warning silenced, each on a line of its own. Each line names the directive it obeyed:
+Run with `--log-level DEBUG` to see what a marker held back or silenced. Update-time logs every update held back, every pin kept floating, and every warning silenced, each on a line of its own. Each line names the directive it obeyed.
 
-```console
-DEBUG Ignoring the yank warning for humanize in docs/requirements.txt:12 (update-time: ignore[yanked])
-```
-
-A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A line about the update appears whenever the marker holds the update back, whether or not a newer version was available. An item Update-time cannot read does nothing, so it gets an [invalid](#invalid-markers) warning rather than a line. A bound produces a line only on a `pom.xml` dependency or plugin whose version Maven updates. That line names the versions the bound holds back:
-
-```console
-DEBUG Holding back the versions [34,) of com.google.guava:guava in pom.xml:12 (update-time: ignore[update>=34])
-```
+A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A line about the update appears whenever the marker holds the update back, whether or not a newer version was available. An item Update-time cannot read does nothing, so it gets an [invalid](#invalid-markers) warning rather than a line. A bound produces a line only on a `pom.xml` dependency or plugin whose version Maven updates. That line names the versions the bound holds back.
 
 ### Redundant markers
 
@@ -808,7 +768,7 @@ A directive is redundant when it decides nothing for the reference it sits on. A
 The `stale`, `yanked`, `vulnerable`, and `archived` scopes each silence a warning. Update-time reports such a scope as redundant on a reference it does not check for that warning. Update-time never checks some dependency types for some warnings, such as a Docker image for a yank:
 
 ```console
-WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source does not record a yank
+WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source does not record a yank (redundant-directive)
 ```
 
 Update-time also leaves these references unchecked, although it checks other references of their dependency type:
@@ -825,19 +785,19 @@ Update-time also leaves these references unchecked, although it checks other ref
 Update-time reports a scope on those references as:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure staleness against
-WARNING Redundant update-time directive set[stale-after=90] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so its staleness is never checked
-WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a yank
-WARNING Redundant update-time directive set[vulnerability-level=none] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a vulnerability
-WARNING Redundant update-time directive ignore[archived] for org.apache.commons:commons-lang3 in pom.xml:12: Update-time does not find a GitHub repository to check this dependency for archival
+WARNING Redundant update-time directive set[stale-after=90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure staleness against (redundant-directive)
+WARNING Redundant update-time directive set[stale-after=90] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so its staleness is never checked (redundant-directive)
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a yank (redundant-directive)
+WARNING Redundant update-time directive set[vulnerability-level=none] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a vulnerability (redundant-directive)
+WARNING Redundant update-time directive ignore[archived] for org.apache.commons:commons-lang3 in pom.xml:12: Update-time does not find a GitHub repository to check this dependency for archival (redundant-directive)
 ```
 
 Update-time reports an `ignore[yanked]` or an `ignore[archived]` as redundant where its check finds nothing to silence. A suppression can outlive what it was written for, and the check is what tells you it did:
 
 ```console
-WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: version 4.15.0 was not yanked
-WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: the project is not archived
-WARNING Redundant update-time directive ignore[archived] for actions/checkout in .github/workflows/ci.yml:17: the repository is not archived
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: version 4.15.0 was not yanked (redundant-ignore-yanked)
+WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: the project is not archived (redundant-ignore-archived)
+WARNING Redundant update-time directive ignore[archived] for actions/checkout in .github/workflows/ci.yml:17: the repository is not archived (redundant-ignore-archived)
 ```
 
 Update-time does not report such a directive as redundant when it cannot reach the dependency's source.
@@ -845,7 +805,7 @@ Update-time does not report such a directive as redundant when it cannot reach t
 Update-time reports a staleness threshold such as `set[stale-after=90]` as redundant where it and `--stale-after` judge the newest release alike, so both warn about it or neither does:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=90] for humanize in docs/requirements.txt:12: newest release 4.15.0 was published 30 days ago, which the threshold of 90 days and the default of 365 days judge alike
+WARNING Redundant update-time directive set[stale-after=90] for humanize in docs/requirements.txt:12: newest release 4.15.0 was published 30 days ago, which the threshold of 90 days and the default of 365 days judge alike (redundant-stale-after-as-default)
 ```
 
 Under `--stale-after 0`, a threshold is redundant until the newest release is older than the threshold, since the run itself does not warn about any release. So `set[stale-after=0]` is always redundant there.
@@ -855,7 +815,7 @@ Under `--stale-after 0`, a threshold is redundant until the newest release is ol
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
 
 ```console
-WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability
+WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability (redundant-ignore-vulnerable)
 ```
 
 Update-time judges a marker naming several advisories together. It warns only when none of them matches a vulnerability the version has.
@@ -863,7 +823,7 @@ Update-time judges a marker naming several advisories together. It warns only wh
 Update-time reports a risk level such as `set[vulnerability-level=high]` as redundant where it and `--vulnerability-level` report the same vulnerabilities in the version. Such a level is one the reference no longer needs:
 
 ```console
-WARNING Redundant update-time directive set[vulnerability-level=high] for django in docs/requirements.txt:12: the risk level high and the default level low report the same vulnerabilities in version 4.2.0
+WARNING Redundant update-time directive set[vulnerability-level=high] for django in docs/requirements.txt:12: the risk level high and the default level low report the same vulnerabilities in version 4.2.0 (redundant-vulnerability-level-as-default)
 ```
 
 #### Where a marker does not steer the update
@@ -880,15 +840,15 @@ An `ignore[update]`, a bound, and a `set[cooldown=…]` each steer the update. U
 Update-time reports a directive on those references as:
 
 ```console
-WARNING Redundant update-time directive allow[update<5] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update
-WARNING Redundant update-time directive set[cooldown=30] for commons-io:commons-io in child/pom.xml:5: this declaration does not hold its version, so Maven does not update that version here
-WARNING Redundant update-time directive allow[update<4] for org.apache.maven.plugins:maven-surefire-plugin in pom.xml:30: Maven does not update this plugin's version
-WARNING Redundant update-time directive ignore[update] for com.google.guava:guava in pom.xml:6: the versions plugin's configuration names rules of its own, which Maven follows instead of the marker
-WARNING Redundant update-time directive ignore[update] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are
-WARNING Redundant update-time directive set[cooldown=30] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are
-WARNING Redundant update-time directive allow[update<5] for humanize in app/pyproject.toml:5: Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a bound decides nothing
-WARNING Redundant update-time directive allow[update<8] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so it is never updated
-WARNING Redundant update-time directive ignore[update] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so it is never updated
+WARNING Redundant update-time directive allow[update<5] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update (redundant-directive)
+WARNING Redundant update-time directive set[cooldown=30] for commons-io:commons-io in child/pom.xml:5: this declaration does not hold its version, so Maven does not update that version here (redundant-directive)
+WARNING Redundant update-time directive allow[update<4] for org.apache.maven.plugins:maven-surefire-plugin in pom.xml:30: Maven does not update this plugin's version (redundant-directive)
+WARNING Redundant update-time directive ignore[update] for com.google.guava:guava in pom.xml:6: the versions plugin's configuration names rules of its own, which Maven follows instead of the marker (redundant-directive)
+WARNING Redundant update-time directive ignore[update] for humanize in legacy/pyproject.toml:4: Update-time leaves the dependencies of a file uv does not manage as they are (redundant-directive)
+WARNING Redundant update-time directive set[cooldown=30] for left-pad in web/package.json:4: Update-time leaves the dependencies of a project without a lock file as they are (redundant-directive)
+WARNING Redundant update-time directive allow[update<5] for humanize in app/pyproject.toml:5: Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a bound decides nothing (redundant-directive)
+WARNING Redundant update-time directive allow[update<8] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so it is never updated (redundant-directive)
+WARNING Redundant update-time directive ignore[update] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so it is never updated (redundant-directive)
 ```
 
 #### The `cooldown` scope
@@ -904,9 +864,9 @@ Two references are exceptions. uv takes a cooldown per package where it recompil
 Update-time reports a directive on those references as:
 
 ```console
-WARNING Redundant update-time directive set[cooldown=30] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure a cooldown against
-WARNING Redundant update-time directive set[cooldown=30] for humanize in pyproject.toml:12: the package manager applies the cooldown per run rather than per dependency
-WARNING Redundant update-time directive set[cooldown=30] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a cooldown holds nothing back
+WARNING Redundant update-time directive set[cooldown=30] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure a cooldown against (redundant-directive)
+WARNING Redundant update-time directive set[cooldown=30] for humanize in pyproject.toml:12: the package manager applies the cooldown per run rather than per dependency (redundant-directive)
+WARNING Redundant update-time directive set[cooldown=30] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a cooldown holds nothing back (redundant-directive)
 ```
 
 #### The `floating-pin` scope
@@ -914,25 +874,25 @@ WARNING Redundant update-time directive set[cooldown=30] for actions/checkout in
 An `allow[floating-pin]` on a reference whose pin does not float keeps nothing floating, so Update-time reports it as redundant and updates the reference as usual:
 
 ```console
-WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's pin does not float
+WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's pin does not float (redundant-directive)
 ```
 
 Update-time never pins a range such as `humanize>=4` or `^17.0.0`, so an `allow[floating-pin]` on one is redundant as well:
 
 ```console
-WARNING Redundant update-time directive allow[floating-pin] for humanize in docs/requirements.txt:12: this reference names a range, which Update-time never pins
+WARNING Redundant update-time directive allow[floating-pin] for humanize in docs/requirements.txt:12: this reference names a range, which Update-time never pins (redundant-directive)
 ```
 
 On a reference whose pin floats, an `ignore[update]` keeps nothing floating either, since Update-time never pins a reference whose update it holds back. Update-time reports the `allow[floating-pin]` directive as redundant there:
 
 ```console
-WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's update is held back, so it is never pinned
+WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's update is held back, so it is never pinned (redundant-directive)
 ```
 
 Update-time never pins an image the file does not pull, or a reference through a variable or a template that it cannot substitute, so an `allow[floating-pin]` on one is redundant as well:
 
 ```console
-WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: the Compose file builds this image, so its tag is never pinned
+WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: the Compose file builds this image, so its tag is never pinned (redundant-directive)
 ```
 
 #### The `hash-drift` scope
@@ -947,16 +907,16 @@ An `allow[hash-drift]` adopts what a drifted hash pin points at (see [Adopting h
 Update-time reports a directive on those references as:
 
 ```console
-WARNING Redundant update-time directive allow[hash-drift] for humanize in docs/requirements.txt:12: this reference does not carry a hash pin that could drift
-WARNING Redundant update-time directive allow[hash-drift] for clipboard in docs/conf.py:4: Update-time never adopts an integrity hash mismatch
-WARNING Redundant update-time directive allow[hash-drift] for acme/api in docker-compose.yml:4: the Compose file builds this image, so its digest is never checked for drift
-WARNING Redundant update-time directive allow[hash-drift] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a tag or branch, so it cannot drift
+WARNING Redundant update-time directive allow[hash-drift] for humanize in docs/requirements.txt:12: this reference does not carry a hash pin that could drift (redundant-directive)
+WARNING Redundant update-time directive allow[hash-drift] for clipboard in docs/conf.py:4: Update-time never adopts an integrity hash mismatch (redundant-directive)
+WARNING Redundant update-time directive allow[hash-drift] for acme/api in docker-compose.yml:4: the Compose file builds this image, so its digest is never checked for drift (redundant-directive)
+WARNING Redundant update-time directive allow[hash-drift] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a tag or branch, so it cannot drift (redundant-directive)
 ```
 
 Update-time never rewrites a reference whose update it holds back. So on a reference carrying an `ignore[update]`, it reports the `allow[hash-drift]` directive as redundant as well:
 
 ```console
-WARNING Redundant update-time directive allow[hash-drift] for python in Dockerfile:2: this reference's update is held back, so its drift is never adopted
+WARNING Redundant update-time directive allow[hash-drift] for python in Dockerfile:2: this reference's update is held back, so its drift is never adopted (redundant-directive)
 ```
 
 #### A bound
@@ -969,8 +929,8 @@ A [bound](#bounding-an-update) can be redundant in two ways:
 Update-time reports the two as:
 
 ```console
-WARNING Redundant update-time directive allow[update>=3.12] for python in Dockerfile:2: this bound never has an effect at version 3.12
-WARNING Redundant update-time directive ignore[update>=3.12] for python in Dockerfile:2: this bound blocks every update at version 3.12
+WARNING Redundant update-time directive allow[update>=3.12] for python in Dockerfile:2: this bound never has an effect at version 3.12 (redundant-bound)
+WARNING Redundant update-time directive ignore[update>=3.12] for python in Dockerfile:2: this bound blocks every update at version 3.12 (redundant-bound)
 ```
 
 Update-time also reports a bound as redundant on a reference whose version the bound cannot narrow. Besides the references under [Where a marker does not steer the update](#where-a-marker-does-not-steer-the-update), those are:
@@ -990,20 +950,20 @@ Update-time reports an `ignore[update]` on such a reference as redundant as well
 Update-time reports those bounds as:
 
 ```console
-WARNING Redundant update-time directive allow[update<5] for humanize in tool.py:4: the package manager resolves this dependency's version, so a bound decides nothing
-WARNING Redundant update-time directive allow[update<2] for hatchling in pyproject.toml:3: uv does not lock a build requirement, so a bound decides nothing
-WARNING Redundant update-time directive allow[update<2] for internal-lib in pyproject.toml:9: this requirement names a URL rather than a version, so a bound decides nothing
-WARNING Redundant update-time directive allow[update<5] for humanize in pyproject.toml:12: Update-time leaves a pin with an environment marker as it is, so a bound decides nothing
-WARNING Redundant update-time directive allow[update<5] for humanize in pyproject.toml:12: this reference's update is held back, so a bound decides nothing
-WARNING Redundant update-time directive allow[update<5] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a bound decides nothing
-WARNING Redundant update-time directive allow[update<6] for actions/setup-python in .github/workflows/ci.yml:18: this reference follows a branch or a floating tag rather than a version, so a bound decides nothing
+WARNING Redundant update-time directive allow[update<5] for humanize in tool.py:4: the package manager resolves this dependency's version, so a bound decides nothing (redundant-directive)
+WARNING Redundant update-time directive allow[update<2] for hatchling in pyproject.toml:3: uv does not lock a build requirement, so a bound decides nothing (redundant-directive)
+WARNING Redundant update-time directive allow[update<2] for internal-lib in pyproject.toml:9: this requirement names a URL rather than a version, so a bound decides nothing (redundant-directive)
+WARNING Redundant update-time directive allow[update<5] for humanize in pyproject.toml:12: Update-time leaves a pin with an environment marker as it is, so a bound decides nothing (redundant-directive)
+WARNING Redundant update-time directive allow[update<5] for humanize in pyproject.toml:12: this reference's update is held back, so a bound decides nothing (redundant-directive)
+WARNING Redundant update-time directive allow[update<5] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a bound decides nothing (redundant-directive)
+WARNING Redundant update-time directive allow[update<6] for actions/setup-python in .github/workflows/ci.yml:18: this reference follows a branch or a floating tag rather than a version, so a bound decides nothing (redundant-directive)
 ```
 
 A `pyproject.toml` or inline script metadata dependency without an exact pin takes its current version from the version uv locks for the files as written. Where the lock does not record a version for the dependency, or records more than one, a level bound does not have a version to anchor at. An `ignore[update]` does not have a version to hold the dependency on either. Update-time reports both as redundant:
 
 ```console
-WARNING Redundant update-time directive ignore[major-update] for humanize in pyproject.toml:12: the lock file does not record a version for this dependency
-WARNING Redundant update-time directive ignore[update] for humanize in pyproject.toml:12: the lock file records more than one version of this dependency
+WARNING Redundant update-time directive ignore[major-update] for humanize in pyproject.toml:12: the lock file does not record a version for this dependency (redundant-directive)
+WARNING Redundant update-time directive ignore[update] for humanize in pyproject.toml:12: the lock file records more than one version of this dependency (redundant-directive)
 ```
 
 #### A directive asking for the default
@@ -1011,8 +971,8 @@ WARNING Redundant update-time directive ignore[update] for humanize in pyproject
 Three directives ask for what Update-time does by default: `ignore[hash-drift]`, `ignore[floating-pin]`, and a bare `allow[update]`. Update-time reports each of them as redundant on every reference, and updates the reference as usual:
 
 ```console
-WARNING Redundant update-time directive ignore[hash-drift] for python in Dockerfile:2: Update-time does this by default
-WARNING Redundant update-time directive allow[update] for humanize in docs/requirements.txt:12: Update-time does this by default
+WARNING Redundant update-time directive ignore[hash-drift] for python in Dockerfile:2: Update-time does this by default (redundant-directive)
+WARNING Redundant update-time directive allow[update] for humanize in docs/requirements.txt:12: Update-time does this by default (redundant-directive)
 ```
 
 ### Invalid markers
@@ -1020,7 +980,7 @@ WARNING Redundant update-time directive allow[update] for humanize in docs/requi
 A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
 
 ```console
-WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2
+WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2 (invalid-marker-item)
 ```
 
 Update-time drops an item it cannot read, rather than guess what the item means. So a reference marked `ignore[stlae]` updates and is checked as usual. An item meant to hold the update back lets the update through when Update-time cannot read it, as an unclosed `ignore[update<4` and a malformed `allow[update<<3.13]` do. So review the diff and the log before you merge (see [Workflow](#workflow)).
@@ -1036,7 +996,7 @@ A risk level must be one of `low`, `moderate`, `high`, `critical`, and `none`, s
 Update-time reports an `update-time` field it cannot read as an invalid item too. It reads the field whole, so an unreadable field drops every directive it carries. The warning names the field, since a field of the wrong shape does not hold a directive to quote:
 
 ```console
-WARNING Invalid 'update-time.engines.node' in the update-time marker for node in package.json:3
+WARNING Invalid 'update-time.engines.node' in the update-time marker for node in package.json:3 (invalid-marker-item)
 ```
 
 ## 📖 Details per dependency type
@@ -1049,11 +1009,7 @@ For each dependency type, this chapter answers the same questions: what files, d
 
 Update-time discovers Python files containing requirements by name, case-sensitively. Those are `pyproject.toml`, `requirements.txt`, `requirements-<purpose>.txt` and `<purpose>-requirements.txt` (for example `requirements-dev.txt` and `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. It leaves unrelated files alone, such as `constraints.txt`.
 
-Update-time also updates any `*.py` file that carries a [PEP 723](https://peps.python.org/pep-0723/) inline script metadata block. That is a `# /// script … # ///` comment block declaring the standalone script's dependencies. A `*.py` file without such a block stays untouched and never invokes uv. Update-time warns about a `*.py` file it cannot read, and goes on with the other files:
-
-```console
-WARNING Could not read tool.py to find the inline script metadata it carries ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)
-```
+Update-time also updates any `*.py` file that carries a [PEP 723](https://peps.python.org/pep-0723/) inline script metadata block. That is a `# /// script … # ///` comment block declaring the standalone script's dependencies. A `*.py` file without such a block stays untouched and never invokes uv. Update-time warns about a `*.py` file it cannot read, and goes on with the other files.
 
 Update-time never rewrites a pin in a compiled or hash-pinned requirements file, such as a `requirements.txt` generated by [pip-tools](https://github.com/jazzband/pip-tools) or `uv pip compile`. Bumping a single pin without recompiling its transitive dependencies and hashes would corrupt the file. Update-time recognises such a file by its contents, an autogenerated header or `--hash=` lines. It also recognises one by a sibling `.in` file.
 
@@ -1061,31 +1017,11 @@ Update-time updates the sources of a compiled file instead, such as its `require
 
 Once Update-time has updated the sources, it has uv or pip-compile, whichever compiled the file, recompile it with the options the file's header records. The recompile updates the transitive dependencies as well.
 
-Update-time recompiles a file only where the run reaches every source the file names, and the header records a command that writes the file or prints it. Recompile any other compiled file yourself to bring its pins in line with its sources. A source that is itself compiled is handled as a compiled file of its own. Update-time reports what it does with each compiled file:
+Update-time recompiles a file only where the run reaches every source the file names, and the header records a command that writes the file or prints it. Recompile any other compiled file yourself to bring its pins in line with its sources. A source that is itself compiled is handled as a compiled file of its own, and Update-time skips the file that names it.
 
-```console
-INFO Leaving docs/requirements.txt as it is: Update-time updates the pins in docs/requirements.in, but does not recompile it, as its header records another file as its output
-WARNING Could not find docs/dev.in, a source docs/requirements.txt names; leaving docs/requirements.txt as it is
-DEBUG Leaving docs/requirements.txt and its source vendor/requirements.in as they are: the scan leaves vendor/requirements.in out
-WARNING Skipping requirements-dev.txt: its source requirements.txt is itself compiled, which Update-time does not support
-DEBUG Skipping requirements-lock.txt: a compiled or hash-pinned requirements file that does not name a requirements file as its source
-```
+Where the tool fails to recompile the file, Update-time logs the tool's error at `WARNING`, and reports at `ERROR` which file it did not recompile. Where the tool is not on the path, Update-time does not run it, and says so in that report.
 
-Where the tool fails to recompile the file, Update-time logs the tool's error at `WARNING`, and reports at `ERROR` which file it did not recompile. Where the tool is not on the path, Update-time does not run it, and says so in that report:
-
-```console
-ERROR Could not recompile docs/requirements.txt: uv pip compile failed
-ERROR Could not recompile docs/requirements.txt: uv is not on the path
-```
-
-Update-time runs uv for a `pyproject.toml` that uv manages and that declares dependencies. It takes a `pyproject.toml` to be managed by uv where the root of its uv workspace has a `uv.lock` beside it or a `[tool.uv]` table, unless that table sets `managed = false`. A project outside a workspace is its own root. Update-time leaves every other `pyproject.toml` as it is, such as one that only configures tools, or one whose project pins its dependencies with pip-tools. uv locks a workspace as a whole, in a `uv.lock` beside its root. So Update-time also leaves a member as it is where its workspace root lies outside the scan root, as when the scan starts in that member. Update-time reports such a file at `DEBUG`:
-
-```console
-DEBUG Not running uv for pyproject.toml: it does not declare dependencies for uv to resolve
-DEBUG Not running uv for legacy/pyproject.toml: it does not have a [tool.uv] table, and legacy/uv.lock does not exist
-DEBUG Not running uv for vendored/pyproject.toml: the [tool.uv] table of vendored/pyproject.toml sets managed = false
-DEBUG Not running uv for pyproject.toml: its uv workspace root ../pyproject.toml lies outside the scan root
-```
+Update-time runs uv for a `pyproject.toml` that uv manages and that declares dependencies. It takes a `pyproject.toml` to be managed by uv where the root of its uv workspace has a `uv.lock` beside it or a `[tool.uv]` table, unless that table sets `managed = false`. A project outside a workspace is its own root. Update-time leaves every other `pyproject.toml` as it is, such as one that only configures tools, or one whose project pins its dependencies with pip-tools. uv locks a workspace as a whole, in a `uv.lock` beside its root. So Update-time also leaves a member as it is where its workspace root lies outside the scan root, as when the scan starts in that member. Update-time reports such a file at `DEBUG`.
 
 To have Update-time update a project that uses uv but has neither a `uv.lock` nor a `[tool.uv]` table, run `uv lock` once. Update-time still checks the dependencies and the build requirements of a file it leaves as it is, and reports their markers.
 
@@ -1093,17 +1029,7 @@ Update-time keeps the lock of a script or of a uv workspace up to date with the 
 
 Where uv cannot resolve the dependencies of a `pyproject.toml` or a script, Update-time leaves the pins and the lock of its workspace, or of the script, as they were. A registry uv cannot reach is such a case, and so is a pin on a version younger than the [cooldown](#cooldown). Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update. Where uv is not on the path, Update-time does not run it, and says so in that report.
 
-Where Update-time cannot read the `uv.lock` of a workspace, or the lock of a script, it reports that at `ERROR`, and leaves the workspace or the script as it was. Where it cannot write a `pyproject.toml` or a script at all, it reports that at `ERROR`, and leaves the dependencies of the file's workspace, or of the script, as they were. Where it cannot give a file back the text it held before the run, or cannot remove a lock it created, it reports that at `ERROR` too, and goes on with the other files:
-
-```console
-ERROR Could not update the dependencies in tool.py: uv lock failed
-ERROR Could not update the dependencies in pyproject.toml: uv lock failed
-ERROR Could not read uv.lock ([Errno 13] Permission denied: 'uv.lock'), so the dependencies it locks are not updated
-ERROR Could not write pyproject.toml ([Errno 13] Permission denied: 'pyproject.toml'), so the dependencies uv locks together with it are not updated
-ERROR Could not give uv.lock back the text it held before the run ([Errno 13] Permission denied: 'uv.lock')
-ERROR Could not remove tool.py.lock, which the run created ([Errno 13] Permission denied: 'tool.py.lock')
-ERROR Could not update the dependencies in pyproject.toml: uv is not on the path
-```
+Where Update-time cannot read the `uv.lock` of a workspace, or the lock of a script, it reports that at `ERROR`, and leaves the workspace or the script as it was. Where it cannot write a `pyproject.toml` or a script at all, it reports that at `ERROR`, and leaves the dependencies of the file's workspace, or of the script, as they were. Where it cannot give a file back the text it held before the run, or cannot remove a lock it created, it reports that at `ERROR` too, and goes on with the other files.
 
 #### What dependencies are updated?
 
@@ -1111,11 +1037,7 @@ Update-time reads the dependency arrays a `pyproject.toml` declares. Those are t
 
 Update-time cannot update individual git, VCS, and URL dependencies, in a `requirements.txt` or a `pyproject.toml`. Examples are `git+https://github.com/org/repo.git@v8.0.3.0`, direct URLs, and `-e`/editable installs. Update them manually.
 
-Update-time updates a dependency uv resolves through a `[tool.uv] sources` entry like any dependency in the file. Such an entry names a path, a workspace member, or another index. PyPI does not serve a release for such a dependency, nor for one pointing at a URL or a git repository. So none of the [warnings](#️-warnings) applies to either. Where the lock moves the exact pin of such a dependency, Update-time reports the new version without a changelog:
-
-```console
-INFO New version available for internal-lib in pyproject.toml:2: 1.3.0
-```
+Update-time updates a dependency uv resolves through a `[tool.uv] sources` entry like any dependency in the file. Such an entry names a path, a workspace member, or another index. PyPI does not serve a release for such a dependency, nor for one pointing at a URL or a git repository. So none of the [warnings](#️-warnings) applies to either. Where the lock moves the exact pin of such a dependency, Update-time reports the new version without a changelog.
 
 In a PEP 723 inline script metadata block, Update-time updates only the pins in the `dependencies` array. It leaves the `requires-python` value and any other inline-metadata field untouched.
 
@@ -1123,33 +1045,17 @@ In a PEP 723 inline script metadata block, Update-time updates only the pins in 
 
 Update-time rewrites a dependency's declaration when it pins one exact version with `==`, and keeps an extra as written, so it rewrites `django[argon2]==3.2.0` to the new version. In a `requirements.txt`, it keeps an environment marker as written too, so it rewrites `humanize==4.15.0; python_version < "3.13"` as well.
 
-In a `pyproject.toml`, the new version is the newest that installs together with the other dependencies of the project, of the uv workspace the project belongs to, and of the projects it sources by path. In inline script metadata, it is the newest that installs together with the script's other dependencies. uv can lock a package at one version for an older Python and at another for a newer one. The pin then takes the lower version, which installs on every Python the project or script supports. Update-time leaves a pin with an environment marker as it is, and reports that at `INFO`:
+In a `pyproject.toml`, the new version is the newest that installs together with the other dependencies of the project, of the uv workspace the project belongs to, and of the projects it sources by path. In inline script metadata, it is the newest that installs together with the script's other dependencies. uv can lock a package at one version for an older Python and at another for a newer one. The pin then takes the lower version, which installs on every Python the project or script supports. Update-time leaves a pin with an environment marker as it is, and reports that at `INFO`.
 
-```console
-INFO Leaving humanize in pyproject.toml:3 as it is: Update-time does not update a pin with an environment marker
-```
+Update-time updates a project before each project that sources it by path, and projects that source each other by path together, so a pin they share moves to the same version. It reports the projects it updates together at `DEBUG`.
 
-Update-time updates a project before each project that sources it by path, and projects that source each other by path together, so a pin they share moves to the same version. It reports the projects it updates together at `DEBUG`:
-
-```console
-DEBUG Updating the uv workspaces of lib/pyproject.toml and app/pyproject.toml together: their projects source each other by path
-```
-
-Where uv cannot lock one of them, Update-time gives each of them back the text it held before the run. It reports that at `ERROR`, next to the error of the project uv could not lock:
-
-```console
-ERROR Could not update the dependencies in lib/pyproject.toml: they move together with app/pyproject.toml, which uv could not lock
-```
+Where uv cannot lock one of them, Update-time gives each of them back the text it held before the run. It reports that at `ERROR`, next to the error of the project uv could not lock.
 
 Update-time leaves every other specifier untouched, so you can pin a maximum version, such as `humanize<5`, to opt a dependency out of automatic updates. A `==` that names a range, such as `humanize==4.15.*`, does not pin an exact version either.
 
 Update-time also reports a new version for a dependency that does not pin an exact version, where its lock or compiled file moves it to a newer release. So Update-time can report a new version of `humanize>=4` while the file still declares `humanize>=4`. It does not report one for a dependency in a lock that PyPI does not serve, such as one uv resolves through a `[tool.uv] sources` entry.
 
-For a `requirements.txt` pin, Update-time reads from PyPI whether each newer release was yanked and when it was published. When PyPI does not serve that for a release, Update-time stays on the version the pin names rather than trying the versions in between. It logs why at `ERROR`:
-
-```console
-ERROR Could not fetch from PyPI the metadata of humanize 4.16.0 (HTTP 503), so its yank state and publication date are unknown; humanize stays on 4.15.0 rather than trying the versions in between
-```
+For a `requirements.txt` pin, Update-time reads from PyPI whether each newer release was yanked and when it was published. When PyPI does not serve that for a release, Update-time stays on the version the pin names rather than trying the versions in between. It logs why at `ERROR`.
 
 #### Pinning
 
@@ -1159,11 +1065,7 @@ Update-time adds no hash pin to a Python dependency. The hashes live in the `uv.
 
 For a `requirements.txt` pin, Update-time enforces the cooldown itself, against the release's publication date on PyPI.
 
-For a compiled file Update-time recompiles, the tool that recompiles it applies the cooldown, and records it in the file's header: uv as an `exclude-newer`, pip-compile as an `uploaded-prior-to`. Update-time writes a line at the top of the first source the header names, saying that it manages that cooldown, and logs that at `INFO`:
-
-```console
-INFO Set uv exclude-newer to '7 days' for docs/requirements.txt, and recorded in docs/requirements.in that Update-time manages it
-```
+For a compiled file Update-time recompiles, the tool that recompiles it applies the cooldown, and records it in the file's header: uv as an `exclude-newer`, pip-compile as an `uploaded-prior-to`. Update-time writes a line at the top of the first source the header names, saying that it manages that cooldown, and logs that at `INFO`.
 
 For uv, the line reads:
 
@@ -1179,12 +1081,7 @@ Where the compiled file pins a version younger than the cooldown, uv and pip-com
 
 pip-compile takes a cooldown from pip-tools 7.6.0 on, and needs pip 26.1 or later to apply it. With an older pip-tools or pip, the recompile fails, and Update-time reports that at `ERROR`.
 
-Update-time applies no cooldown of its own where uv's or pip's settings hold one already, in a config file or an environment variable. A setting outside the project, such as `UV_EXCLUDE_NEWER` or your own `uv.toml`, does not reach the compiled file's header. So a recompile on another machine, such as in CI, may give a different result. Where Update-time cannot read the tool's settings, it warns and applies the cooldown:
-
-```console
-WARNING Could not read from uv's settings whether the project sets an exclude-newer for docs/requirements.txt; applying the cooldown
-WARNING Could not read from pip's settings whether they set an uploaded-prior-to for docs/requirements.txt ([Errno 2] No such file or directory: 'pip'); applying the cooldown
-```
+Update-time applies no cooldown of its own where uv's or pip's settings hold one already, in a config file or an environment variable. A setting outside the project, such as `UV_EXCLUDE_NEWER` or your own `uv.toml`, does not reach the compiled file's header. So a recompile on another machine, such as in CI, may give a different result. Where Update-time cannot read the tool's settings, it warns and applies the cooldown.
 
 Where uv recompiles the file, a marker in a source sets the cooldown of its package, such as `set[cooldown=30]`. Update-time drops each package cooldown the header records, so set one you want to keep with a marker. pip-compile takes one cooldown for the whole file. So in its sources, a marker's cooldown reaches only an exact pin, which Update-time updates itself.
 
@@ -1192,17 +1089,13 @@ For the dependencies of a `pyproject.toml` that has a lock, Update-time applies 
 
 Update-time keeps its own tagged value in step with `--cooldown`. An `exclude-newer` without the `managed by Update-time` comment stays as it is. Remove the comment to take ownership of the line. As for a compiled file, Update-time does not write an `exclude-newer` where uv's settings hold one already, and warns and writes one where it cannot read those settings.
 
-A TOML inline table cannot hold a comment. So where the `pyproject.toml` writes `[tool]` or `[tool.uv]` as an inline table, Update-time rewrites that table as a normal one. Where `tool` or `tool.uv` is a value other than a table, Update-time leaves the file as it is and warns instead:
+A TOML inline table cannot hold a comment. So where the `pyproject.toml` writes `[tool]` or `[tool.uv]` as an inline table, Update-time rewrites that table as a normal one. Where `tool` or `tool.uv` is a value other than a table, Update-time leaves the file as it is and warns instead.
 
-```console
-WARNING Could not set uv exclude-newer in pyproject.toml to apply the cooldown: its tool, or the uv in it, is not a table
-```
-
-For inline script metadata, and for a `pyproject.toml` without a lock, Update-time also applies the cooldown through uv's `exclude-newer`. It passes the value to uv on the command line while uv resolves the versions, so the lock a script keeps does not record the cutoff. Update-time derives the cutoff from `--cooldown` on every run, so it writes nothing into the `# /// script` block or the `pyproject.toml`. As for a compiled file, Update-time does not pass a cutoff where uv's settings hold an `exclude-newer` already. It does not pass one either where the `[tool.uv]` table of the `# /// script` block or of the workspace root holds one.
+For inline script metadata, and for a `pyproject.toml` without a lock, Update-time also applies the cooldown through uv's `exclude-newer`. It passes the cutoff to uv on the command line, so the `# /// script` block, the `pyproject.toml`, and the lock do not record it. As for a compiled file, Update-time does not pass a cutoff where uv's settings hold an `exclude-newer` already. It does not pass one either where the `[tool.uv]` table of the `# /// script` block or of the workspace root holds one.
 
 #### Stale dependencies
 
-Update-time checks each pin a Python file declares against the newest release of its package on PyPI and reports the stale ones. It checks a requirement that pins no exact version as well, wherever the file declares it. The package name alone is enough to find the newest release.
+Update-time checks each pin a Python file declares against the newest release of its package on PyPI and reports the stale ones. It checks a requirement that pins no exact version as well, wherever the file declares it.
 
 #### Yanked dependencies
 
@@ -1216,13 +1109,13 @@ Update-time checks each exact pin a Python file declares against OSV's PyPI advi
 
 #### Archived dependencies
 
-PyPI publishes a project status. Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version. Archival is a fact about the project, so the package's name alone is enough to find that status.
+PyPI publishes a project status. Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
 
 #### Markers
 
 Write a marker for a pin in a `requirements.txt`, or in the source of a compiled file such as `requirements.in`, inline, on the pin's own line. Write it in the source rather than in the compiled file, since recompiling drops every comment in the compiled file. A `pyproject.toml` dependency and an inline script metadata dependency take one in either placement. See [Controlling updates and warnings per reference](#️-controlling-updates-and-warnings-per-reference) for the directives and where they go.
 
-An `ignore[update]` holds the dependency's update back, so Update-time leaves that pin as the file wrote it and reports no new version for it. The pin is what constrains uv, so a pin Update-time declines to rewrite is the version uv keeps resolving. On a dependency that does not pin an exact version, in a `pyproject.toml` that uv manages or in inline script metadata, an `ignore[update]` keeps the version uv locks for the file as written. In a `pyproject.toml` or a script without a lock, it keeps nothing, since uv resolves the dependency afresh on every run. Update-time rewrites only the line a marker sits on, and leaves the text of the other declarations of that name alone.
+An `ignore[update]` holds the dependency's update back, so Update-time leaves that pin as the file wrote it and reports no new version for it. On a dependency that does not pin an exact version, in a `pyproject.toml` that uv manages or in inline script metadata, an `ignore[update]` keeps the version uv locks for the file as written. In a `pyproject.toml` or a script without a lock, it keeps nothing, since uv resolves the dependency afresh on every run. Update-time rewrites only the line a marker sits on, and leaves the text of the other declarations of that name alone.
 
 In a `pyproject.toml` that uv manages and in inline script metadata, a bound narrows the versions uv locks, whether or not its dependency pins an exact version. So `humanize>=4  # update-time: allow[update<5]` keeps humanize below 5, and `humanize==4.10.0  # update-time: ignore[major-update]` moves the pin to the newest 4.x. A bound that leaves out the version, such as `allow[update<4]` on `humanize==4.10.0`, keeps the dependency on that version. A level bound on a dependency without an exact pin anchors at the version uv locks for the file as written.
 
@@ -1244,69 +1137,27 @@ Update-time reports every warning scope as redundant on a dependency PyPI does n
 
 Update-time looks for `package.json`, `pnpm-workspace.yaml`, and `.yarnrc.yml` files recursively from the starting path. The accompanying lock file is updated as well: `package-lock.json` or `npm-shrinkwrap.json` for npm, `pnpm-lock.yaml` for pnpm, `yarn.lock` for yarn, and `bun.lock` for bun. Update-time finds the manager in the nearest directory that names one, from the `package.json`'s own upwards. A directory names a manager in the `packageManager` field of its `package.json`, or else in the lock files and the `pnpm-workspace.yaml` it holds.
 
-Update-time runs npm, pnpm, yarn, or bun only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. It runs npm, yarn, and bun for the root of a workspace as well, whose `workspaces` field names the members. It runs pnpm for the root of a workspace whose `pnpm-workspace.yaml` names the members, whether or not that root holds a `package.json`. The managers would write a lock file beside any other `package.json`, so Update-time does not run them for such a file, and reports it at `DEBUG`:
+Update-time runs npm, pnpm, yarn, or bun only for a `package.json` that declares dependencies, under `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. It runs npm, yarn, and bun for the root of a workspace as well, whose `workspaces` field names the members. It runs pnpm for the root of a workspace whose `pnpm-workspace.yaml` names the members, whether or not that root holds a `package.json`. The managers would write a lock file beside any other `package.json`, so Update-time does not run them for such a file, and reports it at `DEBUG`.
 
-```console
-DEBUG Not running npm for ui/static/package.json: it does not declare dependencies for npm to install
-```
-
-Update-time also runs the managers only where a lock file sits beside the root of the project's workspace, or beside the `package.json` of a project outside a workspace, since otherwise they would write one. It still checks the dependencies, and reports the file at `DEBUG`:
-
-```console
-DEBUG Not running npm for web/package.json: it does not have a lock file, and npm would write web/package-lock.json
-DEBUG Not running pnpm for packages/ui/package.json: it does not have a lock file, and pnpm would write pnpm-lock.yaml
-```
+Update-time also runs the managers only where a lock file sits beside the root of the project's workspace, or beside the `package.json` of a project outside a workspace, since otherwise they would write one. It still checks the dependencies, and reports the file at `DEBUG`.
 
 To have Update-time update such a project, run `npm install`, `pnpm install`, `yarn install`, or `bun install` once.
 
-bun wrote its lock as a binary `bun.lockb` before version 1.2, which Update-time cannot read. So Update-time does not run bun for a project locked in a `bun.lockb` either. It still checks the dependencies, and says how to convert the lock at `WARNING`:
+bun wrote its lock as a binary `bun.lockb` before version 1.2, which Update-time cannot read. So Update-time does not run bun for a project locked in a `bun.lockb` either. It still checks the dependencies, and says how to convert the lock at `WARNING`.
 
-```console
-WARNING Not running bun for package.json: it locks its dependencies in the binary bun.lockb, which Update-time cannot read; run bun install --save-text-lockfile to convert it to bun.lock
-```
+yarn applies a cooldown from version 4.10 on. yarn classic, version 1, has none, and a yarn from 2.0 to 4.9 refuses to run where Update-time passes one. So Update-time does not run a yarn before 4.10 either. It asks the yarn that runs at the workspace root for its version. Where a `.yarnrc.yml` names a `yarnPath`, that yarn is the release the path names. It still checks the dependencies, and says how to switch at `WARNING`.
 
-yarn applies a cooldown from version 4.10 on. yarn classic, version 1, has none, and a yarn from 2.0 to 4.9 refuses to run where Update-time passes one. So Update-time does not run a yarn before 4.10 either. It asks the yarn that runs at the workspace root for its version. Where a `.yarnrc.yml` names a `yarnPath`, that yarn is the release the path names. It still checks the dependencies, and says how to switch at `WARNING`:
+Where yarn does not report its version, Update-time does not run it either, and warns why.
 
-```console
-WARNING Not running yarn for package.json: the yarn that runs in . is version 1.22.22, which cannot apply a cooldown; run yarn set version stable to switch the project to a yarn that can
-```
+Update-time gives the warning about a binary `bun.lockb` or about yarn's version once per workspace, at its root. It points each member at that warning, at `DEBUG`.
 
-Where yarn does not report its version, Update-time does not run it either, and warns why:
+Where the files of a directory name more than one manager, as a `pnpm-lock.yaml` beside a `bun.lockb` does, Update-time cannot tell which one the project uses, so it runs none of them. It still checks the dependencies, and says how to choose at `WARNING`.
 
-```console
-WARNING Could not determine the version of yarn in .: Usage Error: Parse error when loading .yarnrc.yml; please check it's proper Yaml
-```
+Update-time does not run the managers either where the root of the project's workspace lies outside the scan root, as when the scan starts in a member of the workspace. They would write the lock file beside that root, outside the scan. Update-time still checks the dependencies, and reports the file at `DEBUG`.
 
-Update-time gives the warning about a binary `bun.lockb` or about yarn's version once per workspace, at its root. It points each member at that warning, at `DEBUG`:
+Where npm, pnpm, yarn, or bun is not on the path, Update-time still checks the dependencies, and reports the missing package manager at `ERROR`.
 
-```console
-DEBUG Not running yarn for packages/ui/package.json: the warning about its workspace root package.json says why
-```
-
-Where the files of a directory name more than one manager, as a `pnpm-lock.yaml` beside a `bun.lockb` does, Update-time cannot tell which one the project uses, so it runs none of them. It still checks the dependencies, and says how to choose at `WARNING`:
-
-```console
-WARNING Not running a package manager for test/node/esm/package.json: test/node/esm/pnpm-lock.yaml and test/node/esm/bun.lockb name different ones; set the packageManager field to the one to run
-```
-
-Update-time does not run the managers either where the root of the project's workspace lies outside the scan root, as when the scan starts in a member of the workspace. They would write the lock file beside that root, outside the scan. Update-time still checks the dependencies, and reports the file at `DEBUG`:
-
-```console
-DEBUG Not running npm for package.json: its npm workspace root ../package.json lies outside the scan root
-DEBUG Not running pnpm for package.json: its pnpm workspace root ../pnpm-workspace.yaml lies outside the scan root
-```
-
-Where npm, pnpm, yarn, or bun is not on the path, Update-time still checks the dependencies, and reports the missing package manager at `ERROR`:
-
-```console
-ERROR Could not update the dependencies in web/package.json: pnpm is not on the path
-```
-
-A workspace can name the versions of its dependencies once, in a catalog at its root. bun keeps its catalogs in the root's `package.json`: the unnamed catalog under `workspaces.catalog` and a named one under `workspaces.catalogs.<name>`, or else at the top level, as `catalog` and `catalogs`. pnpm keeps them in `pnpm-workspace.yaml`, under `catalog` and `catalogs.<name>`, and yarn keeps them in `.yarnrc.yml`, under the same keys. Update-time warns about a `pnpm-workspace.yaml` or a `.yarnrc.yml` that it cannot read:
-
-```console
-WARNING Could not read pnpm-workspace.yaml to find the catalogs it holds ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)
-```
+A workspace can name the versions of its dependencies once, in a catalog at its root. bun keeps its catalogs in the root's `package.json`: the unnamed catalog under `workspaces.catalog` and a named one under `workspaces.catalogs.<name>`, or else at the top level, as `catalog` and `catalogs`. pnpm keeps them in `pnpm-workspace.yaml`, under `catalog` and `catalogs.<name>`, and yarn keeps them in `.yarnrc.yml`, under the same keys. Update-time warns about a `pnpm-workspace.yaml` or a `.yarnrc.yml` that it cannot read.
 
 #### What dependencies are updated?
 
@@ -1320,41 +1171,15 @@ An alias, such as `"baz": "npm:react-is@^18.0.0"`, stands for the package it nam
 
 Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. npm, pnpm, yarn, and bun update a dependency to the newest version that satisfies the range declared in the `package.json`, or in the catalog that a `catalog:` dependency takes its version from. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved up.
 
-npm, pnpm, and bun also write the version they resolve into the declared range, whether or not the version in the lock file moved. yarn leaves the range as it is. bun rewrites a `^` or a `~` range alone, and leaves a range such as `>=1.0.0` or `1.x` as written. Where the workspace root's `bunfig.toml`, or your global `.bunfig.toml`, sets `exact = true` under `[install]`, bun replaces a `^` or a `~` range with the version it resolves, so `^7.6.0` becomes `7.8.6`. From then on, bun leaves the dependency on that version, as it leaves any exact pin. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
+npm, pnpm, and bun also write the version they resolve into the declared range, whether or not the version in the lock file moved. yarn leaves the range as it is. bun rewrites a `^` or a `~` range alone, and leaves a range such as `>=1.0.0` or `1.x` as written. Where the workspace root's `bunfig.toml`, or your global `.bunfig.toml`, sets `exact = true` under `[install]`, bun replaces a `^` or a `~` range with the version it resolves, so `^7.6.0` becomes `7.8.6`. From then on, bun leaves the dependency on that version, as it leaves any exact pin. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so.
 
-```console
-INFO npm rewrote the range of minimatch in dev/package.json:5 from ^3.1.2 to ^3.1.5; the version in the lock file is unchanged at 3.1.5
-INFO npm rewrote the range of minimatch in dev/package.json:5 from ^3.0.0 to ^3.1.5; the lock file did not record a version before
-```
+pnpm and bun rewrite the range of a catalog entry as they rewrite the range of a `package.json`. Update-time reports a version moved for a `catalog:` dependency once, however many members take their version from it, and a range rewritten in a catalog as well.
 
-pnpm and bun rewrite the range of a catalog entry as they rewrite the range of a `package.json`. Update-time reports a version moved for a `catalog:` dependency once, however many members take their version from it, and a range rewritten in a catalog as well:
+npm, pnpm, yarn, and bun move the dependencies of a workspace's members along with those of its root. So Update-time runs them for the root alone, and reports each member's new versions at the member's `package.json`. It reports at `DEBUG` which run updates a member.
 
-```console
-INFO pnpm rewrote the range of semver in pnpm-workspace.yaml:4 from ^7.0.0 to ^7.8.6; the version in the lock file is unchanged at 7.8.6
-```
+Where Update-time cannot read a `bun.lock`, it warns, and does not report the versions bun moved.
 
-npm, pnpm, yarn, and bun move the dependencies of a workspace's members along with those of its root. So Update-time runs them for the root alone, and reports each member's new versions at the member's `package.json`. It reports at `DEBUG` which run updates a member:
-
-```console
-DEBUG The bun run for the workspace root package.json updates packages/ui/package.json
-```
-
-Update-time reads the versions bun locks from `bun.lock`. Where it cannot read that file, it warns, and does not report a version for the project:
-
-```console
-WARNING Could not read bun.lock to find the versions it locks (it does not hold the JSON bun writes)
-```
-
-Update-time reads the versions yarn locks with `yarn info`. Update-time reports what yarn printed at `ERROR` where `yarn info` or `yarn up` fails, since yarn reports its errors on stdout:
-
-```console
-ERROR yarn up -R --mode=update-lockfile left-pad failed:
-➤ YN0000: · Yarn 4.18.1
-➤ YN0000: ┌ Resolution step
-➤ YN0001: │ RequestError: getaddrinfo ENOTFOUND registry.yarnpkg.com
-➤ YN0000: └ Completed
-➤ YN0000: · Failed with errors in 0s 75ms
-```
+Where yarn fails, Update-time reports at `ERROR` what yarn printed, since yarn reports its errors on stdout.
 
 See the documentation of [npm update](https://docs.npmjs.com/cli/v12/commands/npm-update), [pnpm update](https://pnpm.io/cli/update), [yarn up](https://yarnpkg.com/cli/up), and [bun update](https://bun.sh/docs/cli/update) for the finer points of how each manager resolves versions.
 
@@ -1368,11 +1193,7 @@ For npm, Update-time passes the cooldown via npm's `min-release-age` option, als
 
 For pnpm, Update-time passes the cooldown via pnpm's `minimumReleaseAge` setting. If your project already configures `minimumReleaseAge` (in `pnpm-workspace.yaml`), Update-time leaves that in place instead of overriding it.
 
-For bun, Update-time passes the cooldown via bun's `--minimum-release-age` option, measured in seconds. bun does not report its settings, so Update-time reads them itself. If the `bunfig.toml` of the workspace root, or your global `.bunfig.toml`, sets `minimumReleaseAge` under `[install]`, Update-time leaves that in place instead of overriding it. bun reads the global one in `$XDG_CONFIG_HOME` where that holds an absolute path, and in your home directory otherwise. Where Update-time cannot read a `bunfig.toml`, it warns, and does not take it to set a cooldown:
-
-```console
-WARNING Could not read bunfig.toml to find whether it sets a cooldown for bun (Expected ']' at the end of a table declaration (at line 1, column 9))
-```
+For bun, Update-time passes the cooldown via bun's `--minimum-release-age` option, measured in seconds. If the `bunfig.toml` of the workspace root, or your global `.bunfig.toml`, sets `minimumReleaseAge` under `[install]`, Update-time leaves that in place instead of overriding it. bun reads the global one in `$XDG_CONFIG_HOME` where that holds an absolute path, and in your home directory otherwise. Where Update-time cannot read a `bunfig.toml`, it warns, and does not take it to set a cooldown.
 
 For yarn, Update-time passes the cooldown via yarn's `npmMinimalAgeGate` setting, in the `YARN_NPM_MINIMAL_AGE_GATE` environment variable, measured in minutes. If a `.yarnrc.yml` of the project or of your home directory sets `npmMinimalAgeGate`, or the environment does, Update-time leaves that in place instead of overriding it.
 
@@ -1421,20 +1242,20 @@ A marker steers the checks rather than the update, since npm, pnpm, yarn, and bu
 Update-time reports every scope as redundant on a dependency that does not resolve to a registry release, such as a git URL:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=0] for bats in package.json:4: the npm registry does not serve a release for this dependency
+WARNING Redundant update-time directive set[stale-after=0] for bats in package.json:4: the npm registry does not serve a release for this dependency (redundant-directive)
 ```
 
 A marker naming a dependency that its section does not declare decides nothing, and Update-time reports it as redundant:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=0] for lodash in package.json:9: this dependency is not declared in the section the update-time field names it under
+WARNING Redundant update-time directive set[stale-after=0] for lodash in package.json:9: this dependency is not declared in the section the update-time field names it under (redundant-directive)
 ```
 
 A `catalog:` dependency takes its version from the catalog, and Update-time checks that version at the catalog's entry. So it reports every warning scope as redundant on the dependency itself. Where Update-time does not find the entry, it does not check the version, and the warning says so. That happens in an npm project, since npm has no catalogs. It happens where the scan starts in a member and leaves out the workspace root that holds the catalog. And it happens where the dependency names a catalog that the workspace does not hold:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=0] for semver in packages/a/package.json:4: Update-time checks this dependency at the catalog that names its version
-WARNING Redundant update-time directive set[stale-after=0] for semver in packages/a/package.json:4: Update-time does not find a catalog entry that names this dependency's version
+WARNING Redundant update-time directive set[stale-after=0] for semver in packages/a/package.json:4: Update-time checks this dependency at the catalog that names its version (redundant-directive)
+WARNING Redundant update-time directive set[stale-after=0] for semver in packages/a/package.json:4: Update-time does not find a catalog entry that names this dependency's version (redundant-directive)
 ```
 
 ### Maven dependencies
@@ -1445,19 +1266,9 @@ Update-time looks for `pom.xml` files recursively from the starting path.
 
 Update-time delegates updating Maven dependencies to Maven. Maven runs over each pom in turn, as a module of its reactor: the poms that the topmost pom's `<modules>` reach. So Maven reads a BOM of the same project from the working tree, rather than a copy from a repository. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the topmost pom, and the `mvn` on your path where the project ships none.
 
-Where the project does not ship a wrapper and `mvn` is not on the path, Update-time still checks each pom, and reports the missing Maven at `ERROR`:
+Where the project does not ship a wrapper and `mvn` is not on the path, Update-time still checks each pom, and reports the missing Maven at `ERROR`.
 
-```console
-ERROR Could not update the dependencies in pom.xml: mvn is not on the path
-```
-
-Once Maven cannot read a pom of the reactor, Update-time runs Maven over none of the reactor's poms, but still checks them. A module that declares a dependency without its version breaks the reactor, for example, when the BOM managing that version drops the dependency. The error names the cause where Update-time can tell it:
-
-```console
-ERROR Maven cannot read the reactor in . since Update-time updated dubbo-dependencies-bom/pom.xml, so Update-time does not run Maven over the 50 poms left in it; revert that pom and hold the update that broke the reactor back with a marker, or fix what Maven reports
-ERROR Maven cannot read the reactor in . as the scan found it, so Update-time does not run Maven over its 118 other poms
-ERROR Update-time cannot read the reactor in . since sub/pom.xml does not parse, so Update-time does not run Maven over its 118 other poms
-```
+Once Maven cannot read a pom of the reactor, Update-time runs Maven over none of the reactor's poms, but still checks them. A module that declares a dependency without its version breaks the reactor, for example, when the BOM managing that version drops the dependency. The error names the cause where Update-time can tell it: a pom that Update-time updated, a pom that does not parse, or the reactor as the scan found it.
 
 To keep the update, declare the version the module lacks. Otherwise, revert the pom and hold the update back with a [marker](#markers-2).
 
@@ -1469,7 +1280,7 @@ Update-time also reads every `<plugin>` element the pom declares: under `<plugin
 
 Maven advances a dependency whose `<version>` element holds a version, and leaves a plugin whose `<version>` element holds a version alone. It advances a dependency or plugin whose `<version>` element names one of the pom's properties by advancing that property. Maven advances such a property only in a pom that both declares and names it, so a property that a parent pom declares for its modules alone stays where it is. Update-time reports the new version of each dependency and plugin that Maven moved.
 
-Update-time tells the versions plugin which versions it may not adopt: pre-releases, versions of another variant, versions inside the cooldown, and versions a marker holds back.
+Update-time tells the versions plugin not to adopt pre-releases, versions of another variant, versions inside the cooldown, or versions a marker holds back.
 
 Where a scanned pom manages a version, Update-time checks that version once, at the managing declaration. Where a pom outside the scan manages the version, such as a released parent pom or an imported BOM, Update-time checks each declaration that leaves its `<version>` out.
 
@@ -1479,13 +1290,9 @@ Maven moves each dependency and plugin it advances to the newest release. It doe
 
 Some projects publish a release in several variants, which a suffix after the version tells apart. Byte Buddy publishes `1.18.14-jdk5` beside `1.18.14`, and Spock publishes `2.5-groovy-4.0` beside `2.5-groovy-5.0`. Update-time keeps each dependency and plugin on its variant: `1.18.10` moves to `1.18.14`, and `2.4-groovy-4.0` to `2.5-groovy-4.0`. A suffix marking a release, such as `.Final`, `-GA`, or `.RELEASE`, does not name a variant. Neither does a date, such as the `.v20250814` of Jetty's `9.4.58.v20250814`.
 
-The versions plugin takes the versions it may not adopt per artefact, rather than per declaration. So Maven moves all declarations of an artefact in a pom to the same version: the newest on any of their variants. A pom declaring guava on both `33.0.0-jre` and `33.0.0-android` moves both declarations to a version such as `33.7.2-jre`.
+Maven moves all declarations of an artefact in a pom to the same version: the newest on any of their variants. A pom declaring guava on both `33.0.0-jre` and `33.0.0-android` moves both declarations to a version such as `33.7.2-jre`.
 
-A pom can configure the versions plugin itself, and so can its parent. A setting such as a `rulesUri` or an `ignoredVersions` then wins over what Update-time tells the plugin, so Update-time leaves that decision to the pom. Update-time reports each such setting at `DEBUG`:
-
-```console
-DEBUG The versions plugin's rulesUri, set on line 12 of org.example:parent:1.0, wins over Update-time for pom.xml, so Maven may adopt versions of another variant, versions inside the cooldown, and versions a marker holds back
-```
+A pom can configure the versions plugin itself, and so can its parent. A setting such as a `rulesUri` or an `ignoredVersions` then wins over what Update-time tells the plugin, so Update-time leaves that decision to the pom. Update-time reports each such setting at `DEBUG`.
 
 #### Pinning
 
@@ -1544,20 +1351,20 @@ A Maven dependency or plugin takes a marker in an XML comment at the end of its 
 Where a scanned pom manages a declaration's version, Update-time checks that version at the managing declaration. So the `stale`, `archived`, and `vulnerable` scopes go on the managing declaration's line. Update-time reports them as redundant on a declaration that leaves its version to the managing declaration:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=0] for commons-io:commons-io in child/pom.xml:5: Update-time checks this dependency at the declaration that manages its version
+WARNING Redundant update-time directive set[stale-after=0] for commons-io:commons-io in child/pom.xml:5: Update-time checks this dependency at the declaration that manages its version (redundant-directive)
 ```
 
 Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant for a dependency or plugin that Maven Central does not serve. The `vulnerable` scope still applies, since OSV holds the advisories:
 
 ```console
-WARNING Redundant update-time directive set[cooldown=30] for nl.example:internal-lib in pom.xml:12: Maven Central does not serve this dependency
+WARNING Redundant update-time directive set[cooldown=30] for nl.example:internal-lib in pom.xml:12: Maven Central does not serve this dependency (redundant-directive)
 ```
 
 Where Maven updates the version, and the pom's versions plugin configuration does not name rules of its own, an `ignore[update]` holds back every version of the artefact.
 
 A bound holds back the versions it drops. Update-time reports those versions at `DEBUG`, as Maven ranges (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound compares the number of a version alone, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
 
-A pom can declare an artefact more than once, and the versions plugin takes the versions it may not adopt per artefact (see [What versions are updated?](#what-versions-are-updated-2)). So a marker on one of those declarations steers all of them. Update-time holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
+A pom can declare an artefact more than once, and Maven moves all those declarations to the same version (see [What versions are updated?](#what-versions-are-updated-2)). So a marker on one of those declarations steers all of them. Update-time holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
 
 ### GitHub Actions and pre-commit hooks
 
@@ -1583,11 +1390,7 @@ Update-time moves a reference given as a version tag to the latest version. Such
 
 The latest version is the newest version that is neither a draft nor a pre-release, whether the repository published it as a GitHub release or only tagged it.
 
-A repository may also tag only drafts and pre-releases, or not tag a release at all. Update-time then leaves the reference as it is, and reports that at `DEBUG`:
-
-```console
-DEBUG Reference actions/checkout in .github/workflows/ci.yml:17 was left as it is: the repository does not tag a release to update to
-```
+A repository may also tag only drafts and pre-releases, or not tag a release at all. Update-time then leaves the reference as it is, and reports that at `DEBUG`.
 
 #### Pinning
 
@@ -1595,48 +1398,26 @@ Update-time pins an action that names a version tag to the commit SHA of the lat
 
 Update-time pins a `rev:` that names a version tag the same way, writing the version's tag in pre-commit's own `# frozen:` comment, so `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`.
 
-Where the latest version is newer than the version the tag names, the reference moves to the latest version. Update-time then reports the new version with its changelog, as for any update. Where the tag names the latest version, or points at the latest version's commit as `v4` can, Update-time reports the pin:
-
-```console
-INFO New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0
-INFO Pinned pre-commit/pre-commit-hooks in .pre-commit-config.yaml:4 to 6.0.0@…
-```
+Where the latest version is newer than the version the tag names, the reference moves to the latest version. Update-time then reports the new version with its changelog, as for any update. Where the tag names the latest version, or points at the latest version's commit as `v4` can, Update-time reports the pin.
 
 Update-time pins an action referenced by a branch to the commit the branch points at. When a version tag points at that commit, the comment names it, so `uses: actions/checkout@main` becomes `uses: actions/checkout@<sha> # v4.3.0`. When several do, the comment names the most precise: `v4.3.0` rather than `v4.3` or `v4`. When no version tag points at the commit, the comment names the branch, so `@main` becomes `@<sha> # main`. Update-time pins a `rev:` that names a branch the same way, in a `# frozen:` comment. It pins a tag such as `stable-2024` the way it pins a branch.
 
 Update-time pins a short commit SHA to the full SHA, so `rev: 3e8a870` becomes `rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c`. When a version tag points at the commit, the comment names that tag, as for a branch: `rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0`. It leaves a full commit SHA without a comment alone, in a `uses:` and a `rev:` alike. So does a full commit SHA whose comment does not name a version, tag, or branch, such as `# pinned by hand` or `# ratchet:actions/checkout@v4`.
 
-Update-time leaves a reference naming a branch, a tag such as `stable-2024`, or a short commit SHA as it is when it cannot fetch the commit the reference points at. It logs why at `ERROR`:
+Update-time leaves a reference naming a branch, a tag such as `stable-2024`, or a short commit SHA as it is when it cannot fetch the commit the reference points at. It logs why at `ERROR`.
 
-```console
-ERROR Could not fetch the commit of the ref actions/checkout@main in .github/workflows/ci.yml:17, so it was left as it is (HTTP 403, API rate limit exceeded)
-```
-
-While the comment names the branch, later runs check the branch for [drift](#hash-drift). Where the branch's newest commit older than the cooldown comes before the pinned commit in the branch's history, the branch has not moved on, and Update-time leaves the pin as it is. `@<sha> # main` becomes `@<sha> # v4.3.1` as soon as a version tag points at the pinned commit, provided the branch has not moved on from that commit. Where Update-time adopts a moved branch's new commit, the comment names the version tag pointing at that commit, or the branch where none does.
+While the comment names the branch, later runs check the branch for [drift](#hash-drift). Where the branch has not moved on from the pinned commit, counting only commits older than the cooldown, Update-time leaves the pin as it is. `@<sha> # main` becomes `@<sha> # v4.3.1` as soon as a version tag points at the pinned commit, provided the branch has not moved on from that commit. Where Update-time adopts a moved branch's new commit, the comment names the version tag pointing at that commit, or the branch where none does.
 
 > [!IMPORTANT]
 > Once the comment names a version tag, the reference is a version pin like any other. Later runs move it to newer versions, and no longer follow the branch. To keep following the branch, mark the reference `# update-time: allow[floating-pin]`. Its comment then keeps naming the branch, also when a version tag points at its commit (see [Keeping a pin floating](#keeping-a-pin-floating)).
 
-Update-time leaves the reference as it is when it cannot tell whether the branch moved on, and logs why at `ERROR`:
-
-```console
-ERROR Could not check branch drift for actions/checkout@main in .github/workflows/ci.yml:17: GitHub did not compare the pinned commit with …, the branch's newest commit older than the cooldown (HTTP 403, API rate limit exceeded); the pin was left unchanged
-ERROR Could not fetch the commit of the branch actions/checkout@main in .github/workflows/ci.yml:17, so it was left as it is (the branch's newest commit older than the cooldown is not among the 500 newest commits examined)
-```
+Update-time leaves the reference as it is when it cannot tell whether the branch moved on, and logs why at `ERROR`. GitHub may not answer, or the branch may have moved too far for Update-time to compare it.
 
 #### Cooldown
 
-The cooldown is measured against the release's publication date. A release whose tag was moved onto a commit made after its publication, as a `v2` tag moves to each `v2.x.y`, takes the commit's date. A version that was only tagged takes the publication date of the first release of the same commit, or else the date of the commit itself. When Update-time cannot fetch a commit's date, it stays on the version the reference names rather than adopting a version with the cooldown unchecked. It logs why at `ERROR`:
+The cooldown is measured against the release's publication date. A release whose tag was moved onto a commit made after its publication, as a `v2` tag moves to each `v2.x.y`, takes the commit's date. A version that was only tagged takes the publication date of the first release of the same commit, or else the date of the commit itself. When Update-time cannot fetch a commit's date, it stays on the version the reference names rather than adopting a version with the cooldown unchecked. It logs why at `ERROR`.
 
-```console
-ERROR Could not determine from GitHub when actions/checkout v4.4.0 was committed (HTTP 403, API rate limit exceeded), so the cooldown can't be verified; actions/checkout stays on 4.3.0 rather than trying the versions in between
-```
-
-GitHub does not report when a tag or branch was moved. So Update-time measures the cooldown of a moved tag's or branch's new commit against the commit's committer date. Whoever makes a commit sets that date, so a tag moved onto an old commit passes the cooldown at once, and so does an old commit pushed onto a branch. When Update-time cannot fetch the commit's date, it holds the drift back and logs why at `ERROR`:
-
-```console
-ERROR Could not determine from GitHub the date of commit … that actions/checkout@4.1.1 in .github/workflows/ci.yml:17 now points at (HTTP 403, API rate limit exceeded), so the cooldown can't be verified; not adopting the drift
-```
+GitHub does not report when a tag or branch was moved. So Update-time measures the cooldown of a moved tag's or branch's new commit against the commit's committer date. Whoever makes a commit sets that date, so a tag moved onto an old commit passes the cooldown at once, and so does an old commit pushed onto a branch. When Update-time cannot fetch the commit's date, it holds the drift back and logs why at `ERROR`.
 
 #### Stale dependencies
 
@@ -1648,15 +1429,11 @@ GitHub does not record a yank, so Update-time checks neither an action nor a hoo
 
 #### Vulnerable dependencies
 
-Update-time checks an action against OSV's GitHub Actions advisories. It checks the version that the action is on when the run ends. It reads `v4.1.1` as `4.1.1`, and `v4` as `4.0.0`. OSV files an action under its repository, so Update-time checks `github/codeql-action/init` as `github/codeql-action`, and a reusable workflow as the repository holding it.
+Update-time checks an action against OSV's GitHub Actions advisories. It checks the version that the action is on when the run ends. It reads `v4.1.1` as `4.1.1`, and `v4` as `4.0.0`. So Update-time checks an action left on `v4` against the advisories of `4.0.0`, not of the `4.x` release the tag points at. It looks an action up under its repository, so `github/codeql-action/init` counts as `github/codeql-action`, and a reusable workflow as the repository holding it.
 
 Update-time does not check a reference that names a branch, a tag such as `stable-2024`, or a commit SHA rather than a version. A run that pins such a reference to a version tag checks it at that version.
 
-Update-time reads what it can of an advisory, and warns about a value it cannot read:
-
-```console
-WARNING Could not read the affected versions of advisory GHSA-1111-2222-3333 (Invalid version: 'unknown'), so the vulnerability check passes over that part of the advisory
-```
+Update-time reads what it can of an advisory, and warns about a value it cannot read.
 
 The check matches the version alone. Take GHSA-mrrh-fwg8-r2c3: an attacker moved the tags of `tj-actions/changed-files`, and the advisory names the versions behind those tags. So a reference pinned to a commit from before the attack gets the warning too. Once you have verified the commit, silence the warning with an `ignore[vulnerable=…]` marker.
 
@@ -1698,23 +1475,11 @@ Update-time takes the new version from the latest [Node](https://hub.docker.com/
 
 Update-time updates the Node engine version only when it contains a specific version, for example `26.4`. It leaves a range or other non-numeric value untouched.
 
-Update-time keeps a `.python-version` entry within the `requires-python` of its project, since uv refuses to run for a project whose entry falls outside it. So under `requires-python = ">=3.10,<3.12"`, the entry `3.10` moves to the newest `3.11` release at most. Where that project belongs to a uv workspace, uv checks the entry against the `requires-python` of every member the workspace includes, so Update-time keeps the entry within each of them. A [bound](#bounding-an-update) in the entry's marker applies as well. Run with `--log-level DEBUG` to see which entries the `requires-python` holds back:
+Update-time keeps a `.python-version` entry within the `requires-python` of its project, since uv refuses to run for a project whose entry falls outside it. So under `requires-python = ">=3.10,<3.12"`, the entry `3.10` moves to the newest `3.11` release at most. Where that project belongs to a uv workspace, uv checks the entry against the `requires-python` of every member the workspace includes, so Update-time keeps the entry within each of them. A [bound](#bounding-an-update) in the entry's marker applies as well. Run with `--log-level DEBUG` to see which entries the `requires-python` holds back.
 
-```console
-DEBUG Holding back the versions of python in .python-version:1 that the requires-python >=3.10,<3.12 of pyproject.toml:2 excludes
-```
+Update-time never moves an entry to a lower version. So it warns about an entry that the run leaves outside the `requires-python`.
 
-Update-time never moves an entry to a lower version. So it warns about an entry that the run leaves outside the `requires-python`:
-
-```console
-WARNING Incompatible Python version python in .python-version:1: version 3.13.2 falls outside the requires-python >=3.10,<3.12 of pyproject.toml:2, so uv refuses to run for the project
-```
-
-Where the `requires-python` is not a version specifier, Update-time warns, and updates the entry as if the project did not declare one:
-
-```console
-WARNING Ignoring the requires-python of pyproject.toml:2: it is not a version specifier
-```
+Where the `requires-python` is not a version specifier, Update-time warns, and updates the entry as if the project did not declare one.
 
 #### Pinning
 
@@ -1788,33 +1553,25 @@ Update-time reads a `Containerfile` as a Dockerfile.
 | Helm charts | Container images (`image:` references) |
 | devcontainer configs | The base image and each feature |
 
-A Dockerfile's `FROM` can name its image or its tag through build arguments, as `FROM $IMAGE_NAME:$IMAGE_VERSION-$IMAGE_EDITION` does. Update-time substitutes the defaults that the `ARG` lines above the first `FROM` declare, as Docker does, and updates the reference that gives. It reports at `DEBUG` which reference that is:
-
-```console
-DEBUG Reference python:$PY in Dockerfile:2 is python:3.14 with its build arguments substituted; it does not get a digest, since a digest would overrule a --build-arg
-```
+A Dockerfile's `FROM` can name its image or its tag through build arguments, as `FROM $IMAGE_NAME:$IMAGE_VERSION-$IMAGE_EDITION` does. Update-time substitutes the defaults that the `ARG` lines above the first `FROM` declare, as Docker does, and updates the reference that gives. It reports at `DEBUG` which reference that is.
 
 Update-time leaves a `FROM` alone where it cannot tell which line the new version goes on, such as where a build argument does not have a default. It leaves every other reference through a variable or a template alone as well, such as `redis:7.2-${VARIANT}` or `{{ .Values.tag }}`. It reports at `DEBUG` why it does not ask a registry about an image:
 
 ```console
-DEBUG Reference acme/api:1.2.3 in docker-compose.yml:4 was left as it is: the Compose file builds this image
-DEBUG Reference redis:7.2-${VARIANT} in docker-compose.yml:7 was left as it is: it names its image or tag through a variable or a template
-DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it writes its version across more than one line of the Dockerfile
-DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it shares its build argument with a FROM line that names another image or tag, or carries another marker
-DEBUG Reference python:$PY in Dockerfile:2 was left as it is: its digest overrules the build arguments it names
+DEBUG Reference acme/api:1.2.3 in docker-compose.yml:4 was left as it is: the Compose file builds this image (image-not-looked-up)
+DEBUG Reference redis:7.2-${VARIANT} in docker-compose.yml:7 was left as it is: it names its image or tag through a variable or a template (image-not-looked-up)
+DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it writes its version across more than one line of the Dockerfile (image-not-looked-up)
+DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it shares its build argument with a FROM line that names another image or tag, or carries another marker (image-not-looked-up)
+DEBUG Reference python:$PY in Dockerfile:2 was left as it is: its digest overrules the build arguments it names (image-not-looked-up)
 ```
 
-Update-time leaves a reference alone as well where the registry does not serve the image's repository. That happens for an image the project builds itself, a mistyped image name, and a private image Update-time cannot authenticate to. Update-time cannot tell these apart, so it reports the reference at `DEBUG`, whether its tag floats or not:
-
-```console
-DEBUG Reference spark-rm-base:3.5.1 in Dockerfile:2 was left as it is: the registry does not serve the image's repository
-```
+Update-time leaves a reference alone as well where the registry does not serve the image's repository. That happens for an image the project builds itself, a mistyped image name, and a private image Update-time cannot authenticate to. Update-time cannot tell these apart, so it reports the reference at `DEBUG`, whether its tag floats or not.
 
 #### What versions are updated?
 
 When updating an image tag, Update-time keeps the non-numeric parts of the tag and only advances its version numbers. A tag such as `python:3.14.6-alpine3.23` has three parts: the label prefix `python`, the main version `3.14.6`, and the suffix `alpine3.23`. Update-time preserves the label prefix and the suffix's label, so it never replaces a variant: `python` never becomes `pypy`, and `alpine` never becomes `debian`. It upgrades both the main version and a version embedded in the suffix, independently or together, for example `3.14.6-alpine3.23` → `3.15.0-alpine3.24`. A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated, since it carries no version to advance. Update-time never downgrades one axis to adopt a newer value on the other.
 
-A main version can end in a build number after an underscore, as Eclipse Temurin's `26.0.2_10-jre` does. Update-time reads that tag as version 26.0.2, build 10. So it moves `26.0.2_9-jre` to `26.0.2_10-jre`, and `25-jre` as well.
+A main version can end in a build number after an underscore, as Eclipse Temurin's `26.0.2_10-jre` does. Update-time reads that tag as version 26.0.2 with build 10, so it moves both `26.0.2_9-jre` and `25-jre` to `26.0.2_10-jre`.
 
 A floating tag such as `latest` or `trixie`, or a reference without a tag, is pinned rather than updated (see [Floating image tags](#floating-image-tags)).
 
@@ -1826,22 +1583,13 @@ A dated snapshot, such as `debian:bookworm-20260803` or Alpine's `20260805`, nam
 
 Update-time appends the `@sha256:digest` of the (latest) tag to an image referenced by tag only, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. Update-time takes the image's registry from the reference, so it resolves images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) alike.
 
-Update-time does not add a digest to a `FROM` that names build arguments. A build can override such a reference with `--build-arg`. Docker pulls a reference that carries a digest by that digest and ignores its tag, so a digest would overrule the override. A floating default, such as `ARG VERSION=latest`, is pinned to the version it serves alone:
-
-```console
-INFO Pinned python in Dockerfile:2 to 3.14.7
-```
+Update-time does not add a digest to a `FROM` that names build arguments. A build can override such a reference with `--build-arg`. Docker pulls a reference that carries a digest by that digest and ignores its tag, so a digest would overrule the override. A floating default, such as `ARG VERSION=latest`, is pinned to the version it serves alone.
 
 #### Cooldown
 
 Update-time adopts a newer tag, or a re-pushed digest, only when it is older than the cooldown, provided Docker Hub hosts the image. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) do not expose a publication date, so Update-time updates images there, and adopts a re-pushed digest, without a cooldown.
 
-When Docker Hub does not report the push date of a newer tag or a re-pushed digest, Update-time cannot verify the cooldown. It holds the drift back, or stays on the tag the reference names rather than trying the other newer tags, and logs why at `ERROR`:
-
-```console
-ERROR Could not determine from Docker Hub when python:3.15.0 was pushed (HTTP 429), so the cooldown can't be verified; python stays on 3.14.6 rather than trying the tags in between
-ERROR Could not determine from Docker Hub when python:3.14 in Dockerfile:2 was pushed (HTTP 429), so the cooldown can't be verified; not adopting the drift
-```
+When Docker Hub does not report the push date of a newer tag or a re-pushed digest, Update-time cannot verify the cooldown. It holds the drift back, or stays on the tag the reference names rather than trying the other newer tags, and logs why at `ERROR`.
 
 #### Stale dependencies
 
@@ -1881,11 +1629,7 @@ Update-time updates the npm package version embedded in the URL to the latest ve
 
 #### Pinning
 
-A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it. Update-time inserts the hash in front of the entries the dictionary already has, and reports it as a pin:
-
-```console
-INFO Pinned clipboard in docs/conf.py:4 to 2.0.11@sha256-…
-```
+A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it. Update-time reports it as a pin.
 
 A URL declared as a bare string, without an attribute dictionary, has nowhere to hold an integrity hash, so it stays without one. Update-time logs it at `INFO` and leaves it alone. Declare the URL as a `(url, {"integrity": …})` tuple to have it pinned.
 

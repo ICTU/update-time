@@ -56,7 +56,7 @@ _PER_PAGE = 100
 # How many pages of a branch's commits are listed at most, and why the branch is left as it is when its newest commit
 # older than the cooldown lies deeper.
 _MAX_COMMIT_LISTING_PAGES = 5
-BEYOND_THE_COMMITS_EXAMINED = (
+_BEYOND_THE_COMMITS_EXAMINED = (
     "the branch's newest commit older than the cooldown is not among the "
     f"{_MAX_COMMIT_LISTING_PAGES * _PER_PAGE} newest commits examined"
 )
@@ -441,7 +441,7 @@ def newest_commit_past_cooldown(
         if (next_url := next_page_url(response)) is None:
             return LookedUp(None)
         url = next_url
-    return LookedUp(None, BEYOND_THE_COMMITS_EXAMINED)
+    return LookedUp(None, _BEYOND_THE_COMMITS_EXAMINED)
 
 
 def _newest_on_the_line(commits: list[_CommitJSON], cooldown_days: int) -> _CommitJSON | None:

@@ -2,6 +2,7 @@
 
 import re
 import unicodedata
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from update_time.formats import markdown as markdown_format
@@ -48,6 +49,17 @@ def anchor(heading: str) -> str:
     the combining mark U+FE0F, so the anchor of `⚠️ Warnings` begins with U+FE0F.
     """
     return "#" + re.sub(r"[^\w\s-]", _combining_mark, heading).lower().replace(" ", "-")
+
+
+def anchors(markdown: str) -> set[str]:
+    """Return the anchor that each heading in the document provides, numbering each repeat as GitHub does."""
+    repeats: Counter[str] = Counter()
+    provided = set()
+    for _level, title in headings(markdown):
+        base = anchor(title)
+        provided.add(f"{base}-{repeats[base]}" if repeats[base] else base)
+        repeats[base] += 1
+    return provided
 
 
 def _combining_mark(match: re.Match[str]) -> str:

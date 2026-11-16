@@ -1,4 +1,4 @@
-"""Generate README.md from the docs/README.md.in template, filling in the generated content.
+"""Generate README.md from the docs/README.md.in template, the log-output screenshot, and the index of the log messages.
 
 The template's placeholders are substituted so the machine-generated parts of the README:
 
@@ -9,8 +9,10 @@ The template's placeholders are substituted so the machine-generated parts of th
   embedded above that fallback.
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 
-Regenerate the README (and the screenshot) with `just readme`. Run with `--check` to report the generated files that
-are out of date.
+The index of the log messages, docs/log-messages.md, takes the sample of each name from them too (see `log_index`).
+
+Regenerate the README, the screenshot, and the index with `just readme`. Run with `--check` to report the generated
+files that are out of date.
 """
 
 import contextlib
@@ -22,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from tools.generate_log_svg import generate as generate_log_output
 from tools.generated_files import write_or_check
+from tools.log_index import LOG_INDEX, generate_log_index
 from tools.log_samples import sample_log_lines
 from tools.markdown import anchor, headings
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
@@ -98,9 +101,10 @@ def render() -> dict[Path, str]:
     readme = readme.replace("@@HELP_OUTPUT@@", _help_output()).replace("@@LOG_OUTPUT@@", log_output.text)
     docker_images = _file_types_table(DEPENDENCY_TYPES.docker_images)
     readme = readme.replace("@@DOCKER_IMAGE_FILES_TABLE@@", docker_images)
-    for placeholder, log_lines in sample_log_lines().items():
+    samples = sample_log_lines()
+    for placeholder, log_lines in samples.blocks.items():
         readme = readme.replace(placeholder, log_lines)
-    return {_README: readme, _SCREENSHOT: log_output.svg}
+    return {_README: readme, _SCREENSHOT: log_output.svg, LOG_INDEX: generate_log_index(samples.by_name, readme)}
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ import logging
 import re
 from itertools import pairwise
 from logging import WARNING
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from rich.console import Console, Group
 from rich.emoji import Emoji
@@ -114,6 +114,28 @@ CHANGES = "changes"
 # The name of the record attribute that carries Update-time's own note about the changes, which it shows as a line.
 NOTE = "note"
 
+# The name of the record attribute that carries the name of the record's log message, which ends its first line.
+MESSAGE_NAME = "message_name"
+
+# The index that gives the name of each log message a heading of its own, which a name links to.
+_LOG_MESSAGES_URL = "https://github.com/ICTU/update-time/blob/main/docs/log-messages.md"
+
+# The style of the name of a log message and its parentheses, so the message itself stands out.
+_MESSAGE_NAME_STYLE = "dim"
+
+
+def named_message(record: logging.LogRecord, message: Text) -> Text:
+    """Return the message with the name of its log message ending its first line, dim and linked to its index entry."""
+    if not (name := getattr(record, MESSAGE_NAME, "")):
+        return message
+    first_line_end = len(message.plain.partition("\n")[0])
+    link = Style(link=f"{_LOG_MESSAGES_URL}#{name}")
+    named = message[:first_line_end]
+    named.append(" (").append(name, link).append(")")
+    named.stylize(_MESSAGE_NAME_STYLE, first_line_end)
+    return named + message[first_line_end:]
+
+
 _CHANGES_BORDER = "dim"
 
 # The label of the line naming the page the changes come from.
@@ -180,12 +202,13 @@ class _ChangelogMarkdown(Markdown):
                 yield segment
 
 
-class _ChangelogHandler(RichHandler):
-    """Rich log handler that boxes a changelog's changes below the message, and renders a note about one as a line."""
+class _LogHandler(RichHandler):
+    """Rich log handler that names a message, and boxes a changelog's changes, or adds a note, below it."""
 
     def render_message(self, record: logging.LogRecord, message: str) -> ConsoleRenderable:
-        """Return the message Rich renders, with the changes or the note the record carries below it."""
+        """Return the message Rich renders, with its name, and with the record's changes or note below it."""
         rendered = super().render_message(record, message)
+        rendered = named_message(record, cast("Text", rendered))  # Rich renders a message as Text
         if changes := getattr(record, CHANGES, NO_CHANGES):
             return Group(rendered, self._rendered_changes(changes))
         if note := getattr(record, NOTE, ""):
@@ -219,7 +242,7 @@ _LOG_MESSAGE_FORMAT = "%(message)s"
 
 def configure_logging(console: Console, level: str) -> RichHandler:
     """Send every record at the level or above to the console, replacing any earlier one, and return its handler."""
-    handler = _ChangelogHandler(console=console, highlighter=LogHighlighter(), show_path=False)
+    handler = _LogHandler(console=console, highlighter=LogHighlighter(), show_path=False)
     logging.basicConfig(
         level=level, datefmt=_LOG_TIME_FORMAT, format=_LOG_MESSAGE_FORMAT, handlers=[handler], force=True
     )
