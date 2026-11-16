@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.60 - 2026-11-16
+
 ### Added
 
 - Update the dependencies of a `package.json` that yarn 4.10 or later manages, check them and the catalogs of a `.yarnrc.yml`, and check rather than skip a project of an older yarn, which cannot apply a cooldown. Closes [#520](https://github.com/ICTU/update-time/issues/520).
