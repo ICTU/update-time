@@ -4,13 +4,13 @@ import json
 import unittest
 from typing import TYPE_CHECKING
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.reference import Reference
 from update_time.manifests import npm_declaration, package_json
 from update_time.manifests.npm_declaration import CatalogEntry, Catalogs, Declaration
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 
 if TYPE_CHECKING:
     from unittest.mock import Mock

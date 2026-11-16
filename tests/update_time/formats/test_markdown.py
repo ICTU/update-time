@@ -2,9 +2,8 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.formats import markdown
-
-from tests.mutation import Mutation, kills
 
 
 class MarkupTest(unittest.TestCase):

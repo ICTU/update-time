@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.directive import Reason
 from update_time.io.log import Logger
 from update_time.package_managers.uv import uv
@@ -10,7 +11,6 @@ from update_time.updaters import update_python_version_file
 from update_time.updaters.update_python_version_file import update_python_version_files
 
 from tests.helpers import FakeFiles, mock_path, patch_pathlib_path
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, PAST_COOLDOWN_DATE, STALE_DATE
 from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry

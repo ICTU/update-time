@@ -2,6 +2,7 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.reference import Reference
 from update_time.manifests import catalogs_yaml
 from update_time.manifests.catalogs_yaml import CatalogsYaml
@@ -9,7 +10,6 @@ from update_time.manifests.npm_declaration import CatalogEntry, Catalogs
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 
 
 class DeclarationsTest(unittest.TestCase):

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, call, patch
 
 import update_time
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
@@ -25,7 +26,6 @@ from update_time.updaters import update as update_module
 from update_time.updaters.update import _SCRIPTS, _SRC, _Script, _Scripts, main
 
 from tests.helpers import patch_environ, patch_pathlib_path
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import setting_names
 
 if TYPE_CHECKING:

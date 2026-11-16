@@ -2,10 +2,9 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import version_scheme
 from update_time.domain.version_scheme import SEMVER
-
-from tests.mutation import Mutation, kills
 
 
 class SemverTest(unittest.TestCase):

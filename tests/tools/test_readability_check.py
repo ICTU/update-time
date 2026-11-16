@@ -29,8 +29,9 @@ from tools.readability_check import (
     sentence_complexity,
 )
 
+from mutation_time.mutation import Mutation, kills
+
 from tests.helpers import FakeFiles, mock_path
-from tests.mutation import Mutation, kills
 
 # Every fixture below stays under these limits, so a case reports the rule under test alone.
 _RELAXED = _Limits(complexity=10, words=50, density=1.0)

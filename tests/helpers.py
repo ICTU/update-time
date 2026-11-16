@@ -2,7 +2,6 @@
 
 import contextlib
 import logging
-import os
 import time
 from collections.abc import MutableMapping
 from logging import INFO
@@ -12,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from tests.mutation import CHECKED_TEST, CHECKS_OFF
+from mutation_time.mutation import sentinels
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
@@ -60,13 +59,8 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
     If none are given, clear the environment, unless overridden by an explicit clear=True or clear=False.
     """
     clear = not environment_variables if clear is None else clear
-    in_dict = environment_variables or {}
-    # Carry the mutation variables through a cleared environment, so the registered mutations run as they would
-    # outside it.
-    for sentinel in (CHECKS_OFF, CHECKED_TEST):
-        if (value := os.environ.get(sentinel)) is not None:
-            in_dict.setdefault(sentinel, value)
-    return patch.dict("os.environ", in_dict, clear=clear)
+    # Carry the sentinels through a cleared environment, so the registered mutations run as they would outside it.
+    return patch.dict("os.environ", sentinels() | (environment_variables or {}), clear=clear)
 
 
 @contextlib.contextmanager

@@ -2,6 +2,7 @@
 
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
@@ -13,7 +14,6 @@ from update_time.primitives.location import Location
 from update_time.updaters import update_python_inline_script_metadata
 
 from tests.helpers import FakeFiles, patch_pathlib_path
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import SCAN_ROOT, message_of, published_version, uv_path_source
 from tests.update_time.manifests.helpers import script
 from tests.update_time.package_managers.helpers import CONFIGURED_EXCLUDE_NEWER

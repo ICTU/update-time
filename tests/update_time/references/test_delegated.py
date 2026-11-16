@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.reference import Reference
 from update_time.domain.source import Source
 from update_time.domain.staleness import STALE_AFTER
@@ -12,7 +13,6 @@ from update_time.references import delegated as delegated_module
 from update_time.references import vulnerability as vulnerability_module
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_projects
 
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import resolved_reference
 from tests.update_time.references.helpers import mock_project_getter
 

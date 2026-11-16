@@ -3,9 +3,8 @@
 import re
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.package_managers.maven import versions_plugin
-
-from tests.mutation import Mutation, kills
 
 
 class PreReleasePatternTest(unittest.TestCase):

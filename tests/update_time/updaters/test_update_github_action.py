@@ -9,6 +9,7 @@ from unittest.mock import ANY, Mock, patch
 
 import requests
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import NO_BOUND, Verb, VersionBound, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Changes, DependencyVersion, PinnedDependency, Project, Release
@@ -22,7 +23,6 @@ from update_time.sources import github as sources_github
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.helpers import mock_path, unparsable_response
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import COMMIT_SHA3 as PAST_COOLDOWN_SHA

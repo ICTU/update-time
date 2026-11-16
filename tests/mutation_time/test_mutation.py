@@ -14,14 +14,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, call, patch
 
 import update_time
-from update_time.primitives import timestamp
-
-import tests.mutation_subject_package.limit
-from tests import helpers, mutation_subject, mutation_subject_package
-from tests import mutation as checker
-from tests.helpers import patch_environ
-from tests.mutation import (
-    CHECKED_TEST,
+from mutation_time import mutation as checker
+from mutation_time.mutation import (
+    _CHECKED_TEST,
     CHECKS_OFF,
     KillsTestLoader,
     Mutation,
@@ -31,7 +26,12 @@ from tests.mutation import (
     _record_survival,
     kills,
 )
-from tests.mutation_subject import (
+from update_time.primitives import timestamp
+
+import tests.mutation_time.mutation_subject_package.limit
+from tests.helpers import patch_environ
+from tests.mutation_time import mutation_subject, mutation_subject_package
+from tests.mutation_time.mutation_subject import (
     Banner,
     DelegatingDoubler,
     Doubler,
@@ -43,7 +43,7 @@ from tests.mutation_subject import (
     is_positive_even,
     scaled,
 )
-from tests.mutation_subject_package import step, tally
+from tests.mutation_time.mutation_subject_package import step, tally
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -56,23 +56,23 @@ _A_REMAINDER = "!= 0"
 # The doubler's two methods end on this snippet. So its class holds it twice, and each method holds it once.
 _DOUBLING = "value * 2"
 _TRIPLING = "value * 3"
-_SUBJECT_TEST_NAME = "tests.test_mutation.IsEvenTest.test_an_even_number"
-_MULTIPLE_TEST_NAME = "tests.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
-_FIVE_TEST_NAME = "tests.test_mutation.IsMultipleOfFiveTest.test_a_multiple_of_five"
-_NO_MUTATION_TEST_NAME = "tests.test_mutation.KillsTest.test_a_registration_of_no_mutation_fails_the_test"
-_DOUBLER_TEST_NAME = "tests.test_mutation.DoublerTest.test_a_doubled_value"
-_ONE_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_one_doubled"
-_TWO_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_two_doubled"
-_THREE_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_three_doubled"
-_ODD_TEST_NAME = "tests.test_mutation.IsOddTest.test_an_odd_number"
-_DELEGATING_TEST_NAME = "tests.test_mutation.DelegatingDoublerTest.test_a_doubled_value"
-_GREETER_TEST_NAME = "tests.test_mutation.GreeterTest.test_a_greeting"
-_SCALED_TEST_NAME = "tests.test_mutation.ScaledTest.test_a_value_scaled_by_the_defaults"
-_INDENTED_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_an_indented_banner"
-_FLUSH_LEFT_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_a_flush_left_banner"
-_COUNTER_TEST_NAME = "tests.test_mutation.CounterTest.test_one_step"
-_TALLY_TEST_NAME = "tests.test_mutation.TallyTest.test_the_summary"
-_LIMIT_TEST_NAME = "tests.test_mutation.LimitTest.test_the_value"
+_SUBJECT_TEST_NAME = "tests.mutation_time.test_mutation.IsEvenTest.test_an_even_number"
+_MULTIPLE_TEST_NAME = "tests.mutation_time.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
+_FIVE_TEST_NAME = "tests.mutation_time.test_mutation.IsMultipleOfFiveTest.test_a_multiple_of_five"
+_NO_MUTATION_TEST_NAME = "tests.mutation_time.test_mutation.KillsTest.test_a_registration_of_no_mutation_fails_the_test"
+_DOUBLER_TEST_NAME = "tests.mutation_time.test_mutation.DoublerTest.test_a_doubled_value"
+_ONE_DOUBLED_TEST_NAME = "tests.mutation_time.test_mutation.DoublerTest.test_one_doubled"
+_TWO_DOUBLED_TEST_NAME = "tests.mutation_time.test_mutation.DoublerTest.test_two_doubled"
+_THREE_DOUBLED_TEST_NAME = "tests.mutation_time.test_mutation.DoublerTest.test_three_doubled"
+_ODD_TEST_NAME = "tests.mutation_time.test_mutation.IsOddTest.test_an_odd_number"
+_DELEGATING_TEST_NAME = "tests.mutation_time.test_mutation.DelegatingDoublerTest.test_a_doubled_value"
+_GREETER_TEST_NAME = "tests.mutation_time.test_mutation.GreeterTest.test_a_greeting"
+_SCALED_TEST_NAME = "tests.mutation_time.test_mutation.ScaledTest.test_a_value_scaled_by_the_defaults"
+_INDENTED_BANNER_TEST_NAME = "tests.mutation_time.test_mutation.BannerTest.test_an_indented_banner"
+_FLUSH_LEFT_BANNER_TEST_NAME = "tests.mutation_time.test_mutation.BannerTest.test_a_flush_left_banner"
+_COUNTER_TEST_NAME = "tests.mutation_time.test_mutation.CounterTest.test_one_step"
+_TALLY_TEST_NAME = "tests.mutation_time.test_mutation.TallyTest.test_the_summary"
+_LIMIT_TEST_NAME = "tests.mutation_time.test_mutation.LimitTest.test_the_value"
 # The `IsEvenTest` tests `KillsTest` runs to exercise the decorator: one registers a single mutation, one several,
 # one asserts inside a subTest, and one has a patch above its decorator. `IsEvenPatchedInSetUpTest` gives its
 # decorated test the name of the first.
@@ -135,7 +135,7 @@ class IsEvenTest(unittest.TestCase):
             self.assertFalse(is_even(3))
 
     @kills(_ODD_REPORTED_AS_EVEN)
-    @patch("tests.mutation_subject.is_even")
+    @patch("tests.mutation_time.mutation_subject.is_even")
     def test_an_odd_number_patched_beneath_the_decorator(self, patched_subject: Mock):
         """Test that an odd number is not even, with a patch handing this test a mock from beneath the decorator.
 
@@ -145,7 +145,7 @@ class IsEvenTest(unittest.TestCase):
         self.assertIsInstance(patched_subject, Mock)
         self.assertFalse(is_even(3))
 
-    @patch("tests.mutation_subject.is_even")
+    @patch("tests.mutation_time.mutation_subject.is_even")
     @kills(_ODD_REPORTED_AS_EVEN)
     def test_an_odd_number_patched_above_the_decorator(self, patched_subject: Mock):
         """Test that an odd number is not even, with a patch above the decorator handing this test a mock.
@@ -175,7 +175,7 @@ class IsEvenPatchedInSetUpTest(unittest.TestCase):
 
     def setUp(self) -> None:
         """Patch the subject module's attribute until the test's cleanups run."""
-        self.enterContext(patch("tests.mutation_subject.is_even"))
+        self.enterContext(patch("tests.mutation_time.mutation_subject.is_even"))
 
     @kills(_ODD_REPORTED_AS_EVEN)
     def test_an_odd_number(self):
@@ -289,7 +289,7 @@ class LimitTest(unittest.TestCase):
 
     def test_the_value(self):
         """Test that the limit is ten."""
-        self.assertEqual(tests.mutation_subject_package.limit.Limit.value, 10)
+        self.assertEqual(tests.mutation_time.mutation_subject_package.limit.Limit.value, 10)
 
 
 def _checked(mutation: Mutation, test_name: str) -> tuple[Result, int]:
@@ -419,7 +419,7 @@ class CheckTest(unittest.TestCase):
         ),
         Mutation(
             checker.Mutation._mutated_assignments,
-            "if self._qualified_name or self._module.__name__ == __name__:",
+            "if self._qualified_name or self.module.__name__ == __name__:",
             "if self._qualified_name:",
             "a mutation of one of the checker's own constants is swapped into the checker that runs the check",
         ),
@@ -532,7 +532,9 @@ class CheckTest(unittest.TestCase):
     )
     def test_a_mutation_of_a_module_the_test_reaches_by_its_dotted_name_is_killed(self):
         """Test that a mutation reaches the test it breaks where the test names the mutated module by a dotted name."""
-        mutation = Mutation(tests.mutation_subject_package.limit, "value = 10", "value = 11", _ANY_REGRESSION)
+        mutation = Mutation(
+            tests.mutation_time.mutation_subject_package.limit, "value = 10", "value = 11", _ANY_REGRESSION
+        )
         self.assertEqual(_checked(mutation, _LIMIT_TEST_NAME), (Result(Outcome.KILLED), 1))
 
     @kills(
@@ -552,7 +554,7 @@ class CheckTest(unittest.TestCase):
         Mutation(
             checker.Mutation._mutated_function,
             "return defined.get(",
-            "return (vars(self._module) | defined).get(",
+            "return (vars(self.module) | defined).get(",
             "a mutation renaming its function runs the unmutated function in place, so it survives",
         )
     )
@@ -1006,7 +1008,7 @@ class CapturedMethodsTest(unittest.TestCase):
 
     def test_importing_succeeds_inside_a_mutation_check(self):
         """Test that importing succeeds inside a mutation check, whose test may have patched a `Path` method."""
-        with patch("pathlib.Path.exists", Mock()), patch_environ({CHECKED_TEST: _SUBJECT_TEST_NAME}):
+        with patch("pathlib.Path.exists", Mock()), patch_environ({_CHECKED_TEST: _SUBJECT_TEST_NAME}):
             self.import_copy()
 
 
@@ -1083,24 +1085,24 @@ class FailureMessageTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            checker.Mutation._anchor_name,
-            '".".join(filter(None, (self._module.__name__, self._qualified_name)))',
-            "self._module.__name__",
+            checker.Mutation.anchor_name,
+            '".".join(filter(None, (self.module.__name__, self._qualified_name)))',
+            "self.module.__name__",
             "a report names the module alone, so it does not say which of its anchors went stale",
         ),
         Mutation(
-            checker.Mutation._anchor_name,
-            "filter(None, (self._module.__name__, self._qualified_name))",
-            "(self._module.__name__, self._qualified_name)",
+            checker.Mutation.anchor_name,
+            "filter(None, (self.module.__name__, self._qualified_name))",
+            "(self.module.__name__, self._qualified_name)",
             "a module anchor is reported with a trailing dot, as though a definition were missing from the name",
         ),
     )
     def test_the_message_names_the_anchor(self):
         """Test that the message names the definition the mutation is anchored to, and the module where none is."""
         for anchor, name in (
-            (mutation_subject, "tests.mutation_subject"),
-            (is_even, "tests.mutation_subject.is_even"),
-            (Doubler.doubled, "tests.mutation_subject.Doubler.doubled"),
+            (mutation_subject, "tests.mutation_time.mutation_subject"),
+            (is_even, "tests.mutation_time.mutation_subject.is_even"),
+            (Doubler.doubled, "tests.mutation_time.mutation_subject.Doubler.doubled"),
         ):
             with self.subTest(name=name):
                 mutation = Mutation(anchor, _EVEN, _ODD, _REGRESSION)
@@ -1133,7 +1135,7 @@ class KillsTest(unittest.TestCase):
         decorated = test_class(test_name)
         self.decorated_id = decorated.id()
         with patch.dict(os.environ), patch.object(Mutation, "check", autospec=True) as self.checked:
-            os.environ.pop(CHECKED_TEST, None)
+            os.environ.pop(_CHECKED_TEST, None)
             os.environ.pop(CHECKS_OFF, None)
             os.environ.update(sentinels or {})
             if callable(checked):
@@ -1269,7 +1271,7 @@ class KillsTest(unittest.TestCase):
         """Test that a test already failing fails on that, rather than its mutation being reported as killed."""
         for case, test_name in (("raised", _DECORATED_TEST), ("in a subTest", _SUBTEST_DECORATED_TEST)):
             with self.subTest(case=case):
-                with patch("tests.test_mutation.is_even", Mock(return_value=True)):
+                with patch("tests.mutation_time.test_mutation.is_even", Mock(return_value=True)):
                     result = self.run_decorated_test(Result(Outcome.KILLED), test_name)
                 self.assertEqual(len(result.failures), 1)
                 self.checked.assert_not_called()
@@ -1277,27 +1279,27 @@ class KillsTest(unittest.TestCase):
     @kills(
         Mutation(
             checker.kills,
-            'if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
+            'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
             "if os.environ.get(CHECKS_OFF):",
             "a test re-run against its own mutation checks its mutations again, so a run never ends",
         ),
         Mutation(
             checker.kills,
-            'if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
-            "if os.environ.get(CHECKED_TEST) == self.id():",
+            'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
+            "if os.environ.get(_CHECKED_TEST) == self.id():",
             "a `just mutate` run checks the registered mutations too, so its kill list names tests it never broke",
         ),
     )
     def test_a_test_held_back_by_a_sentinel_checks_nothing(self):
         """Test that a test held back by either sentinel runs its body and checks nothing further."""
         cases = (
-            ("re-run against its mutation", {CHECKED_TEST: IsEvenTest(_DECORATED_TEST).id()}),
+            ("re-run against its mutation", {_CHECKED_TEST: IsEvenTest(_DECORATED_TEST).id()}),
             ("checks switched off", {CHECKS_OFF: "1"}),
         )
         for case, sentinels in cases:
             with self.subTest(case=case):
                 is_even_stub = Mock(return_value=False)
-                with patch("tests.test_mutation.is_even", is_even_stub):
+                with patch("tests.mutation_time.test_mutation.is_even", is_even_stub):
                     result = self.run_decorated_test(Result(Outcome.KILLED), sentinels=sentinels)
                 self.assertEqual((result.failures, result.errors), ([], []))
                 is_even_stub.assert_called_once_with(3)
@@ -1305,35 +1307,35 @@ class KillsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            helpers.patch_environ,
-            "for sentinel in (CHECKS_OFF, CHECKED_TEST):",
-            "for sentinel in (CHECKED_TEST,):",
+            checker.sentinels,
+            "for sentinel in (CHECKS_OFF, _CHECKED_TEST)",
+            "for sentinel in (_CHECKED_TEST,)",
             "a test whose class clears the environment loses the sentinel, so `just mutate` checks it after all",
         ),
         Mutation(
-            helpers.patch_environ,
-            "for sentinel in (CHECKS_OFF, CHECKED_TEST):",
-            "for sentinel in (CHECKS_OFF,):",
+            checker.sentinels,
+            "for sentinel in (CHECKS_OFF, _CHECKED_TEST)",
+            "for sentinel in (CHECKS_OFF,)",
             "a rerun that clears the environment checks its registrations again, so a survivor passes as killed",
         ),
     )
     def test_the_sentinels_survive_a_cleared_environment(self):
         """Test that patching the environment keeps both mutation-check sentinels, whatever else it clears."""
-        for sentinel, value in ((CHECKS_OFF, "1"), (CHECKED_TEST, _SUBJECT_TEST_NAME)):
+        for sentinel, value in ((CHECKS_OFF, "1"), (_CHECKED_TEST, _SUBJECT_TEST_NAME)):
             with self.subTest(sentinel), patch.dict(os.environ, {sentinel: value}, clear=True), patch_environ():
                 self.assertEqual(os.environ.get(sentinel), value)
 
     @kills(
         Mutation(
             checker.kills,
-            'if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
-            "if os.environ.get(CHECKED_TEST) or os.environ.get(CHECKS_OFF):",
+            'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
+            "if os.environ.get(_CHECKED_TEST) or os.environ.get(CHECKS_OFF):",
             "a decorated test the checked test reaches stands aside too, so its mutations go unchecked",
         )
     )
     def test_a_test_the_sentinel_does_not_name_checks_its_mutations(self):
         """Test that a decorated test checks its mutations while another test is the one being checked."""
-        result = self.run_decorated_test(Result(Outcome.KILLED), sentinels={CHECKED_TEST: _SUBJECT_TEST_NAME})
+        result = self.run_decorated_test(Result(Outcome.KILLED), sentinels={_CHECKED_TEST: _SUBJECT_TEST_NAME})
         self.assertEqual((result.failures, result.errors), ([], []))
         self.checked.assert_called_once()
 
@@ -1350,7 +1352,7 @@ class KillsTest(unittest.TestCase):
         registered = kills(_ODD_REPORTED_AS_EVEN)(_stand_in)
         for case, stacked in (
             ("adjacent", registered),
-            ("with a patch between", patch("tests.mutation_subject.is_even")(registered)),
+            ("with a patch between", patch("tests.mutation_time.mutation_subject.is_even")(registered)),
         ):
             with self.subTest(case=case):
                 with patch.object(Mutation, "check", autospec=True) as checked:

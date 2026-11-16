@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import ANY, Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
 from update_time.manifests import devcontainer_json as devcontainer_json_manifest
@@ -10,7 +11,6 @@ from update_time.primitives.location import Location
 from update_time.updaters.update_devcontainer import update_devcontainers
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST
 from tests.update_time.helpers import docker_tag

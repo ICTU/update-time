@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
 from update_time.formats import toml as toml_module
@@ -14,7 +15,6 @@ from update_time.references import delegated as delegated_module
 from update_time.updaters.uv_pins import warn_about_pins
 
 from tests.helpers import mock_path, requested_urls
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     SCAN_ROOT,
     LoggingTestCase,

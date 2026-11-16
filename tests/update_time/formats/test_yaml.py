@@ -4,10 +4,10 @@ import itertools
 import unittest
 from typing import cast
 
+from mutation_time.mutation import Mutation, kills
 from update_time.formats import yaml
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 
 
 class ReadTest(unittest.TestCase):

@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import cooldown
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.changelog import is_markdown
@@ -31,7 +32,6 @@ from update_time.sources.github import (
 )
 
 from tests.helpers import mock_response, patch_environ, patch_get, requested_urls
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2, FRESH_DATE, PAST_COOLDOWN_DATE
 from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, bound, days_ago, message_of
 from tests.update_time.sources.helpers import (

@@ -3,10 +3,10 @@
 import unittest
 from pathlib import Path
 
+from mutation_time.mutation import Mutation, kills
 from update_time.lock_files import bun_lock
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time.lock_files.helpers import bun_lock_contents
 
 

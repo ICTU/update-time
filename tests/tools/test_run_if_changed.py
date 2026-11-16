@@ -13,8 +13,9 @@ from unittest.mock import Mock, patch
 
 from tools import run_if_changed
 
+from mutation_time.mutation import Mutation, kills
+
 from tests.helpers import FakeFiles
-from tests.mutation import Mutation, kills
 
 if TYPE_CHECKING:
     from collections.abc import Generator

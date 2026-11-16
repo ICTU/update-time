@@ -3,10 +3,10 @@
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import Project, Release
 from update_time.domain.staleness import STALE_AFTER, is_stale, release_judged_alike
 
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import days_ago
 
 

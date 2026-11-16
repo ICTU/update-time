@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.manifests import pyproject_config
@@ -20,7 +21,6 @@ from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 
 from tests.helpers import FakeFiles, mock_path, patch_environ
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     SCAN_ROOT,
     SUBPROCESS_RUN_OPTIONS,

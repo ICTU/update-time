@@ -205,8 +205,8 @@ class VisibilityTest(unittest.TestCase):
         files = {
             "src/pkg/mod.py": "_PRIVATE = 1\n",
             "tests/test_other.py": "from pkg.mod import _PRIVATE\n",  # a test reaching into the code it covers
-            "tests/mutation.py": "_HARNESS = 2\n",
-            "tests/test_mutation.py": "from tests.mutation import _HARNESS\n",  # a test of that very module
+            "tests/harness.py": "_HARNESS = 2\n",
+            "tests/test_harness.py": "from tests.harness import _HARNESS\n",  # a test of that very module
             "tests/outsider.py": "from unittest.mock import _Call\n",  # a private of another project
             "tests/helpers.py": "_HELPER = 3\n",
             "tests/test_architecture.py": "from tests.helpers import _HELPER\n",  # neither of those

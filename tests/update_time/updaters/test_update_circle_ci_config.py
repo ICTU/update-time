@@ -2,6 +2,7 @@
 
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.io.log import Logger
 from update_time.manifests import circle_ci_config as circle_ci_config_manifest
@@ -10,7 +11,6 @@ from update_time.updaters import update_circle_ci_config as circle_ci
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import docker_hub_version, docker_tag

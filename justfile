@@ -106,11 +106,11 @@ publish version *flags: (check-version version) check-repo test check
 
 # === Run tests ===
 
-# The variable `tests/mutation.py` reads to make the registered mutations stand aside. A test compares this spelling with the name that file gives it, so the two cannot drift apart.
-mutation_checks_off := "_UPDATE_TIME_MUTATION_CHECKS_OFF"
+# The variable `src/mutation_time/mutation.py` reads to make the registered mutations stand aside.
+mutation_checks_off := "_MUTATION_TIME_CHECKS_OFF"
 
 # Switch the registered mutations off for a command, and tell whether a caller switched them off. Both spell the
-# value 1 that `tests/mutation.py` reads.
+# value 1 that `src/mutation_time/mutation.py` reads.
 switch_mutations_off := "env " + mutation_checks_off + "=1"
 mutations_switched_off := '[ "${' + mutation_checks_off + ':-}" = 1 ]'
 
@@ -178,7 +178,7 @@ mutate-help:
     @echo "\nThe snippet's first line drops its leading indentation; later lines keep theirs as in the file."
     @echo "\nName a definition after the file to look for the snippet inside that definition alone, so a snippet the"
     @echo "file repeats needs no padding to tell one occurrence from another:"
-    @echo "\n    just mutate tests/mutation.py:Mutation._mutated <<'EOF'"
+    @echo "\n    just mutate src/mutation_time/mutation.py:Mutation._mutated <<'EOF'"
     @echo "    ..."
     @echo "    EOF"
     @echo "\nExits 0 when the mutation was killed (a test failed, so it is guarded), 1 when it survived (nothing"
@@ -230,7 +230,7 @@ audit-mutations-help:
     @echo "one. It also fails, before it audits anything, when a test module does not import, and prints the error."
     @echo "A test that fails without the mutation is not counted. Such a test can fail on state the tests before"
     @echo "it left behind. The checks run in UTC, so a test that reads the local time gives the same verdict in every"
-    @echo "zone. The tests of the mutations themselves, in tests/test_mutation.py, are left out: they all run the"
+    @echo "zone. The tests of the mutations themselves, in tests/mutation_time/, are left out: they all run the"
     @echo "checker, so they kill each other's mutations by design."
 
 # Report where a name is used, and how many usages it has. See `just help usages`.
@@ -244,6 +244,8 @@ usages-help:
     @echo "\n    just usages update_time.package_managers.node.project_update.ProjectUpdate.log_moved_versions"
     @echo "\nThe usages come from ty's language server. So a method called on self or on an instance counts, and"
     @echo "so do an import, an alias, and a name passed as a value."
+    @echo "\nNAME can be a function, a class, a method, a constant, or a type alias. It can also be an attribute"
+    @echo "of a class, or one that the class's __init__ assigns on self, named through the class."
     @echo "\nGive NAME qualified, or give the end of one, such as log_moved_versions or ProjectUpdate.log_moved_versions."
     @echo "A name that ends several definitions fails the run and lists them. A name nothing defines fails the run"
     @echo "too, so a report of no usages says the name exists and nothing uses it."

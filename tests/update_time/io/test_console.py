@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion
 from update_time.io import console as console_module
 from update_time.io.console import (
@@ -22,7 +23,6 @@ from update_time.io.console import (
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.command import Command
 
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST2
 from tests.update_time.helpers import message_of, reference
 from tests.update_time.io.helpers import at, create_location, dependency

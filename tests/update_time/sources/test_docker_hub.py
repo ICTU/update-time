@@ -5,12 +5,12 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from mutation_time.mutation import Mutation, kills
 from update_time.primitives.lookup import LookedUp
 from update_time.sources import docker_hub
 from update_time.sources.docker_hub import api_headers
 
 from tests.helpers import mock_response, patch_environ, unparsable_response
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase
 
 _CREDENTIALS = {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"}  # nosec

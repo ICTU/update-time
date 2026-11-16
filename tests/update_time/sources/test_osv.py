@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.reference import Reference
 from update_time.domain.vulnerability import RISK_LEVELS, Ecosystem, Vulnerability
 from update_time.io.log import Logger
@@ -14,7 +15,6 @@ from update_time.sources import osv
 from update_time.sources.osv import _RISK_LEVEL_BANDS, get_vulnerabilities
 
 from tests.helpers import mock_response, unparsable_response
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, message_of, vulnerability
 from tests.update_time.sources.helpers import osv_action_entry, osv_action_package, osv_advisory, osv_api
 

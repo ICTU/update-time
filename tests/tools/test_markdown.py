@@ -5,7 +5,7 @@ import unittest
 from tools import markdown
 from tools.markdown import anchor, headings, lines_without_code_blocks, without_code_blocks
 
-from tests.mutation import Mutation, kills
+from mutation_time.mutation import Mutation, kills
 
 _DOCUMENT = "# Title\n\n## ⚡ Usage\n\n### Workflow\n\n#### Detail\n"
 

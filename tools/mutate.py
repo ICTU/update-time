@@ -18,13 +18,14 @@ import subprocess  # nosec
 import sys
 from pathlib import Path
 
-from tests.mutation import CHECKS_OFF, StaleError, mutated_source
+from mutation_time.mutation import CHECKS_OFF, StaleError, mutated_source
 
 # The line separating the snippet to replace from its replacement on standard input.
 _SEPARATOR = "@@"
 
-# What separates a file from the definition inside it to change, as in `tests/mutation.py:Mutation._mutated`. The
-# snippet then has to be unique within that definition rather than across the whole file.
+# What separates a file from the definition inside it to change, as in
+# `src/mutation_time/mutation.py:Mutation._mutated`. The snippet then has to be unique within that definition rather
+# than across the whole file.
 _ANCHOR = ":"
 
 # What unittest reports when a run broke rather than failed: a test that raised before it could assert. A stub

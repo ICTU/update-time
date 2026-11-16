@@ -3,12 +3,11 @@
 import unittest
 from datetime import UTC, datetime
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import dependency
 from update_time.domain.dependency import DependencyVersion, Release, Yank, is_valid
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
-
-from tests.mutation import Mutation, kills
 
 
 class IsValidTest(unittest.TestCase):

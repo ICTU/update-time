@@ -2,11 +2,11 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.formats import toml
 from update_time.manifests.pyproject_toml import PyprojectToml
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 
 # The `[tool.uv]` table `SetToolKeyTest` writes, and a table for a file to declare after its tool tables.
 _UV_TABLE = '[tool.uv]\nexclude-newer = "7 days"\n'

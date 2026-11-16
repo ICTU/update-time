@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, call
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
@@ -27,7 +28,6 @@ from update_time.references import resolve as resolve_module
 from update_time.references.resolve import latest_version, report_project_checks
 
 from tests.helpers import patch_environ
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COOLDOWN_30, DIGEST, STALE_AFTER_90, STALE_DATE, VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     bound,

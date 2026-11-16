@@ -159,7 +159,7 @@ def _calls_json(source: str) -> bool:
 
 
 class DependenciesTest(unittest.TestCase):
-    """Unit test for module dependencies within the tool, its own tooling, and the modules its tests share."""
+    """Unit test for module dependencies within the tool, the mutation checks, the tooling, and the shared tests."""
 
     def test_no_cyclic_dependencies(self):
         """Test that there are no cyclic dependencies, in the tool, under `tools/`, or among the test modules.
@@ -179,6 +179,22 @@ class DependenciesTest(unittest.TestCase):
         """Test that `dependency.py` depends on nothing else in `domain`, so the rest of `domain` can build on it."""
         rule = project_files("src/").with_name("dependency.py").should_not().depend_on_files().in_folder("domain")
         assert_passes(rule)
+
+    def test_the_tool_and_the_mutation_checks_import_nothing_from_each_other(self):
+        """Test that the tool imports nothing from the mutation checks, and the checks nothing from the tool."""
+        # The tool's distribution holds `update_time` alone, so importing `mutation_time` fails where it is installed.
+        for importer, imported in (("update_time", "mutation_time"), ("mutation_time", "update_time")):
+            with self.subTest(importer=importer, imported=imported):
+                importers = project_files("src/").in_path(f"*/src/{importer}/*")
+                assert_passes(importers.should_not().depend_on_files().in_path(f"*/src/{imported}/*"))
+
+    def test_the_mutation_checks_import_nothing_from_the_tests_or_the_tools(self):
+        """Test that the mutation checks import nothing from `tests` or `tools`, which lie outside `src`."""
+        # A package outside `src` is an external module to archunitpython, named by the path of its `__init__.py`.
+        for imported in ("tests", "tools"):
+            with self.subTest(imported=imported):
+                checks = project_files("src/").in_path("*/src/mutation_time/*")
+                assert_passes(checks.should_not().depend_on_external_modules().matching(f"*/{imported}/*"))
 
 
 class TestSupportTest(unittest.TestCase):

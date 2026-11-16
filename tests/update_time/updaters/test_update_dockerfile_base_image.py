@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path, PurePath
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import file_type
 from update_time.domain.dependency import DependencyVersion, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
@@ -15,7 +16,6 @@ from update_time.updaters import update_dockerfile_base_image
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
 from tests.helpers import mock_path, requested_urls
-from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import SCAN_ROOT, docker_hub_version, docker_tag, message_of

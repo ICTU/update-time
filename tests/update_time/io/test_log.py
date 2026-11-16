@@ -14,6 +14,7 @@ from unittest.mock import ANY, Mock, patch
 
 from rich.logging import RichHandler
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.dependency import (
     Archival,
@@ -45,7 +46,6 @@ from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
 
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import (
     COMMIT_SHA1,
     COMMIT_SHA2,

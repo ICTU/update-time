@@ -2,10 +2,9 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.source import Source
-
-from tests.mutation import Mutation, kills
 
 
 class ReleaseTest(unittest.TestCase):

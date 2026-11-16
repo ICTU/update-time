@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
@@ -23,7 +24,6 @@ from update_time.references import resolve, rewrite
 from update_time.sources import docker_hub, oci
 
 from tests.helpers import mock_path, mock_response
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import (
     LoggingTestCase,

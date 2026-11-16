@@ -4,6 +4,7 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import FileType
 from update_time.domain.source import Source
@@ -11,7 +12,6 @@ from update_time.references import file as file_module
 from update_time.references.file import update_file, update_yaml_files
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import IMAGE_REGEXP
 from tests.update_time.references.helpers import mock_logger, new_version_getter
 
