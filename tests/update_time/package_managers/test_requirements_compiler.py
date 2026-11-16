@@ -5,6 +5,7 @@ from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, DEFAULT, Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import version_scheme
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
@@ -17,7 +18,6 @@ from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import _compiler_for
 
 from tests.helpers import FakeFiles, patch_environ
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import SUBPROCESS_RUN_OPTIONS, message_of, published_version
 from tests.update_time.lock_files.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
 from tests.update_time.package_managers.helpers import (

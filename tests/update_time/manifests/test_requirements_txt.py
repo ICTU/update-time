@@ -3,9 +3,8 @@
 import re
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.manifests import requirements_txt
-
-from tests.mutation import Mutation, kills
 
 
 class RequirementPatternTest(unittest.TestCase):

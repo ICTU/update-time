@@ -4,6 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import cooldown
 from update_time.domain.cooldown import (
     COOLDOWN,
@@ -14,7 +15,6 @@ from update_time.domain.cooldown import (
 )
 from update_time.domain.dependency import DependencyVersion, Release
 
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import days_ago
 
 if TYPE_CHECKING:

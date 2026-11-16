@@ -8,8 +8,9 @@ from unittest.mock import Mock, call, patch
 
 from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, main, snippets
 
+from mutation_time.mutation import CHECKS_OFF, Mutation, kills
+
 from tests.helpers import mock_path
-from tests.mutation import CHECKS_OFF, Mutation, kills
 
 _ORIGINAL = "before\nold\nafter\n"
 _INPUT = f"old\n{_SEPARATOR}\nnew\n"

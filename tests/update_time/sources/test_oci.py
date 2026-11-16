@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import dependency
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
@@ -31,7 +32,6 @@ from update_time.sources.oci import (
 )
 
 from tests.helpers import patch_environ, requested_urls, unparsable_response
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3, FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, bound, days_ago, docker_tag, message_of
 from tests.update_time.registry import (

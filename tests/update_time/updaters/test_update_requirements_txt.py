@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import directive as directive_module
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
@@ -23,7 +24,6 @@ from update_time.updaters import update_requirements_txt
 from update_time.updaters.update_requirements_txt import update_requirements_txts
 
 from tests.helpers import FakeFiles, patch_environ, requested_urls
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     LoggingTestCase,
     message_of,

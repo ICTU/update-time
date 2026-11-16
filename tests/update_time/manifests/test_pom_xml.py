@@ -2,12 +2,12 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.marker import Marker, Threshold
 from update_time.formats import xml
 from update_time.manifests import pom_xml
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import GUAVA, properties_element
 from tests.update_time.manifests.helpers import (
     EFFECTIVE_GUAVA,

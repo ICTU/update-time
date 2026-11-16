@@ -16,8 +16,9 @@ from unittest.mock import patch
 
 from coverage import Coverage
 
+from mutation_time.mutation import CHECKS_OFF, KillsTestLoader, Mutation, Outcome, registered_mutations
+
 from tests.helpers import time_zone
-from tests.mutation import CHECKS_OFF, KillsTestLoader, Mutation, Outcome, registered_mutations
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 _TESTS, _TOP_LEVEL = "tests", "."
 
 # The tests of the mutations themselves. They all run the checker, so they kill each other's mutations by design.
-_MUTATION_TESTS = "tests.test_mutation."
+_MUTATION_TESTS = "tests.mutation_time."
 
 
 @dataclass(frozen=True)

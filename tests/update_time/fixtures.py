@@ -2,10 +2,9 @@
 
 from datetime import UTC, datetime, timedelta
 
+from mutation_time.mutation import Mutation
 from update_time.markers.parser import parse_directives
 from update_time.sources import github
-
-from tests.mutation import Mutation
 
 # A test needing one value of a kind names the unnumbered constant, and one telling two apart numbers them from 1, so
 # the numbering says how many values the test is about. The unnumbered name and the `1` are the same value, so a test

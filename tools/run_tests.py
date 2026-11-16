@@ -12,7 +12,7 @@ from itertools import repeat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from tests.mutation import KillsTestLoader
+from mutation_time.mutation import KillsTestLoader
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

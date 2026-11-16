@@ -8,6 +8,7 @@ from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, call, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Changes, Project, Release
@@ -30,7 +31,6 @@ from update_time.updaters import update_pom_xml as update_pom_xml_module
 from update_time.updaters.update_pom_xml import update_pom_xmls
 
 from tests.helpers import mock_path, patch_environ, patch_get, patch_pathlib_path, requested_urls
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     GUAVA,

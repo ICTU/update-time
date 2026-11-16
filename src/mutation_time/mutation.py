@@ -28,13 +28,12 @@ if TYPE_CHECKING:
 # Holds the id of the test being re-run against its own mutation. That test must run its body and stop there:
 # checking its mutations again would check them against themselves, without end. Only the test it names stands
 # aside, so a decorated test the re-run reaches on its way is checked as usual. An environment variable rather than
-# a global, because a check that executes the mutated module afresh drops this module from `sys.modules` and imports
-# it again.
-CHECKED_TEST = "_UPDATE_TIME_MUTATION_CHECKED_TEST"
+# a global, because checking a mutation of this module drops it from `sys.modules` and imports it again.
+_CHECKED_TEST = "_MUTATION_TIME_CHECKED_TEST"
 
 # Set for the whole of a `just mutate` run, which applies a mutation of its own: the registered mutations stand aside,
 # so that run's kill list holds the tests that failed on the mutation it was given.
-CHECKS_OFF = "_UPDATE_TIME_MUTATION_CHECKS_OFF"
+CHECKS_OFF = "_MUTATION_TIME_CHECKS_OFF"
 
 # The attribute a decorated test carries, holding the mutations it registers. A second `kills` on the same test
 # finds it there and fails the test. It survives a decorator written between the two, since `functools.wraps`
@@ -116,7 +115,7 @@ class Mutation:
         return cast("_Function", self.anchor.fget) if isinstance(self.anchor, property) else self.anchor
 
     @property
-    def _module(self) -> types.ModuleType:
+    def module(self) -> types.ModuleType:
         """Return the module whose source the mutation changes.
 
         A function anchor is resolved through `sys.modules`, so read this before a purge rather than after one.
@@ -133,14 +132,14 @@ class Mutation:
         return "" if isinstance(anchor, types.ModuleType) else anchor.__qualname__
 
     @property
-    def _anchor_name(self) -> str:
+    def anchor_name(self) -> str:
         """Return the name a report calls the anchor by: the module's name, with the qualified name after it."""
-        return ".".join(filter(None, (self._module.__name__, self._qualified_name)))
+        return ".".join(filter(None, (self.module.__name__, self._qualified_name)))
 
     @property
     def path(self) -> str:
         """Return the file the module was loaded from."""
-        return self._module.__file__ or ""
+        return self.module.__file__ or ""
 
     def _source(self) -> str:
         """Return the source of the file the mutation changes."""
@@ -211,7 +210,7 @@ class Mutation:
         definition = header + mutated[line_start:end]
         defined: dict[str, Any] = {}
         try:
-            exec(compile(definition, self.path, "exec"), dict(vars(self._module)), defined)  # noqa: S102 # nosec
+            exec(compile(definition, self.path, "exec"), dict(vars(self.module)), defined)  # noqa: S102 # nosec
         except Exception:  # noqa: BLE001  # Executing the module afresh reports what the definition raises.
             return None
         return defined.get(self._qualified_name.rsplit(".", maxsplit=1)[-1])
@@ -223,7 +222,7 @@ class Mutation:
         other than an assignment to plain names, which would change a shared object rather than a name. It is None as
         well where the mutated statements do not parse or raise when executed.
         """
-        if self._qualified_name or self._module.__name__ == __name__:
+        if self._qualified_name or self.module.__name__ == __name__:
             return None
         start = source.index(self.old)
         try:
@@ -233,7 +232,7 @@ class Mutation:
         names = [_names_assigned(statement) for statement in statements]
         if not names or None in names:
             return None
-        namespace = dict(vars(self._module))
+        namespace = dict(vars(self.module))
         try:
             exec(compile(ast.Module(body=statements, type_ignores=[]), self.path, "exec"), namespace)  # noqa: S102 # nosec
         except Exception:  # noqa: BLE001  # Executing the module afresh reports what the statements raise.
@@ -271,7 +270,7 @@ class Mutation:
 
     def _run_test_with_names_bound(self, test_name: str, names: dict[str, object]) -> unittest.TestResult:
         """Run the test with the module's names bound to the mutated values, binding the original values again after."""
-        namespace = vars(self._module)
+        namespace = vars(self.module)
         originals = {name: namespace[name] for name in names if name in namespace}
         namespace.update(names)
         try:
@@ -302,7 +301,7 @@ class Mutation:
         The module is read before the purge drops it, and `sys.modules` is put back however the run ends, so a mutated
         module never outlives it.
         """
-        module = self._module
+        module = self.module
         imported = dict(sys.modules)
         try:
             self._purge(test_name)
@@ -320,7 +319,7 @@ class Mutation:
         Dropping the test's own module is not enough. A module that imported the mutated one holds the original, and
         hands that to the test whenever the test reaches the mutated code through it.
         """
-        roots = {_root(self._module.__name__), _root(test_name)}
+        roots = {_root(self.module.__name__), _root(test_name)}
         for name in [name for name in sys.modules if _root(name) in roots]:
             del sys.modules[name]
 
@@ -524,25 +523,28 @@ def _failure(mutation: Mutation, result: Result) -> str:
     and its message carries why, which says whether the mutation needs rewriting or the code moved.
     """
     if result.outcome == Outcome.SURVIVED:
-        return f"{mutation.regression} — the test did not kill this mutation of {mutation._anchor_name}"
-    return f"{mutation.regression} — this mutation of {mutation._anchor_name} is {result.outcome}: {result.reason}"
+        return f"{mutation.regression} — the test did not kill this mutation of {mutation.anchor_name}"
+    return f"{mutation.regression} — this mutation of {mutation.anchor_name} is {result.outcome}: {result.reason}"
 
 
 # Where a survived registration is recorded, so how often the mechanism catches a test that stopped guarding can
 # be counted later. Only SURVIVED is recorded: it is rare and it is the event the registrations exist for, where a
 # stale snippet is common and fixed within the minute.
-_SURVIVALS = Path("tests/mutation-survivals.md")
+_SURVIVALS = Path("tests/mutation_time/mutation-survivals.md")
 
 
 def _captured[Method](method: Method, name: str) -> Method:
     """Return the `Path` method, raising when a patch has already replaced it.
 
     A patch made with `autospec` reads as a function all the same, so the plain form is what this catches. Checking a
-    mutation runs its test again, which imports this module afresh. That run does not check the test's mutations, so
-    its copy of this module is exempt.
+    mutation of this module runs its test again, which imports this module afresh. That run does not check the test's
+    mutations, so its copy of this module is exempt.
     """
-    if not isinstance(method, types.FunctionType) and not os.environ.get(CHECKED_TEST):
-        message = f"tests/mutation.py was imported while Path.{name} was patched, so the record it keeps is not safe"
+    if not isinstance(method, types.FunctionType) and not os.environ.get(_CHECKED_TEST):
+        message = (
+            f"src/mutation_time/mutation.py was imported while Path.{name} was patched, "
+            "so the record it keeps is not safe"
+        )
         raise TypeError(message)
     return method
 
@@ -563,7 +565,7 @@ def _record_survival(test_name: str, mutation: Mutation) -> None:
     is written once, so re-running the suite while the test is being fixed adds nothing, where the same
     registration surviving on a later day is recorded as the separate event it is.
     """
-    if mutation._module.__name__.startswith("tests."):
+    if mutation.module.__name__.startswith("tests."):
         return
     recorded = _READ_TEXT(_SURVIVALS) if _EXISTS(_SURVIVALS) else "# Registrations that survived\n\n"
     entry = f"- {datetime.now(UTC):%Y-%m-%d} `{test_name}` — {mutation.regression}\n"
@@ -580,7 +582,7 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
     test class that overrides `subTest` does so for its own subTests.
     """
     test_name = test_case.id()
-    with patch.dict(os.environ, {CHECKED_TEST: test_name}):
+    with patch.dict(os.environ, {_CHECKED_TEST: test_name}):
         for mutation in mutations:
             with unittest.TestCase.subTest(test_case, regression=mutation.regression):
                 result = mutation.check(test_name)
@@ -620,7 +622,7 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
             result = method(self, *args, **kwargs)
             if not self._outcome.success:  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
                 return result
-            if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":
+            if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":
                 return result
             cleanups = self._cleanups  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             # `doCleanups` runs the cleanups from the end of the list, so the check at its front runs after the others:
@@ -636,6 +638,13 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
 def registered_mutations(test: unittest.TestCase) -> tuple[Mutation, ...]:
     """Return the mutations the test's kills decorator registers, or none for a test without one."""
     return getattr(getattr(type(test), test.id().rsplit(".", 1)[-1], None), _REGISTERED, ())
+
+
+def sentinels() -> dict[str, str]:
+    """Return the sentinels the environment sets, with their values."""
+    return {
+        sentinel: value for sentinel in (CHECKS_OFF, _CHECKED_TEST) if (value := os.environ.get(sentinel)) is not None
+    }
 
 
 class KillsTestLoader(unittest.TestLoader):

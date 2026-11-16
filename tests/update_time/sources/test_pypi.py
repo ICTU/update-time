@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
@@ -24,7 +25,6 @@ from update_time.sources.pypi import (
 )
 
 from tests.helpers import mock_response, patch_get, requested_urls, unparsable_response
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import GITHUB_UNCACHED
 from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, bound, days_ago, message_of
 from tests.update_time.sources.helpers import (

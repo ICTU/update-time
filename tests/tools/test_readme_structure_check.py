@@ -18,9 +18,8 @@ from tools.readme_structure_check import (
     main,
 )
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
-
-from tests.mutation import Mutation, kills
 
 # The dependency types the README has to answer for, derived here rather than read off the check, so a fixture
 # would still name them all if the check built its own list wrongly.

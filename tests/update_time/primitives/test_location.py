@@ -3,10 +3,10 @@
 import unittest
 from pathlib import Path
 
+from mutation_time.mutation import Mutation, kills
 from update_time.primitives.location import Location
 
 from tests.helpers import patch_pathlib_path
-from tests.mutation import Mutation, kills
 
 
 class LocationTest(unittest.TestCase):

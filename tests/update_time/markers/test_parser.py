@@ -7,6 +7,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import Verb
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.markers import parser as parser_module
@@ -14,7 +15,6 @@ from update_time.markers.parser import parse_directives, parse_marker
 from update_time.primitives.line import Line
 from update_time.primitives.location import Location
 
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import bound
 
 # Advisory identifiers, for the tests of the `vulnerable=ID` bracket item. An advisory is known by identifiers of

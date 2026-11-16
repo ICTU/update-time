@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import Release, Yank
 from update_time.sources import npmjs
 from update_time.sources.npmjs import (
@@ -14,7 +15,6 @@ from update_time.sources.npmjs import (
 )
 
 from tests.helpers import mock_response, patch_get, requested_urls, unparsable_response
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase
 from tests.update_time.sources.helpers import (
     contents_json,

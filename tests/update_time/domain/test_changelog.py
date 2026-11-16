@@ -2,12 +2,11 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import changelog
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.formats import markdown as markdown_format
 from update_time.formats import restructured_text
-
-from tests.mutation import Mutation, kills
 
 # The characters reStructuredText allows a heading to be underlined with, as the specification lists them at
 # https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#sections.

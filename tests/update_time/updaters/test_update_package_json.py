@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from unittest.mock import ANY, Mock, call, patch
 from urllib.parse import urlparse
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
@@ -35,7 +36,6 @@ from update_time.updaters import update_package_json as update_package_json_modu
 from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_environ, patch_pathlib_path
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import (
     SCAN_ROOT,

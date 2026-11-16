@@ -9,7 +9,7 @@ from archunitpython.graph.graph_reporter import GraphReportEdge
 from tools import generate_architecture
 from tools.generate_architecture import diagram, main
 
-from tests.mutation import Mutation, kills
+from mutation_time.mutation import Mutation, kills
 
 
 def _edge(source: str, target: str, count: int = 1) -> GraphReportEdge:

@@ -3,11 +3,11 @@
 import unittest
 from unittest.mock import Mock
 
+from mutation_time.mutation import Mutation, kills
 from update_time.io import network as network_module
 from update_time.io.network import report_network_settings
 
 from tests.helpers import patch_environ
-from tests.mutation import Mutation, kills
 
 
 class ReportNetworkSettingsTest(unittest.TestCase):

@@ -8,12 +8,12 @@ from unittest.mock import Mock, patch
 if TYPE_CHECKING:
     from unittest.mock import _patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.file_type import FileType
 from update_time.io import filesystem as filesystem_module
 from update_time.io.filesystem import _EXCLUDE_PATHS, configure_excluded_paths, glob_for, inside_git_repository
 
 from tests.helpers import patch_environ, patch_pathlib_path
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import SCAN_ROOT
 
 # The file types the walk is exercised with: the patterns and the declaration each test needs, and nothing else.

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import RISK_LEVELS, VULNERABILITY_LEVEL
@@ -17,7 +18,6 @@ from update_time.io.cli import parse_args
 from update_time.io.log import LOG_LEVEL
 
 from tests.helpers import patch_environ, patch_pathlib_path
-from tests.mutation import Mutation, kills
 
 if TYPE_CHECKING:
     import argparse

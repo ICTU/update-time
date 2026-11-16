@@ -53,31 +53,58 @@ def _module(path: Path) -> str:
 
 
 def _definitions(files: Iterable[Path]) -> dict[str, Position]:
-    """Return the position of each function and class the files define, by its qualified name."""
+    """Return the position of each name the files define, by its qualified name."""
     return {name: position for file in files for name, position in _defined_in(file).items()}
 
 
 def _defined_in(file: Path) -> dict[str, Position]:
-    """Return the position of each function and class the file defines: its name on its `def` or `class` line."""
-    source = file.read_text()
-    lines, module = source.splitlines(), _module(file)
-    return {
-        f"{module}.{name}": Position(
-            Path(str(file)), node.lineno - 1, lines[node.lineno - 1].index(node.name, node.col_offset)
-        )
-        for node, name in _named(ast.parse(source).body, "")
-    }
+    """Return the position of each name the file defines: where its definition writes it."""
+    source, module = file.read_text(), _module(file)
+    named = _named(ast.parse(source).body, "", Path(str(file)), source.splitlines())
+    return {f"{module}.{name}": position for name, position in named}
 
 
-def _named(
-    nodes: list[ast.stmt], prefix: str
-) -> Iterator[tuple[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef, str]]:
-    """Yield each function, method, and class among the nodes, its name qualified by the classes around it."""
+def _named(nodes: list[ast.stmt], prefix: str, path: Path, lines: list[str]) -> Iterator[tuple[str, Position]]:
+    """Yield the name and the position of each definition among the nodes, qualified by the classes around it."""
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            yield node, f"{prefix}{node.name}"
+            line = node.lineno - 1
+            yield f"{prefix}{node.name}", Position(path, line, lines[line].index(node.name, node.col_offset))
+        for target in _targets(node):
+            for name in _assigned_names(target):
+                yield f"{prefix}{name.id}", Position(path, name.lineno - 1, name.col_offset)
         if isinstance(node, ast.ClassDef):
-            yield from _named(node.body, f"{prefix}{node.name}.")
+            yield from _named(node.body, f"{prefix}{node.name}.", path, lines)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__":
+            yield from _instance_attributes(node, prefix, path)
+
+
+def _instance_attributes(init: ast.FunctionDef, prefix: str, path: Path) -> Iterator[tuple[str, Position]]:
+    """Yield the name and the position of each attribute `__init__` assigns on `self`, qualified by its class."""
+    for node in ast.walk(init):
+        for target in _targets(node):
+            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                column = cast("int", target.end_col_offset) - len(target.attr)
+                yield f"{prefix}{target.attr}", Position(path, cast("int", target.end_lineno) - 1, column)
+
+
+def _targets(node: ast.AST) -> list[ast.expr]:
+    """Return what the node assigns to: the targets of an assignment, or the name of a type alias."""
+    match node:
+        case ast.Assign(targets=targets):
+            return targets
+        case ast.AnnAssign(target=target):
+            return [target]
+        case ast.TypeAlias(name=name):
+            return [name]
+    return []
+
+
+def _assigned_names(target: ast.expr) -> Iterator[ast.Name]:
+    """Yield the names the assignment target binds: the target itself where it is a name, or each name of a tuple."""
+    for element in target.elts if isinstance(target, ast.Tuple) else [target]:
+        if isinstance(element, ast.Name):
+            yield element
 
 
 class _LanguageServerError(Exception):

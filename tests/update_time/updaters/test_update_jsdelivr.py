@@ -2,6 +2,7 @@
 
 from unittest.mock import ANY, Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
@@ -11,7 +12,6 @@ from update_time.sources import jsdelivr
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, HASH1, HASH2, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, days_ago
 from tests.update_time.sources.helpers import jsdelivr_versions, npm_registry

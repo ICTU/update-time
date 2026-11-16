@@ -1,6 +1,6 @@
 """Summarize the tally of the module that imports this one."""
 
-from tests.mutation_subject_package import tally
+from tests.mutation_time.mutation_subject_package import tally
 
 
 def summary_of_start() -> str:

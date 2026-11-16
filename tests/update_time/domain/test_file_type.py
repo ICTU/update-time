@@ -2,10 +2,9 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import file_type as file_type_module
 from update_time.domain.file_type import FileType
-
-from tests.mutation import Mutation, kills
 
 
 class FileTypesTest(unittest.TestCase):

@@ -1,6 +1,6 @@
 """Hold a tally, and import the module that writes its summary, which imports this module back."""
 
-from tests.mutation_subject_package import report
+from tests.mutation_time.mutation_subject_package import report
 
 
 class Tally:

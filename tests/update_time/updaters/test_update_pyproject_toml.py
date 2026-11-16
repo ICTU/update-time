@@ -9,6 +9,7 @@ from unittest.mock import ANY, Mock, call, patch
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.io.log import Logger
@@ -22,7 +23,6 @@ from update_time.updaters import update_pyproject_toml, uv_pins
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import CHANGELOG
 from tests.update_time.helpers import (
     SCAN_ROOT,

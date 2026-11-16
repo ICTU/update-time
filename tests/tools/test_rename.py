@@ -11,8 +11,9 @@ import libcst
 from tools import rename as rename_module
 from tools.rename import _PROSE_ROOTS, _prose_files, _renamed, main, stale_mentions, surviving_occurrences
 
+from mutation_time.mutation import Mutation, kills
+
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 
 # A source the rename reaches, since it imports the name from the module the old name qualifies it with, and one
 # it leaves alone, since a definition is resolved against the module it sits in rather than against that one.

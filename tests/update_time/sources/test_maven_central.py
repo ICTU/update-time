@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, ArchivedSubject, Project, Release
 from update_time.io.log import Logger
@@ -14,7 +15,6 @@ from update_time.sources import maven_central
 from update_time.sources.maven_central import _newest_release, _published, get_changes, project, versions_held_back
 
 from tests.helpers import mock_response, patch_get, requested_urls, time_zone
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import GUAVA, LoggingTestCase, days_ago, message_of, properties_element
 from tests.update_time.sources.helpers import (
     GITBOX_SCM,

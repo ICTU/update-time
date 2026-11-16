@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from tools.run_tests import _expanded_test_names, _run_shard, _ShardResult, main
 
-from tests.mutation import KillsTestLoader
+from mutation_time.mutation import KillsTestLoader
 
 
 def _passes() -> None:

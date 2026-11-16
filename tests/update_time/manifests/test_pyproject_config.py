@@ -2,10 +2,9 @@
 
 import unittest
 
+from mutation_time.mutation import Mutation, kills
 from update_time.manifests import pyproject_config
 from update_time.manifests.pyproject_config import PathSource, PyprojectConfig
-
-from tests.mutation import Mutation, kills
 
 
 class UvTableTest(unittest.TestCase):

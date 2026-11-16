@@ -4,6 +4,7 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain import file_type
 from update_time.updaters import (
     update_circle_ci_config,
@@ -20,8 +21,6 @@ from update_time.updaters import (
     update_python_version_file,
     update_requirements_txt,
 )
-
-from tests.mutation import Mutation, kills
 
 if TYPE_CHECKING:
     from types import ModuleType

@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
@@ -15,7 +16,6 @@ from update_time.sources import oci
 from update_time.updaters.update_manifest_images import update_manifest_images
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, STALE_DATE
 from tests.update_time.helpers import docker_hub_version, docker_tag

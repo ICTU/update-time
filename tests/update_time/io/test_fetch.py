@@ -6,12 +6,12 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from mutation_time.mutation import Mutation, kills
 from update_time.io.fetch import failure_reason, fetch, fetch_json, next_page_url
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.lookup import LookedUp
 
 from tests.helpers import mock_response, patch_get, unparsable_response
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, message_of
 
 _LOG = get_logger("fetch")

@@ -2,6 +2,7 @@
 
 from unittest.mock import Mock, call, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import NO_BOUND, Verb, VersionBound
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
@@ -23,7 +24,6 @@ from update_time.updaters import update_pre_commit_config
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE

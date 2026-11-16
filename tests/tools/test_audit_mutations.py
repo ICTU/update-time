@@ -11,14 +11,15 @@ from unittest.mock import Mock, patch
 from tools import audit_mutations as audit_module
 from tools.audit_mutations import _audit, _Finding, _passes_unmutated, _SuiteRun, main
 
-from tests import mutation_subject
+from mutation_time.mutation import Mutation, Outcome, Result, kills
+
 from tests.helpers import time_zone
-from tests.mutation import Mutation, Outcome, Result, kills
+from tests.mutation_time import mutation_subject
 
 # A registered test that kills a mutation of `is_even`, and another test that kills it as well.
-_REGISTERED = "tests.test_mutation.IsEvenTest.test_an_odd_number"
-_ANOTHER_KILLER = "tests.test_mutation.IsEvenTest.test_an_even_number"
-_A_SURVIVOR = "tests.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
+_REGISTERED = "tests.mutation_time.test_mutation.IsEvenTest.test_an_odd_number"
+_ANOTHER_KILLER = "tests.mutation_time.test_mutation.IsEvenTest.test_an_even_number"
+_A_SURVIVOR = "tests.mutation_time.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
 # A test of this module that registers a mutation, so the audit reaches it.
 _OWN_REGISTRATION = "tests.tools.test_audit_mutations.AuditTest.test_a_registration_only_its_own_test_kills"
 _ODD_REPORTED_AS_EVEN = Mutation(
@@ -77,7 +78,7 @@ class PassesUnmutatedTest(unittest.TestCase):
     def test_a_test_that_passes_and_one_that_does_not(self):
         """Test that a passing test passes, and that a test the loader cannot find does not."""
         self.assertTrue(_passes_unmutated(_A_SURVIVOR))
-        self.assertFalse(_passes_unmutated("tests.test_mutation.IsEvenTest.test_that_does_not_exist"))
+        self.assertFalse(_passes_unmutated("tests.mutation_time.test_mutation.IsEvenTest.test_that_does_not_exist"))
 
 
 class AuditTest(unittest.TestCase):

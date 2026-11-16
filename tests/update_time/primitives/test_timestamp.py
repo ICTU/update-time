@@ -3,10 +3,9 @@
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
 
+from mutation_time.mutation import Mutation, kills
 from update_time.primitives import timestamp as timestamp_module
 from update_time.primitives.timestamp import days_since, newest_timestamp, parse_timestamp, utc_date_and_time
-
-from tests.mutation import Mutation, kills
 
 
 class DaysSinceTest(unittest.TestCase):

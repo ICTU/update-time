@@ -10,6 +10,7 @@ from logging import DEBUG
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
+from mutation_time.mutation import Mutation, kills
 from update_time.io import process as process_module
 from update_time.io.log import Logger
 from update_time.io.process import Processes, run, tool_version
@@ -17,7 +18,6 @@ from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 
 from tests.helpers import patch_environ
-from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, message_of
 
 # The tests run a tool in this directory.
