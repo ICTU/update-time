@@ -35,7 +35,6 @@ A line that carries no reference (no `regexp` match) is left untouched — a mar
 A line the regexp doesn't match is skipped, since it carries no reference and a marker on it belongs to the line below.
 A local action carries no `@`, so it doesn't match at all.
 A location a file format resolves for one entry names the column too, so an entry sharing its line with another is told apart from it.
-A log message: the level it is logged at and the format string the arguments are interpolated into.
 A marker that holds a scope back carries no text, because the scope has one spelling, which the warning spells out.
 A mock records every argument it was called with, and Update-time passes its credentials to `requests` as arguments, so a failing assertion about a mocked request would print them.
 A moderate vulnerability the advisory item does not name.

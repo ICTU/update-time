@@ -1,19 +1,23 @@
-"""Render the sample log lines the README quotes, by logging them through Update-time's own `Logger`.
+"""Render the sample log lines the README and the index of the log messages quote, by logging them through `Logger`.
 
-Logging those samples here rather than transcribing them into the template is what keeps them true: a reworded
-message rewrites the README on the next `just readme`, instead of leaving it quoting output the tool no longer
-produces. The lines are rendered as the plain `LEVEL message` the README's `console` blocks show, so unlike the
-screenshot (see `generate_log_svg`) they carry neither colour nor a timestamp.
+Logging those samples here rather than transcribing them into the templates is what keeps them true: a reworded
+message rewrites the README and the index on the next `just readme`, instead of leaving them quoting output the tool
+no longer produces. The lines are rendered as the plain `LEVEL message` the README's `console` blocks show, so unlike
+the screenshot (see `generate_log_svg`) they carry neither colour nor a timestamp.
 
 An elided value stands in where a real one would be noise: a digest, a commit, and an integrity hash say only that
 two of them differ, and their full length would wrap the line several times over.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from signal import Signals
 
 from packaging.version import InvalidVersion
+from requests import Response
+from rich.text import Text
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
 from update_time.domain.cooldown import COOLDOWN
@@ -31,14 +35,13 @@ from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Re
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.reference import DriftedPin, Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
-from update_time.io.console import undelimited
+from update_time.io.console import MESSAGE_NAME, named_message, undelimited
 from update_time.io.log import Logger
 from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.markers.parser import parse_directives
 from update_time.package_managers.maven.versions_plugin import OverrideConsequence
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
 
 _ELIDED = "…"
 _ELIDED_DIGEST = f"sha256:{_ELIDED}"
@@ -46,16 +49,24 @@ _ELIDED_INTEGRITY_HASH = f"sha256-{_ELIDED}"
 
 
 class _Capture(logging.Handler):
-    """Collect the records logged to it as the `LEVEL message` lines the README's console blocks show."""
+    """Collect the records logged to it as the `LEVEL message` lines the README's console blocks show.
+
+    It also keeps the first line logged for each name, which the index of the log messages shows as the name's sample.
+    """
 
     def __init__(self) -> None:
         """Start with nothing collected."""
         super().__init__()
         self._lines: list[str] = []
+        self.samples: dict[str, str] = {}
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Format the record and keep it, dropping the delimiters that only the highlighter reads."""
-        self._lines.append(f"{record.levelname} {undelimited(record.getMessage())}")
+        """Format the record and keep it, with its name and without the delimiters only the highlighter reads."""
+        message = named_message(record, Text(undelimited(record.getMessage())))
+        line = f"{record.levelname} {message.plain}"
+        self._lines.append(line)
+        if name := getattr(record, MESSAGE_NAME, ""):
+            self.samples.setdefault(name, line)
 
     def take(self) -> str:
         """Return the lines collected since the previous call, as one block, and start a new one."""
@@ -63,8 +74,16 @@ class _Capture(logging.Handler):
         return block
 
 
-def sample_log_lines() -> dict[str, str]:
-    """Return the README's sample log blocks, keyed by the placeholder each one fills.
+@dataclass(frozen=True)
+class LogSamples:
+    """The sample log lines: the README's blocks, by the placeholder each one fills, and the index's line per name."""
+
+    blocks: dict[str, str]
+    by_name: dict[str, str]
+
+
+def sample_log_lines() -> LogSamples:
+    """Return the README's sample log blocks, and the sample of each name the index of the log messages shows.
 
     The samples log to a logger of their own, which collects them and passes them on to nobody: they are the
     README's content, not diagnostics about generating it, and its own level keeps them independent of whatever
@@ -76,9 +95,303 @@ def sample_log_lines() -> dict[str, str]:
     logger.log.setLevel(logging.DEBUG)
     logger.log.propagate = False
     try:
-        return _blocks(logger, capture)
+        blocks = _blocks(logger, capture)
+        _index_samples(logger, capture)
+        return LogSamples(blocks, capture.samples)
     finally:
         logger.log.removeHandler(capture)
+
+
+def _index_samples(log: Logger, capture: _Capture) -> None:
+    """Log a sample of each log message the README does not quote, for the index of the log messages alone."""
+    _index_debug_samples(log)
+    _index_info_samples(log)
+    _index_warning_samples(log)
+    _index_error_samples(log)
+    capture.take()
+
+
+def _index_debug_samples(log: Logger) -> None:
+    """Log a sample of each debug message the README does not quote."""
+    log.running("0.0.61", "macOS-26.1-arm64", "3.14.2")
+    log.arguments(["--cooldown", "14", "--log-level", "DEBUG"])
+    log.credentials({"GITHUB_TOKEN": True, "DOCKER_HUB_USERNAME": True, "DOCKER_HUB_TOKEN": False})  # nosec B105
+    log.network_settings({"https": "http://proxy.example.com:3128"}, "localhost", "")
+    log.path(Path("docs/requirements.txt"))
+    log.excluded_path(Path("vendor"))
+    log.tool_version("yarn", Path(), "4.18.1")
+    yarn_up = Command("yarn", "up", "-R", "--mode=update-lockfile", "left-pad")
+    log.command_run(yarn_up, Path(), {"YARN_NPM_MINIMAL_AGE_GATE": "10080"})
+    _debug_held_back_samples(log)
+    _debug_silenced_samples(log)
+    _debug_left_as_it_is_samples(log)
+    _debug_project_samples(log)
+    _debug_fetch_samples(log)
+
+
+def _debug_held_back_samples(log: Logger) -> None:
+    """Log a sample of each debug message about an update held back, the cooldown, or a pin kept floating.
+
+    The publication date is fixed rather than counted back from now, so the index renders the same on every run.
+    """
+    published = datetime(2026, 10, 8, 13, 1, tzinfo=UTC)
+    dockerfile = Location(Path("Dockerfile"), 2)
+    workflow = Location(Path(".github/workflows/ci.yml"), 5)
+    log.held_back_by_cooldown(reference("github/codeql-action/init", workflow), Release("4.38.3", published), 7, "")
+    log.held_back_by_cooldown(reference("python", dockerfile), Release("3.15.0", published), 30, "set[cooldown=30]")
+    log.project_cooldown(Path("package.json"), "bun minimumReleaseAge", COOLDOWN.get())
+    log.keeping_floating_tag(
+        reference("python", dockerfile, "latest"),
+        DependencyVersion("3.14.7", sha=_ELIDED_DIGEST),
+        "allow[floating-pin]",
+    )
+    branch = reference("actions/checkout", Location(Path(".github/workflows/ci.yml"), 17), "main")
+    log.keeping_ref(branch, DependencyVersion("4.3.0", sha=_ELIDED), "allow[floating-pin]", RefKind.BRANCH)
+    guava = reference("com.google.guava:guava", Location(Path("pom.xml"), 12))
+    log.holding_back_range(guava, "[34,)", "ignore[update>=34]")
+    requires_python = reference("python", Location(Path("pyproject.toml"), 2), ">=3.10,<3.12")
+    log.held_back_by_requires_python(
+        reference("python", Location(Path(".python-version"), 1), "3.11.9"), requires_python
+    )
+    log.ignored(
+        reference("humanize", Location(Path("docs/requirements.txt"), 12), "4.15.0", parse_directives("ignore[update]"))
+    )
+
+
+def _debug_silenced_samples(log: Logger) -> None:
+    """Log a sample of each debug message about a warning that a marker or an option silenced."""
+    requirements = Location(Path("docs/requirements.txt"), 12)
+    log.ignored_staleness(reference("humanize", requirements), "set[stale-after=0]")
+    marker = Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]")
+    log.report_yank(
+        resolved("humanize", requirements, DependencyVersion("4.15.0", yank=Yank(yanked=True)), marker=marker)
+    )
+    archived = Project(archival=Archival(archived=True))
+    silenced = Marker(ignored_scopes=Scope.ARCHIVED)
+    log.report_archival(resolved("aioredis", requirements, project=archived, marker=silenced))
+    log.ignored_vulnerability(
+        reference("django", requirements, "3.2.0"), VULNERABILITY, "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]"
+    )
+    log.globally_ignored_vulnerability(
+        reference("django", requirements, "3.2.0"), VULNERABILITY, frozenset({"GHSA-2gwj-7jmv-h26r"})
+    )
+
+
+def _debug_left_as_it_is_samples(log: Logger) -> None:
+    """Log a sample of each debug message about how Update-time reads a reference, or why it leaves one as it is."""
+    workflow = Location(Path(".github/workflows/ci.yml"), 17)
+    log.comment_naming_no_ref(reference("actions/checkout", workflow, "pinned"))
+    log.no_release_tagged(reference("actions/checkout", workflow, "1"))
+    dockerfile = Location(Path("Dockerfile"), 2)
+    log.substituted_reference(reference("python", dockerfile, "$PY"), "python:3.14")
+    log.repository_not_served(reference("spark-rm-base", dockerfile, "3.5.1"))
+    guava = reference("com.google.guava:guava", Location(Path("pom.xml"), 12), "33.0.0-jre")
+    log.new_version_not_reported(guava, "guava.version", "33.5.0-jre")
+
+
+def _debug_project_samples(log: Logger) -> None:
+    """Log a sample of each debug message about a file or a project that Update-time does not run a tool for."""
+    compiled = Path("docs/requirements.txt")
+    log.source_outside_the_scan(compiled, Path("vendor/requirements.in"))
+    log.compiled_file_without_a_source(Path("requirements-lock.txt"))
+    log.no_dependencies(Path("pyproject.toml"), "uv", "resolve")
+    log.not_a_uv_project(Path("legacy/pyproject.toml"), Path("legacy/uv.lock"))
+    log.project_marked_unmanaged(Path("vendored/pyproject.toml"), Path("vendored/pyproject.toml"))
+    log.workspace_root_outside_the_scan(Path("pyproject.toml"), "uv", Path("../pyproject.toml"))
+    log.path_source_cycle([Path("lib/pyproject.toml"), Path("app/pyproject.toml")])
+    log.no_lock_file(Path("web/package.json"), "npm", Path("web/package-lock.json"))
+    log.left_with_the_workspace_root(Path("packages/ui/package.json"), "yarn", Path("package.json"))
+    log.updated_by_the_workspace_root(Path("packages/ui/package.json"), "bun", Path("package.json"))
+    log.maven_not_run(Path("sub/pom.xml"))
+    log.option_overridden_by_the_pom(Path("pom.xml"), "rulesUri", OverrideConsequence.RULES, "", 0)
+    log.option_overridden_by_the_pom(
+        Path("pom.xml"), "rulesUri", OverrideConsequence.RULES, "org.example:parent:1.0", 12
+    )
+
+
+def _debug_fetch_samples(log: Logger) -> None:
+    """Log a sample of each debug message about a request a source did not answer as hoped."""
+    response = Response()
+    response.url, response.status_code, response.reason = "https://example.com/CHANGELOG.md", 404, "Not Found"
+    log.unserved_changelog(response)
+    url = "https://repo1.maven.org/maven2/nl/example/internal-lib/"
+    log.unserved_listing(url, "HTTP 404")
+    log.unreadable_github_rate_limit(KeyError("X-RateLimit-Reset"))
+
+
+def _index_info_samples(log: Logger) -> None:
+    """Log a sample of each info message the README does not quote."""
+    log.pinned(reference("python", Location(Path("Dockerfile"), 1)), DependencyVersion("3.14.7", sha=_ELIDED_DIGEST))
+    dockerfile = Location(Path("Dockerfile"), 2)
+    log.pinned_version(reference("python", dockerfile, "$PY"), DependencyVersion("3.14.7"))
+    log.cannot_pin(reference("clipboard", Location(Path("docs/conf.py"), 4)))
+    log.version_moved_back("uv", reference("humanize", Location(Path("docs/requirements.in"), 2), "4.16.0"), "4.11.0")
+    compiled = Path("docs/requirements.txt")
+    log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")], Unrecompilable.OTHER_OUTPUT)
+    log.managed_by_comment_written(Path("docs/requirements.in"), compiled, "7 days", "uv exclude-newer")
+    log.configured_uv_cooldown(Path("pyproject.toml"), "7 days")
+    log.new_version(reference("internal-lib", Location(Path("pyproject.toml"), 2)), DependencyVersion("1.3.0"))
+    log.pin_with_environment_marker_left_as_is(reference("humanize", Location(Path("pyproject.toml"), 3), "4.15.0"))
+    package_json = Location(Path("dev/package.json"), 5)
+    log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
+    log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
+    workflow = Location(Path(".github/workflows/ci.yml"), 17)
+    tag_drift = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED)
+    log.adopted_drift(Logger.TAG_DRIFT, tag_drift, "allow[hash-drift]")
+    digest_drift = DriftedPin("python", "3.14", Location(Path("Dockerfile"), 1), _ELIDED_DIGEST, new_sha=_ELIDED_DIGEST)
+    log.adopted_drift(Logger.DIGEST_DRIFT, digest_drift, "allow[hash-drift]")
+
+
+def _index_warning_samples(log: Logger) -> None:
+    """Log a sample of each warning the README does not quote."""
+    requirements = Location(Path("docs/requirements.txt"), 12)
+    log.forced_outside_git_repository(Path("/home/user/project"))
+    log.missing_excluded_path(Path("vendor"))
+    recent = Release("4.15.0", datetime.now(UTC) - timedelta(days=30))
+    threshold = Threshold(value=90, directive="set[stale-after=90]")
+    log.redundant_stale_threshold(reference("humanize", requirements), threshold, recent, 180)
+    level = Marker(vulnerable=Threshold(value="high", directive="set[vulnerability-level=high]"))
+    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0", level), "moderate")
+    log.malformed_cvss_vector("GHSA-1111-2222-3333", ValueError("unknown metric 'XX'"))
+    log.unreadable_affected_versions("GHSA-1111-2222-3333", InvalidVersion("Invalid version: 'unknown'"))
+    log.unreadable_publication_date("com.google.guava:guava", "33.5.0-jre", "yesterday")
+    log.no_integrity_hash("clipboard", "2.0.12", "dist/clipboard.min.js")
+    log.unreadable_archival("actions/checkout")
+    version_file = Location(Path(".python-version"), 1)
+    requires_python = reference("python", Location(Path("pyproject.toml"), 2), ">=3.10,<3.12")
+    log.python_version_outside_requires_python(reference("python", version_file, "3.13.2"), requires_python)
+    log.invalid_requires_python(requires_python)
+    _warning_file_samples(log)
+    _warning_project_samples(log)
+    _warning_fetch_samples(log)
+
+
+def _warning_file_samples(log: Logger) -> None:
+    """Log a sample of each warning about a file Update-time cannot read."""
+    unreadable = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    log.unreadable_script(Path("tool.py"), unreadable)
+    log.invalid_file(Path(".github/workflows/ci.yml"), "YAML")
+    log.unreadable_package_json(Path("package.json"), unreadable)
+    log.unreadable_manager_declaration(Path("package.json"), unreadable)
+    log.unreadable_node_engine(Path("package.json"), unreadable)
+    log.no_entry("node", Path("package.json"))
+    log.unreadable_requires_python(Path("pyproject.toml"), unreadable)
+    log.pinned_version_unreadable(Path("docs/requirements.txt"), "humanize", "4.15.0-final")
+    log.unreadable_catalogs(Path("pnpm-workspace.yaml"), unreadable)
+    log.unreadable_bun_lock(Path("bun.lock"), ValueError("it does not hold the JSON bun writes"))
+    error = ValueError("Expected ']' at the end of a table declaration (at line 1, column 9)")
+    log.unreadable_bunfig(Path("bunfig.toml"), error)
+    log.invalid_pom("https://repo1.maven.org/maven2/com/google/guava/guava/33.5.0-jre/guava-33.5.0-jre.pom")
+    log.effective_pom_unreadable(Path("pom.xml"))
+    log.effective_pom_without_input_locations(Path("pom.xml"))
+
+
+def _warning_project_samples(log: Logger) -> None:
+    """Log a sample of each warning about a project Update-time cannot run a tool for as it would."""
+    compiled = Path("docs/requirements.txt")
+    log.source_not_found(compiled, Path("docs/dev.in"))
+    log.compiled_source_unsupported(Path("requirements-dev.txt"), Path("requirements.txt"))
+    log.uv_settings_unreadable(compiled)
+    log.settings_unreadable(compiled, "pip", "uploaded-prior-to", "[Errno 2] No such file or directory: 'pip'")
+    log.uv_cooldown_not_set(Path("pyproject.toml"))
+    log.unsupported_package_manager(Path("pyproject.toml"), "poetry", "uv")
+    log.binary_lock(Path("package.json"), Path("bun.lockb"), Path("bun.lock"))
+    log.yarn_without_a_cooldown(Path("package.json"), Path(), "1.22.22")
+    log.tool_version_unknown(
+        "yarn", Path(), "Usage Error: Parse error when loading .yarnrc.yml; please check it's proper Yaml"
+    )
+    directory = Path("test/node/esm")
+    log.files_of_more_than_one_manager(
+        directory / "package.json", [directory / "pnpm-lock.yaml", directory / "bun.lockb"]
+    )
+    log.command_stderr(Command("pnpm", "update", "-r"), " WARN  deprecated inflight@1.0.6")
+
+
+def _warning_fetch_samples(log: Logger) -> None:
+    """Log a sample of each warning about a request a source did not answer."""
+    url = "https://pypi.org/pypi/humanize/json"
+    response = Response()
+    response.url, response.status_code, response.reason = url, 503, "Service Unavailable"
+    log.response(response)
+    log.invalid_json(url)
+    log.timeout(url)
+    log.request_error(url, ConnectionError("Connection refused"))
+
+
+def _index_error_samples(log: Logger) -> None:
+    """Log a sample of each error the README does not quote."""
+    log.stopped(Signals.SIGINT)
+    log.update_stopped("Maven dependencies", Signals.SIGTERM)
+    log.command_not_found(Command("pnpm", "update", "-r"))
+    log.command_error(Command("npm", "update"), PermissionError(13, "Permission denied", "npm"))
+    _yarn_failure(log)
+    _error_python_samples(log)
+    _uv_failures(log)
+    _error_maven_samples(log)
+    _error_source_samples(log)
+
+
+def _yarn_failure(log: Logger) -> None:
+    """Log a sample of a yarn command that failed, with the output yarn wrote."""
+    output = (
+        "➤ YN0000: · Yarn 4.18.1\n"
+        "➤ YN0000: ┌ Resolution step\n"
+        "➤ YN0001: │ RequestError: getaddrinfo ENOTFOUND registry.yarnpkg.com\n"
+        "➤ YN0000: └ Completed\n"
+        "➤ YN0000: · Failed with errors in 0s 75ms"
+    )
+    log.command_failed(Command("yarn", "up", "-R", "--mode=update-lockfile", "left-pad"), output)
+
+
+def _error_python_samples(log: Logger) -> None:
+    """Log a sample of each error about a compiled requirements file or projects uv locks together."""
+    compiled = Path("docs/requirements.txt")
+    log.compiled_file_not_recompiled(compiled, "uv pip compile")
+    log.compiler_not_on_path(compiled, "uv")
+    log.rolled_back_with_cycle(Path("lib/pyproject.toml"), [Path("app/pyproject.toml")])
+
+
+def _uv_failures(log: Logger) -> None:
+    """Log a sample of each failure that leaves the dependencies of a file uv locks as they were."""
+    log.uv_dependencies_not_updated(Path("tool.py"), "uv lock")
+    log.lock_not_read(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
+    log.file_not_written(Path("pyproject.toml"), PermissionError(13, "Permission denied", "pyproject.toml"))
+    log.file_not_restored(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
+    log.lock_not_removed(Path("tool.py.lock"), PermissionError(13, "Permission denied", "tool.py.lock"))
+    log.package_manager_not_on_path(Path("pyproject.toml"), "uv")
+
+
+def _error_maven_samples(log: Logger) -> None:
+    """Log a sample of each error about a pom or the reactor it is part of."""
+    log.unreadable_reactor(Path(), 50)
+    log.unreadable_reactor_as_found(Path(), 118)
+    log.unreadable_reactor_since_update(Path(), Path("dubbo-dependencies-bom/pom.xml"), 50)
+    log.unreadable_reactor_since_update_without_poms_left(Path(), Path("dubbo-dependencies-bom/pom.xml"))
+    log.unparsable_reactor(Path(), Path("sub/pom.xml"), 118)
+    log.invalid_xml_after_update(Path("pom.xml"))
+    log.declarations_changed(Path("pom.xml"), 12, 11)
+
+
+def _error_source_samples(log: Logger) -> None:
+    """Log a sample of each error about a source that did not answer what an update needs."""
+    rate_limited = "HTTP 403, API rate limit exceeded"
+    log.github_rate_limit_used_up(60, datetime(2026, 10, 17, 15, 42, tzinfo=UTC))
+    log.github_token_rate_limit_used_up(5000, datetime(2026, 10, 17, 15, 42, tzinfo=UTC))
+    log.no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
+    url = "https://github.com/actions/checkout/releases/tag/v4.3.0"
+    log.no_commit_sha("actions/checkout", "v4.3.0", rate_limited, url)
+    workflow = Location(Path(".github/workflows/ci.yml"), 17)
+    branch = reference("actions/checkout", workflow, "main")
+    log.unpinned_ref(branch, rate_limited, RefKind.REF)
+    log.unchecked_branch_drift(branch, _ELIDED, rate_limited)
+    log.undated_commit("actions/checkout", "v4.4.0", "4.3.0", rate_limited)
+    moved = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED)
+    log.no_commit_date(Logger.TAG_DRIFT, moved, rate_limited)
+    dockerfile = Location(Path("Dockerfile"), 2)
+    log.undated_push("python", "3.15.0", "3.14.6", "HTTP 429")
+    log.no_push_date(
+        Logger.DIGEST_DRIFT, DriftedPin("python", "3.14", dockerfile, _ELIDED, new_sha=_ELIDED), "HTTP 429"
+    )
 
 
 def _redundant_directives(
@@ -291,16 +604,8 @@ def _bounds_deciding_nothing(log: Logger, capture: _Capture, dockerfile: Locatio
     return {"@@BOUNDS_DECIDING_NOTHING@@": capture.take()}
 
 
-def _unreadable_reactors(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log a sample per error about a reactor Maven cannot read, paired with the block's placeholder."""
-    log.unreadable_reactor_since_update(Path(), Path("dubbo-dependencies-bom/pom.xml"), 50)
-    log.unreadable_reactor_as_found(Path(), 118)
-    log.unparsable_reactor(Path(), Path("sub/pom.xml"), 118)
-    return {"@@UNREADABLE_REACTORS@@": capture.take()}
-
-
 def _references_left_alone(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
-    """Log references left alone: some whose image is not looked up, and one whose repository is not served."""
+    """Log references whose image Update-time does not look up, one per reason, and pair the lines."""
     compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
     log.image_not_looked_up(compose, ImageNotLookedUp.BUILT_IMAGE)
     variable = reference("redis", Location(Path("docker-compose.yml"), 7), "7.2-${VARIANT}")
@@ -310,17 +615,7 @@ def _references_left_alone(log: Logger, capture: _Capture, dockerfile: Location)
         reference("python", dockerfile, "3.14"), ImageNotLookedUp.ARGUMENT_SHARED_WITH_ANOTHER_FROM_LINE
     )
     log.image_not_looked_up(reference("python", dockerfile, "$PY"), ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS)
-    not_looked_up = capture.take()
-    log.repository_not_served(reference("spark-rm-base", dockerfile, "3.5.1"))
-    return {"@@IMAGES_NOT_LOOKED_UP@@": not_looked_up, "@@REPOSITORY_NOT_SERVED@@": capture.take()}
-
-
-def _build_argument_samples(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
-    """Log a reference naming build arguments as Docker builds on it, and a floating default pinned to its version."""
-    log.substituted_reference(reference("python", dockerfile, "$PY"), "python:3.14")
-    substituted = capture.take()
-    log.pinned_version(reference("python", dockerfile, "$PY"), DependencyVersion("3.14.7"))
-    return {"@@SUBSTITUTED_REFERENCE@@": substituted, "@@PINNED_VERSION@@": capture.take()}
+    return {"@@IMAGES_NOT_LOOKED_UP@@": capture.take()}
 
 
 def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
@@ -332,55 +627,6 @@ def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
     ghcr = Location(Path("Dockerfile"), 1)
     log.unpinned_floating_tag(
         reference("ghcr.io/acme/api", ghcr, "edge"), DependencyVersion("edge"), FloatingPin.NO_MANIFEST
-    )
-    return capture.take()
-
-
-def _no_release_tagged(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
-    """Log that a reference was left as it is, since its repository does not tag a release, and pair the line."""
-    log.no_release_tagged(reference("actions/checkout", workflow, "1"))
-    return {"@@NO_RELEASE_TAGGED@@": capture.take()}
-
-
-def _pinned_version_tags(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
-    """Log a version tag pinned to a newer version and one pinned to the version it names, and pair the lines."""
-    log.new_version(reference("actions/checkout", workflow), DependencyVersion("4.3.0", sha=_ELIDED))
-    hooks = reference("pre-commit/pre-commit-hooks", Location(Path(".pre-commit-config.yaml"), 4))
-    log.pinned(hooks, DependencyVersion("6.0.0", sha=_ELIDED))
-    return {"@@PINNED_VERSION_TAGS@@": capture.take()}
-
-
-def _github_refs(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
-    """Log a branch kept floating, refs left unpinned, unchecked drift, and undated commits, with placeholders."""
-    branch = reference("actions/checkout", workflow, "main")
-    directive, rate_limited = "allow[floating-pin]", "HTTP 403, API rate limit exceeded"
-    log.keeping_ref(branch, DependencyVersion("4.3.0", sha=_ELIDED), directive, RefKind.BRANCH)
-    kept = capture.take()
-    log.unpinned_ref(branch, rate_limited, RefKind.REF)
-    unpinned = capture.take()
-    log.unpinned_ref(branch, BEYOND_THE_COMMITS_EXAMINED, RefKind.BRANCH)
-    beyond = capture.take()
-    log.unchecked_branch_drift(branch, _ELIDED, rate_limited)
-    unchecked = capture.take()
-    log.undated_commit("actions/checkout", "v4.4.0", "4.3.0", rate_limited)
-    undated = capture.take()
-    moved = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED)
-    log.no_commit_date(Logger.TAG_DRIFT, moved, rate_limited)
-    return {
-        "@@KEPT_BRANCH@@": kept,
-        "@@UNPINNED_REF@@": unpinned,
-        "@@BRANCH_BEYOND_THE_COMMITS_EXAMINED@@": beyond,
-        "@@UNCHECKED_BRANCH_DRIFT@@": unchecked,
-        "@@UNDATED_TAGGED_COMMIT@@": undated,
-        "@@NO_COMMIT_DATE@@": capture.take(),
-    }
-
-
-def _undated_pushes(log: Logger, capture: _Capture, dockerfile: Location) -> str:
-    """Log a newer tag and a re-pushed digest whose push date Docker Hub failed to report, and return their lines."""
-    log.undated_push("python", "3.15.0", "3.14.6", "HTTP 429")
-    log.no_push_date(
-        Logger.DIGEST_DRIFT, DriftedPin("python", "3.14", dockerfile, _ELIDED, new_sha=_ELIDED), "HTTP 429"
     )
     return capture.take()
 
@@ -414,9 +660,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
     vulnerable = capture.take()
 
-    log.unreadable_affected_versions("GHSA-1111-2222-3333", InvalidVersion("Invalid version: 'unknown'"))
-    unreadable_affected_versions = capture.take()
-
     archived_project = Project(archival=Archival(archived=True))
     log.report_archival(resolved("aioredis", requirements, project=archived_project))
     repository = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
@@ -430,75 +673,16 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     invalid = _invalid_items(log, capture, dockerfile)
 
-    pinned_tag = DependencyVersion("3.14.7", sha=_ELIDED_DIGEST)
-    log.pinned(reference("python", Location(Path("Dockerfile"), 1)), pinned_tag)
-    pinned_floating_tag = capture.take()
-
-    pinned_url = DependencyVersion("2.0.11", sha=_ELIDED_INTEGRITY_HASH)
-    log.pinned(reference("clipboard", Location(Path("docs/conf.py"), 4)), pinned_url)
-    pinned_integrity_hash = capture.take()
-
-    maven_runs = _unreadable_reactors(log, capture)
-
     unpinned_floating_tag = _unpinned_floating_tags(log, capture)
-
-    log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "allow[floating-pin]")
-    kept_floating_tag = capture.take()
-
-    github_refs = _github_refs(log, capture, workflow)
-
-    undated_pushes = _undated_pushes(log, capture, dockerfile)
-
-    log.no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
-    no_release_metadata = capture.take()
-
-    rate_limits = _rate_limits(log, capture)
-
-    held_back_by_cooldown = _held_back_by_cooldown(log, capture, dockerfile)
 
     understood_markers = _understood_markers(log, capture, requirements)
     return {
         "@@DRIFT_WARNINGS@@": drift,
-        "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
-        "@@PINNED_INTEGRITY_HASH@@": pinned_integrity_hash,
-        **maven_runs,
-        **_versions_plugin_overridden(log, capture),
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
-        "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
-        **github_refs,
-        **_no_release_tagged(log, capture, workflow),
-        **_pinned_version_tags(log, capture, workflow),
-        "@@NO_RELEASE_METADATA@@": no_release_metadata,
-        **_uv_dependencies_not_updated(log, capture),
-        **_manifests_without_dependencies(log, capture),
-        **_package_jsons_without_a_lock_file(log, capture),
-        **_bun_files_left_unread(log, capture),
-        **_yarn_reports(log, capture),
-        **_files_of_more_than_one_manager(log, capture),
-        **_project_cooldowns(log, capture),
-        **_members_left_to_their_root(log, capture),
-        **_workspace_roots_outside_the_scan(log, capture),
-        **_package_managers_not_on_path(log, capture),
-        **_not_a_uv_project(log, capture),
-        **_range_rewrites(log, capture),
-        **_unreadable_pnpm_workspace_yaml(log, capture),
-        **_versions_moved_back(log, capture),
-        **_pin_with_environment_marker(log, capture),
-        **_path_source_cycle(log, capture),
-        **_unserved_new_version(log, capture),
-        **_requires_python_reports(log, capture),
-        **_uv_cooldown_not_set(log, capture),
-        **_compiled_requirements_files(log, capture),
-        **_recompiles(log, capture),
-        **rate_limits,
-        "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
-        "@@NO_PUSH_DATE@@": undated_pushes,
         **_references_left_alone(log, capture, dockerfile),
-        **_build_argument_samples(log, capture, dockerfile),
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,
-        "@@UNREADABLE_AFFECTED_VERSIONS_WARNING@@": unreadable_affected_versions,
         "@@ARCHIVED_WARNING@@": archival,
         **redundant,
         **_redundant_suppressions(log, capture, requirements, workflow),
@@ -537,265 +721,8 @@ def _redundant_suppressions(
     }
 
 
-def _manifests_without_dependencies(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that npm and uv do not run for a manifest that does not declare dependencies, and pair the lines."""
-    log.no_dependencies(Path("ui/static/package.json"), "npm", "install")
-    package_json = capture.take()
-    log.no_dependencies(Path("pyproject.toml"), "uv", "resolve")
-    return {"@@NO_NODE_DEPENDENCIES@@": package_json, "@@NO_PYTHON_DEPENDENCIES@@": capture.take()}
-
-
-def _package_jsons_without_a_lock_file(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that npm does not run for a project, and pnpm for a workspace member, without a lock file."""
-    log.no_lock_file(Path("web/package.json"), "npm", Path("web/package-lock.json"))
-    log.no_lock_file(Path("packages/ui/package.json"), "pnpm", Path("pnpm-lock.yaml"))
-    return {"@@NO_NODE_LOCK_FILE@@": capture.take()}
-
-
-def _project_cooldowns(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a bun project and a uv project set their own cooldowns, which the run's cooldown does not override."""
-    log.project_cooldown(Path("package.json"), "bun minimumReleaseAge", COOLDOWN.get())
-    log.project_cooldown(Path("pyproject.toml"), "uv exclude-newer", COOLDOWN.get())
-    return {"@@PROJECT_COOLDOWNS@@": capture.take()}
-
-
-def _files_of_more_than_one_manager(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that no manager runs for a project whose files name two, a pnpm lock and a binary bun lock."""
-    directory = Path("test/node/esm")
-    log.files_of_more_than_one_manager(
-        directory / "package.json", [directory / "pnpm-lock.yaml", directory / "bun.lockb"]
-    )
-    return {"@@NODE_FILES_OF_MORE_THAN_ONE_MANAGER@@": capture.take()}
-
-
-def _bun_files_left_unread(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log the binary lock, the text lock, and the bunfig.toml that Update-time cannot read, and pair the lines."""
-    log.binary_lock(Path("package.json"), Path("bun.lockb"), Path("bun.lock"))
-    binary_lock = capture.take()
-    log.unreadable_bun_lock(Path("bun.lock"), ValueError("it does not hold the JSON bun writes"))
-    bun_lock = capture.take()
-    log.unreadable_bunfig(
-        Path("bunfig.toml"), ValueError("Expected ']' at the end of a table declaration (at line 1, column 9)")
-    )
-    return {
-        "@@BUN_BINARY_LOCK@@": binary_lock,
-        "@@BUN_LOCK_UNREADABLE@@": bun_lock,
-        "@@BUNFIG_UNREADABLE@@": capture.take(),
-    }
-
-
-def _yarn_reports(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that yarn classic does not run for a project, that yarn's version is unknown, and that a command failed."""
-    log.yarn_without_a_cooldown(Path("package.json"), Path(), "1.22.22")
-    without_a_cooldown = capture.take()
-    log.tool_version_unknown(
-        "yarn", Path(), "Usage Error: Parse error when loading .yarnrc.yml; please check it's proper Yaml"
-    )
-    version_unknown = capture.take()
-    output = (
-        "➤ YN0000: · Yarn 4.18.1\n"
-        "➤ YN0000: ┌ Resolution step\n"
-        "➤ YN0001: │ RequestError: getaddrinfo ENOTFOUND registry.yarnpkg.com\n"
-        "➤ YN0000: └ Completed\n"
-        "➤ YN0000: · Failed with errors in 0s 75ms"
-    )
-    log.command_failed(Command("yarn", "up", "-R", "--mode=update-lockfile", "left-pad"), output)
-    return {
-        "@@YARN_WITHOUT_A_COOLDOWN@@": without_a_cooldown,
-        "@@YARN_VERSION_UNKNOWN@@": version_unknown,
-        "@@YARN_COMMAND_FAILED@@": capture.take(),
-    }
-
-
-def _members_left_to_their_root(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that bun does not run for a member its root's run updates, and yarn not for one its root is left with."""
-    log.updated_by_the_workspace_root(Path("packages/ui/package.json"), "bun", Path("package.json"))
-    updated = capture.take()
-    log.left_with_the_workspace_root(Path("packages/ui/package.json"), "yarn", Path("package.json"))
-    return {"@@NODE_MEMBER_LEFT_TO_ITS_ROOT@@": updated, "@@NODE_MEMBER_LEFT_WITH_ITS_ROOT@@": capture.take()}
-
-
-def _workspace_roots_outside_the_scan(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that uv, npm, and pnpm do not run for a member whose workspace root lies outside the scan root."""
-    log.workspace_root_outside_the_scan(Path("pyproject.toml"), "uv", Path("../pyproject.toml"))
-    pyproject_toml = capture.take()
-    log.workspace_root_outside_the_scan(Path("package.json"), "npm", Path("../package.json"))
-    log.workspace_root_outside_the_scan(Path("package.json"), "pnpm", Path("../pnpm-workspace.yaml"))
-    return {
-        "@@UV_WORKSPACE_ROOT_OUTSIDE_THE_SCAN@@": pyproject_toml,
-        "@@NODE_WORKSPACE_ROOT_OUTSIDE_THE_SCAN@@": capture.take(),
-    }
-
-
-def _package_managers_not_on_path(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that pnpm and Maven are not on the path, and pair the lines."""
-    log.package_manager_not_on_path(Path("web/package.json"), "pnpm")
-    package_json = capture.take()
-    log.package_manager_not_on_path(Path("pom.xml"), "mvn")
-    return {"@@NODE_MANAGER_NOT_ON_PATH@@": package_json, "@@MAVEN_NOT_ON_PATH@@": capture.take()}
-
-
-def _not_a_uv_project(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that uv does not run for a pyproject.toml that uv does not manage, and pair the lines."""
-    log.not_a_uv_project(Path("legacy/pyproject.toml"), Path("legacy/uv.lock"))
-    log.project_marked_unmanaged(Path("vendored/pyproject.toml"), Path("vendored/pyproject.toml"))
-    return {"@@NOT_A_UV_PROJECT@@": capture.take()}
-
-
-def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log the ranges a manager rewrote, in a package.json and in a catalog, and pair the lines."""
-    package_json = Location(Path("dev/package.json"), 5)
-    log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
-    log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
-    range_rewrites = capture.take()
-    log.range_rewrite(
-        "pnpm", reference("semver", Location(Path("pnpm-workspace.yaml"), 4), "^7.0.0"), "^7.8.6", "7.8.6"
-    )
-    return {"@@RANGE_REWRITES@@": range_rewrites, "@@CATALOG_RANGE_REWRITE@@": capture.take()}
-
-
-def _unreadable_pnpm_workspace_yaml(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a pnpm-workspace.yaml cannot be read, and pair the line."""
-    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-    log.unreadable_catalogs(Path("pnpm-workspace.yaml"), error)
-    return {"@@UNREADABLE_PNPM_WORKSPACE_YAML@@": capture.take()}
-
-
-def _pin_with_environment_marker(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a pin with an environment marker is left as it is, and pair the line."""
-    log.pin_with_environment_marker_left_as_is(reference("humanize", Location(Path("pyproject.toml"), 3), "4.15.0"))
-    return {"@@PIN_WITH_ENVIRONMENT_MARKER@@": capture.take()}
-
-
-def _path_source_cycle(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that the workspaces of two projects that source each other by path are updated together, and rolled back."""
-    lib, app = Path("lib/pyproject.toml"), Path("app/pyproject.toml")
-    log.path_source_cycle([lib, app])
-    cycle = capture.take()
-    log.rolled_back_with_cycle(lib, [app])
-    return {"@@PATH_SOURCE_CYCLE@@": cycle, "@@ROLLED_BACK_WITH_CYCLE@@": capture.take()}
-
-
-def _unserved_new_version(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log the new version of a pin that a uv source resolves, without a changelog, and pair the line."""
-    log.new_version(reference("internal-lib", Location(Path("pyproject.toml"), 2)), DependencyVersion("1.3.0"))
-    return {"@@UNSERVED_NEW_VERSION@@": capture.take()}
-
-
-def _versions_moved_back(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that uv and npm moved a version back, and pair the lines."""
-    log.version_moved_back("uv", reference("humanize", Location(Path("docs/requirements.in"), 2), "4.16.0"), "4.11.0")
-    log.version_moved_back("npm", reference("typescript", Location(Path("package.json"), 3), "5.9.3"), "5.8.3")
-    return {"@@VERSIONS_MOVED_BACK@@": capture.take()}
-
-
-def _requires_python_reports(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log the three reports about a `requires-python`, and pair each with its placeholder."""
-    version_file = Location(Path(".python-version"), 1)
-    requires_python = reference("python", Location(Path("pyproject.toml"), 2), ">=3.10,<3.12")
-    log.held_back_by_requires_python(reference("python", version_file, "3.11.9"), requires_python)
-    held_back = capture.take()
-    log.python_version_outside_requires_python(reference("python", version_file, "3.13.2"), requires_python)
-    outside = capture.take()
-    log.invalid_requires_python(requires_python)
-    return {
-        "@@HELD_BACK_BY_REQUIRES_PYTHON@@": held_back,
-        "@@OUTSIDE_REQUIRES_PYTHON@@": outside,
-        "@@INVALID_REQUIRES_PYTHON@@": capture.take(),
-    }
-
-
-def _compiled_requirements_files(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log what happens to a compiled requirements file and to the sources it names, and pair the lines."""
-    compiled = Path("docs/requirements.txt")
-    log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")], Unrecompilable.OTHER_OUTPUT)
-    log.source_not_found(compiled, Path("docs/dev.in"))
-    log.source_outside_the_scan(compiled, Path("vendor/requirements.in"))
-    log.compiled_source_unsupported(Path("requirements-dev.txt"), Path("requirements.txt"))
-    log.compiled_file_without_a_source(Path("requirements-lock.txt"))
-    return {"@@COMPILED_REQUIREMENTS_FILES@@": capture.take()}
-
-
-def _recompiles(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log a sample per line about recompiling a requirements file, each paired with its block's placeholder."""
-    compiled = Path("docs/requirements.txt")
-    log.compiled_file_not_recompiled(compiled, "uv pip compile")
-    log.compiler_not_on_path(compiled, "uv")
-    not_recompiled = capture.take()
-    log.managed_by_comment_written(Path("docs/requirements.in"), compiled, "7 days", "uv exclude-newer")
-    managed_by_comment_written = capture.take()
-    log.uv_settings_unreadable(compiled)
-    uv_settings_unreadable = capture.take()
-    log.settings_unreadable(compiled, "pip", "uploaded-prior-to", "[Errno 2] No such file or directory: 'pip'")
-    return {
-        "@@COMPILED_FILE_NOT_RECOMPILED@@": not_recompiled,
-        "@@MANAGED_BY_COMMENT_WRITTEN@@": managed_by_comment_written,
-        "@@UV_SETTINGS_UNREADABLE@@": uv_settings_unreadable,
-        "@@PIP_SETTINGS_UNREADABLE@@": capture.take(),
-    }
-
-
-def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a pyproject.toml whose tool tables cannot hold the cooldown gets none, and pair the line."""
-    log.uv_cooldown_not_set(Path("pyproject.toml"))
-    return {"@@UV_COOLDOWN_NOT_SET@@": capture.take()}
-
-
-def _versions_plugin_overridden(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a pom's versions plugin configuration wins over Update-time."""
-    log.option_overridden_by_the_pom(
-        Path("pom.xml"), "rulesUri", OverrideConsequence.RULES, "org.example:parent:1.0", 12
-    )
-    return {"@@OPTION_OVERRIDDEN_BY_THE_POM@@": capture.take()}
-
-
-def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log the failures that leave the dependencies of a file as they were, and a .py file that cannot be read."""
-    log.uv_dependencies_not_updated(Path("tool.py"), "uv lock")
-    log.uv_dependencies_not_updated(Path("pyproject.toml"), "uv lock")
-    log.lock_not_read(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
-    log.file_not_written(Path("pyproject.toml"), PermissionError(13, "Permission denied", "pyproject.toml"))
-    log.file_not_restored(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
-    log.lock_not_removed(Path("tool.py.lock"), PermissionError(13, "Permission denied", "tool.py.lock"))
-    log.package_manager_not_on_path(Path("pyproject.toml"), "uv")
-    not_updated = capture.take()
-    log.unreadable_script(Path("tool.py"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"))
-    return {"@@UV_DEPENDENCIES_NOT_UPDATED@@": not_updated, "@@UNREADABLE_SCRIPT@@": capture.take()}
-
-
-def _rate_limits(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log which credential variables are set, and that the anonymous GitHub rate limit is used up."""
-    log.credentials({"GITHUB_TOKEN": True, "DOCKER_HUB_USERNAME": True, "DOCKER_HUB_TOKEN": False})  # nosec B105
-    credentials = capture.take()
-    log.github_rate_limit_used_up(60, datetime(2026, 10, 17, 15, 42, tzinfo=UTC))
-    return {"@@CREDENTIALS@@": credentials, "@@GITHUB_RATE_LIMIT_USED_UP@@": capture.take()}
-
-
-def _held_back_by_cooldown(log: Logger, capture: _Capture, dockerfile: Location) -> str:
-    """Log a version the run's cooldown holds back, and one a marker's cooldown holds back.
-
-    The publication date is fixed rather than counted back from now, so the README renders the same on every run.
-    """
-    published = datetime(2026, 10, 8, 13, 1, tzinfo=UTC)
-    workflow = Location(Path(".github/workflows/ci.yml"), 5)
-    log.held_back_by_cooldown(reference("github/codeql-action/init", workflow), Release("4.38.3", published), 7, "")
-    log.held_back_by_cooldown(reference("python", dockerfile), Release("3.15.0", published), 30, "set[cooldown=30]")
-    return capture.take()
-
-
 def _understood_markers(log: Logger, capture: _Capture, requirements: Location) -> dict[str, str]:
-    """Log the lines confirming a marker was understood, and pair them with their placeholders."""
+    """Log the line confirming a marker was recognised, and pair it with its placeholder."""
     marker = Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]")
     log.recognised_marker(reference("humanize", requirements, marker=marker))
-    recognised = capture.take()
-    yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason=""))
-    log.report_yank(resolved("humanize", requirements, yanked, marker=marker))
-    silenced = capture.take()
-    log.holding_back_range(
-        reference("com.google.guava:guava", Location(Path("pom.xml"), 12)), "[34,)", "ignore[update>=34]"
-    )
-    return {
-        "@@RECOGNISED_MARKER@@": recognised,
-        "@@SILENCED_WARNING@@": silenced,
-        "@@RANGE_HELD_BACK@@": capture.take(),
-    }
+    return {"@@RECOGNISED_MARKER@@": capture.take()}

@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- End each log message in its name, such as `(new-version)`, which in a terminal links to the message's entry in `docs/log-messages.md`. The index shows a sample of each message and explains it. Closes [#543](https://github.com/ICTU/update-time/issues/543).
+
+### Fixed
+
+- Say that Maven cannot read the reactor when Update-time passes over a pom, rather than that an earlier Maven run could not read it, since a pom of the reactor that does not parse stops Maven as well. Part of [#543](https://github.com/ICTU/update-time/issues/543).
+- Say that the risk level of an advisory whose CVSS vector does not score is unknown, rather than that its vulnerability is reported at unknown severity, since another advisory of the same vulnerability can give it a risk level. Part of [#543](https://github.com/ICTU/update-time/issues/543).
 
 ## 0.0.60 - 2026-11-16
 

@@ -143,7 +143,7 @@ Merge both reviews into one list, numbered F1, F2, …. A finding only one revie
 
 - README.md is generated. Edit `docs/README.md.in` and regenerate with `just readme`. An edit to README.md itself is lost on the next run, without a word. Its per-type headings are questions, so keep each section's sentences answering its own question. After a cycle adds to a section, reread the whole section as someone asking its question, and rewrite it when the additions no longer answer that question in order. Write it in the present tense, as if the behaviour always was: fold a new case into the sentence that states the rule. Write "dependencies and plugins" rather than add a sentence that ends in "too."
 - A change to what Update-time does gets a changelog entry under `[Unreleased]`: one line naming the behaviour and linking the issue. A change to the documentation alone gets none.
-- The detail belongs in the README, not in the changelog. The README names the behaviour and shows the message it produces. It leaves out a worked example of what that message already shows.
+- The detail belongs in the README, not in the changelog. The README names the behaviour, and examples of messages it produces. `docs/log-messages.md` shows all messages. The README leaves out a worked example of what a message already shows.
 - When a change lands over several cycles, update the README and the changelog once the behaviour has settled, and before you hand the increment back. Neither may document a state the code is not in. A command-line option is one such state: the cycle that adds it does everything its help promises, rather than accepting a value it then ignores.
 
 ## Self-improvement

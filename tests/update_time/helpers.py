@@ -3,7 +3,6 @@
 import ast
 import contextlib
 import importlib
-import inspect
 import pathlib
 import pkgutil
 import tempfile
@@ -31,7 +30,7 @@ from update_time.domain.marker import NO_MARKER, Marker
 from update_time.domain.reference import Reference, RefKind, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL, Vulnerability
-from update_time.io.console import CHANGES, NOTE
+from update_time.io.console import CHANGES, MESSAGE_NAME, NOTE
 from update_time.io.log import Logger, LogMessage
 from update_time.manifests.python_dependency_toml import Declaration
 from update_time.markers.bound import parse_bound
@@ -44,9 +43,10 @@ from tests.helpers import patch_environ
 from tests.update_time.fixtures import FRESH_DATE, PAST_COOLDOWN_DATE
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
+    from collections.abc import Generator, Iterator, Mapping
     from pathlib import Path
     from types import ModuleType
+    from typing import Any
     from unittest.mock import _Call
 
     from update_time.domain.bound import Verb, VersionBound
@@ -237,7 +237,7 @@ class LoggingTestCase(CacheClearingTestCase):
     def _records_in_order(self) -> list[tuple[int, _Call]]:
         """Return each record logged, in order, with its level, as the message and the fields it carries."""
         return [
-            (args[0], call(args[1], args[2] | kwargs.get("extra", {}))) for args, kwargs in self.mock_log.call_args_list
+            (args[0], call(args[1], args[2] | logged_extra(kwargs))) for args, kwargs in self.mock_log.call_args_list
         ]
 
     def records(self, level: int) -> list[_Call]:
@@ -868,14 +868,9 @@ def message_of(log_method: object, *holes: str) -> LogMessage:
     return message
 
 
-def logged_messages() -> dict[str, LogMessage]:
-    """Return the messages the log methods of `Logger` hold, by the method's name, numbered when stacked."""
-    logged: dict[str, LogMessage] = {}
-    for name, value in vars(Logger).items():
-        stacked = vars(value).get("messages", []) if inspect.isfunction(value) else []
-        for index, message in enumerate(stacked):
-            logged[name if len(stacked) == 1 else f"{name}.{index}"] = message
-    return logged
+def logged_extra(log_kwargs: Mapping[str, Any]) -> dict[str, object]:
+    """Return the extra a log call passed beside the fields, without the name of its message, which the message has."""
+    return {name: value for name, value in log_kwargs.get("extra", {}).items() if name != MESSAGE_NAME}
 
 
 def reference(dependency: str, location: Location, version: str = "") -> Reference:

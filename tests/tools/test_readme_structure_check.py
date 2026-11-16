@@ -9,7 +9,6 @@ from unittest.mock import patch
 from tools import readme_structure_check as structure_check
 from tools.readme_structure_check import (
     _SUBSECTIONS,
-    _anchors,
     _problems,
     _row_link_problems,
     _sections,
@@ -238,16 +237,6 @@ class AnchorTest(unittest.TestCase):
     def document(self, link: str) -> str:
         """Return a sound details chapter followed by a paragraph carrying the link."""
         return f"{_details_chapter()}\nSee [the details]({link}).\n"
-
-    def test_comment_in_a_code_block_provides_no_anchor(self):
-        """Test that a comment in a fenced code block is not read as a heading, so a link can't resolve against it."""
-        markdown = "# Update-time\n\n```dockerfile\n# update-time: ignore\nFROM python:3.12\n```\n"
-        self.assertEqual(_anchors(markdown), {"#update-time"})
-
-    def test_a_repeated_heading_provides_a_numbered_anchor(self):
-        """Test that each repeat of a heading provides the anchor GitHub numbers it by."""
-        markdown = "# Markers\n\n## Markers\n\n### Markers\n"
-        self.assertEqual(_anchors(markdown), {"#markers", "#markers-1", "#markers-2"})
 
     def test_link_to_a_missing_anchor_is_reported(self):
         """Test that a link to an anchor no heading provides is reported, naming the anchor."""

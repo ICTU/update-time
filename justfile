@@ -360,7 +360,7 @@ zizmor: install-py-dependencies
 check-justfile:
     {{ start_capture() }} {{ just_fmt }} --check --color=$_color {{ end_capture("check-justfile") }}
 
-# Check that README.md and the log-output screenshot are what regenerating them produces.
+# Check that README.md, the log-output screenshot, and docs/log-messages.md are what regenerating them produces.
 [private]
 check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"{{ python_m }} tools.generate_readme --check")
 
@@ -404,7 +404,7 @@ lint_if_changed(name, inputs, recipe) := if_changed(name, inputs + " --pass-chan
 # Run the tests where their inputs changed since they last passed.
 [private]
 test-if-changed: install-py-dependencies install-nltk-data
-    {{ if_changed("test", "'*.py' justfile pyproject.toml uv.lock .python-version README.md docs/README.md.in 'src/*.xml'", "just test-passes") }}
+    {{ if_changed("test", "'*.py' justfile pyproject.toml uv.lock .python-version README.md docs/README.md.in docs/log-messages.md.in 'src/*.xml'", "just test-passes") }}
 
 # Audit the Python dependencies where their inputs changed since they last passed. The advisory database is not an
 # input, so `just check` and CI report a new advisory against an unchanged lock, since they audit on every run.
@@ -522,7 +522,7 @@ alias update-deps := update-dependencies
 
 # === Documentation ===
 
-# Regenerate README.md from docs/README.md.in (fills in `update-time -h` and the log output; rewrites the screenshot).
+# Regenerate README.md from docs/README.md.in (fills in `update-time -h` and the log output), the screenshot, and docs/log-messages.md.
 readme: install-py-dependencies
     {{ python_m }} tools.generate_readme
 
@@ -547,7 +547,7 @@ _ci: _sonarcloud check
 # prose but has no Python to check.
 code := "src tests tools"
 
-# The prose outside the Python code: the README's template, the Markdown files at the root, and the guidelines.
+# The prose outside the Python code: the documentation and its templates, the Markdown files at the root, and the guidelines.
 prose := "docs *.md .claude/CLAUDE.md"
 
 # === Output functions ===

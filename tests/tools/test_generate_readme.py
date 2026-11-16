@@ -1,5 +1,6 @@
 """Unit tests for generating the README."""
 
+import logging
 import re
 import sys
 import unittest
@@ -8,10 +9,13 @@ from unittest.mock import Mock, patch
 
 from tools.generate_log_svg import LogOutput
 from tools.generate_readme import _README, _SCREENSHOT, _TEMPLATE, _help_output, _table_of_contents, main, render
-from tools.log_samples import sample_log_lines
+from tools.log_index import _TEMPLATE as _LOG_INDEX_TEMPLATE
+from tools.log_index import LOG_INDEX
+from tools.log_samples import LogSamples, sample_log_lines
+
+from update_time.io.log import Logger
 
 from tests.helpers import patch_environ
-from tests.update_time.helpers import logged_messages
 
 if TYPE_CHECKING:
     from update_time.io.log import LogMessage
@@ -31,7 +35,7 @@ _MESSAGE_ARGUMENT = re.compile(r"%\(\w+\)[sd]")
 
 def _quoted_log_messages(text: str) -> list[str]:
     """Return the name of each log message the text quotes, whatever values fill in its arguments."""
-    return [name for name, message in logged_messages().items() if _message_pattern(message).search(text)]
+    return [message.name for message in Logger.messages() if _message_pattern(message).search(text)]
 
 
 def _message_pattern(message: LogMessage) -> re.Pattern[str]:
@@ -49,14 +53,16 @@ class PlaceholderTest(unittest.TestCase):
     def test_placeholders_and_samples_agree(self):
         """Test that every placeholder in the template has a sample, and every sample is named by the template."""
         in_template = set(_PLACEHOLDER.findall(_TEMPLATE.read_text()))
-        filled = set(sample_log_lines()) | _FILLED_BY_RENDER
+        filled = set(sample_log_lines().blocks) | _FILLED_BY_RENDER
         self.assertEqual(in_template, filled)
 
-    def test_the_template_quotes_no_log_message_itself(self):
-        """Test that each log message the README quotes comes from a sample, rather than from the template's text."""
-        # The generated README quotes the samples, so the search does find a message where one is quoted.
-        self.assertNotEqual(_quoted_log_messages(_README.read_text()), [])
-        self.assertEqual(_quoted_log_messages(_TEMPLATE.read_text()), [])
+    def test_the_templates_quote_no_log_message_themselves(self):
+        """Test that each log message the README and the index quote comes from a sample, not from a template's text."""
+        for generated, template in ((_README, _TEMPLATE), (LOG_INDEX, _LOG_INDEX_TEMPLATE)):
+            with self.subTest(template=template.name):
+                # The generated file quotes the samples, so the search does find a message where one is quoted.
+                self.assertNotEqual(_quoted_log_messages(generated.read_text()), [])
+                self.assertEqual(_quoted_log_messages(template.read_text()), [])
 
 
 @patch_environ({}, clear=False)
@@ -77,6 +83,8 @@ class HelpOutputTest(unittest.TestCase):
         self.assertEqual(sys.argv, started_with)
 
 
+@patch_environ({}, clear=False)
+@patch("tools.generate_readme.generate_log_index", Mock(return_value="the index"))
 @patch("tools.generate_readme.sample_log_lines")
 @patch("tools.generate_readme._help_output")
 @patch("tools.generate_readme.generate_log_output")
@@ -85,23 +93,38 @@ class RenderTest(unittest.TestCase):
     """Unit tests for the content each generated file is given."""
 
     def test_every_placeholder_is_filled(self, template: Mock, log_output: Mock, help_output: Mock, samples: Mock):
-        """Test that the template's placeholders are replaced, and the screenshot returned beside the README."""
+        """Test that the template's placeholders are replaced, and the screenshot and the index returned beside it."""
         template.read_text.return_value = "Usage\n@@HELP_OUTPUT@@\nOutput\n@@LOG_OUTPUT@@\nWarning\n@@A_WARNING@@\n"
         log_output.return_value = LogOutput(svg="<svg/>", text="the sample output")
         help_output.return_value = "the help"
-        samples.return_value = {"@@A_WARNING@@": "the warning"}
+        samples.return_value = LogSamples({"@@A_WARNING@@": "the warning"}, {})
         generated = render()
         self.assertEqual(generated[_README], "Usage\nthe help\nOutput\nthe sample output\nWarning\nthe warning\n")
         self.assertEqual(generated[_SCREENSHOT], "<svg/>")
+        self.assertEqual(generated[LOG_INDEX], "the index")
 
     def test_table_of_contents_lists_the_chapters(self, template: Mock, log: Mock, help_output: Mock, samples: Mock):
         """Test that the table of contents links to each chapter, in the order the template has them."""
         template.read_text.return_value = "@@TABLE_OF_CONTENTS@@\n\n## ⚡ Usage\n\n## 📌 Pinning\n"
         log.return_value = LogOutput(svg="<svg/>", text="")
         help_output.return_value = ""
-        samples.return_value = {}
+        samples.return_value = LogSamples({}, {})
         contents = f"{_TABLE_OF_CONTENTS_HEADER}- [⚡ Usage](#-usage)\n- [📌 Pinning](#-pinning)"
         self.assertEqual(render()[_README], f"{contents}\n\n## ⚡ Usage\n\n## 📌 Pinning\n")
+
+
+@patch_environ({}, clear=False)
+class LogIndexTest(unittest.TestCase):
+    """Unit tests for the index of the log messages that `render` generates beside the README."""
+
+    def test_the_index_has_an_entry_for_every_log_message(self):
+        """Test that the index gives each log message a heading naming the message."""
+        with patch.object(logging.getLogger(), "handlers", []):  # The screenshot configures the root logger
+            index = render()[LOG_INDEX]
+        headings = {line.removeprefix("### ") for line in index.splitlines() if line.startswith("### ")}
+        names = [message.name for message in Logger.messages()]
+        self.assertIn("command-run", names)
+        self.assertEqual([name for name in names if name not in headings], [])
 
 
 class TableOfContentsTest(unittest.TestCase):

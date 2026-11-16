@@ -4,6 +4,7 @@ import contextlib
 import logging
 import re
 import signal
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -59,7 +60,7 @@ from tests.update_time.helpers import (
     adopted_drift_report,
     bound,
     drift_warning,
-    logged_messages,
+    logged_extra,
     message_of,
     published_version,
     reference,
@@ -86,15 +87,15 @@ class GetLoggerTests(TestCase):
 class LogMessageTests(TestCase):
     """Unit tests for the log message type and the messages declared with it."""
 
-    MESSAGE = LogMessage(logging.WARNING, "Stale dependency %(dependency)s")
+    MESSAGE = LogMessage(logging.WARNING, "Stale dependency %(dependency)s", "stale-dependency")
 
     def test_a_message_renders_as_its_format_string(self):
         """Test that a message renders as its format string, so logging can interpolate the arguments into it."""
         self.assertEqual(str(self.MESSAGE), "Stale dependency %(dependency)s")
 
-    def test_a_message_reprs_as_its_format_string(self):
-        """Test that a message reprs as its format string, so a failing assertion reads as the message itself."""
-        self.assertEqual(repr(self.MESSAGE), "'Stale dependency %(dependency)s'")
+    def test_a_message_reprs_as_its_format_string_and_its_name(self):
+        """Test that a message reprs as its format string and its name, so a failing assertion names the message."""
+        self.assertEqual(repr(self.MESSAGE), "'Stale dependency %(dependency)s' (stale-dependency)")
 
     def test_no_message_contains_a_full_stop(self):
         """Test that no log message contains a full stop, keeping the style consistent (commas and semicolons).
@@ -105,7 +106,7 @@ class LogMessageTests(TestCase):
         fragments = [
             value for name, value in vars(Logger).items() if isinstance(value, str) and not name.startswith("__")
         ]
-        messages = [str(message) for message in logged_messages().values()] + fragments
+        messages = [str(message) for message in Logger.messages()] + fragments
         # Two enums carry message fragments of their own, so the fragments are read off the enums rather than
         # off the logger: the `Reason` a warning reports, and the `Redundancy` a bound is reported with.
         messages += [str(member) for enum in (Reason, _Redundancy) for member in enum]
@@ -122,12 +123,20 @@ class LogMessageTests(TestCase):
 
     def test_every_message_names_its_holes(self):
         """Test that every message interpolates by name, so its log method hands the logger named fields."""
-        messages = logged_messages()
-        self.assertIn("repository_not_served", messages)  # The decorated methods' messages are read
-        self.assertIn("drift.1", messages)  # And each of a method's stacked messages
-        for name, message in messages.items():
-            with self.subTest(message=name):
+        messages = Logger.messages()
+        names = [message.name for message in messages]
+        self.assertIn("repository-not-served", names)  # The decorated methods' messages are read
+        self.assertIn("digest-drift", names)  # And each of a method's stacked messages
+        self.assertIn("ref-drift", names)
+        for message in messages:
+            with self.subTest(message=message.name):
                 self.assertEqual(re.findall(r"%(?!\()", message.format), [])
+
+    def test_no_two_messages_share_a_name(self):
+        """Test that no two log messages share a name."""
+        names = Counter(message.name for message in Logger.messages())
+        self.assertIn("range-rewritten", names)  # Each of a method's stacked messages is read
+        self.assertEqual([name for name, count in names.items() if count > 1], [])
 
 
 def _new_logger() -> Logger:
@@ -156,18 +165,20 @@ class RenderTests(TestCase):
     @patch("logging.Logger.log")
     def test_a_location_field_is_wrapped_and_a_plain_field_is_not(self, mock_log: Mock):
         """Test that a location passed as a named field is wrapped, while a plain field is passed through as it is."""
-        message = LogMessage(logging.INFO, "Skipping %(location)s: %(reason)s")
+        message = LogMessage(logging.INFO, "Skipping %(location)s: %(reason)s", "skipped")
         _new_logger()._emit(message, {"location": create_location("Dockerfile", 1), "reason": "it is compiled"}, {})
         mock_log.assert_called_once_with(
-            message.level, message, {"location": at("Dockerfile:1"), "reason": "it is compiled"}
+            message.level, message, {"location": at("Dockerfile:1"), "reason": "it is compiled"}, extra=ANY
         )
 
     @patch("logging.Logger.log")
     def test_the_dependency_field_is_wrapped_in_its_delimiter(self, mock_log: Mock):
         """Test that the field named `dependency` is wrapped, so no log method has to render one itself."""
-        message = LogMessage(logging.WARNING, "Could not find where %(dependency)s is declared")
+        message = LogMessage(logging.WARNING, "Could not find where %(dependency)s is declared", "not-found")
         _new_logger()._emit(message, {"dependency": "actions/checkout"}, {})
-        mock_log.assert_called_once_with(message.level, message, {"dependency": dependency("actions/checkout")})
+        mock_log.assert_called_once_with(
+            message.level, message, {"dependency": dependency("actions/checkout")}, extra=ANY
+        )
 
 
 @patch("logging.Logger.log")
@@ -195,11 +206,11 @@ class LoggerTests(TestCase):
 
     def assert_changes(self, mock_log: Mock, changes: str) -> None:
         """Assert the most recent record carries a changelog's changes beside its fields."""
-        self.assertEqual(mock_log.call_args.kwargs, {"extra": {CHANGES: changes}})
+        self.assertEqual(logged_extra(mock_log.call_args.kwargs), {CHANGES: changes})
 
     def assert_note(self, mock_log: Mock, note: str) -> None:
         """Assert the most recent record carries Update-time's own note about the changes beside its fields."""
-        self.assertEqual(mock_log.call_args.kwargs, {"extra": {NOTE: note}})
+        self.assertEqual(logged_extra(mock_log.call_args.kwargs), {NOTE: note})
 
     def test_a_changelog_is_shown_again_once_the_shown_changelogs_are_forgotten(self, mock_log: Mock):
         """Test that forgetting the changelogs shown makes a logger show a changelog it has already shown."""
@@ -339,8 +350,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s")',
-            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is")',
+            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s"',
+            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is"',
             "the line reports that a reference was left as it is without naming why the file does not pull its image",
         )
     )
@@ -644,7 +655,7 @@ class LoggerTests(TestCase):
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), project=project)
         _new_logger().report_staleness(resolved, 90)
         mock_log.assert_called_once_with(
-            message_of(Logger.report_staleness).level, message_of(Logger.report_staleness), ANY
+            message_of(Logger.report_staleness).level, message_of(Logger.report_staleness), ANY, extra=ANY
         )
 
     def test_redundant_stale_threshold(self, mock_log: Mock):
@@ -820,7 +831,7 @@ class LoggerTests(TestCase):
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
         _new_logger().report_yank(resolved)
         mock_log.assert_called_once_with(
-            message_of(Logger.report_yank, "reason").level, message_of(Logger.report_yank, "reason"), ANY
+            message_of(Logger.report_yank, "reason").level, message_of(Logger.report_yank, "reason"), ANY, extra=ANY
         )
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         _new_logger().report_yank(
@@ -858,8 +869,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '@_debug(_ignoring("the %(advisory)s vulnerability warning"))',
-            '@_debug(_ignoring("the %(advisories)s vulnerability warning"))',
+            '_ignoring("the %(advisory)s vulnerability warning")',
+            '_ignoring("the %(advisories)s vulnerability warning")',
             "the silenced line names a field the log call does not supply, so the line is lost at render time",
         )
     )
