@@ -1007,7 +1007,7 @@ For each dependency type, this chapter answers the same questions: what files, d
 
 #### What files are updated?
 
-Update-time discovers Python files containing requirements by name, case-sensitively. Those are `pyproject.toml`, `requirements.txt`, `requirements-<purpose>.txt` and `<purpose>-requirements.txt` (for example `requirements-dev.txt` and `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. It leaves unrelated files alone, such as `constraints.txt`.
+Update-time discovers Python files containing requirements by name, case-sensitively. Those are `pyproject.toml`, `requirements.txt`, a name that adds a purpose to `requirements` with a hyphen, an underscore, or a dot, and any `.txt` file in a `requirements/` directory. So `requirements-dev.txt`, `dev-requirements.txt`, `requirements_test.txt`, `test_requirements.txt`, `requirements.prod.txt`, and `prod.requirements.txt` are requirements files. It leaves unrelated files alone, such as `constraints.txt`.
 
 Update-time also updates any `*.py` file that carries a [PEP 723](https://peps.python.org/pep-0723/) inline script metadata block. That is a `# /// script … # ///` comment block declaring the standalone script's dependencies. A `*.py` file without such a block stays untouched and never invokes uv. Update-time warns about a `*.py` file it cannot read, and goes on with the other files.
 

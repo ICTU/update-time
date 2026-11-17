@@ -4,11 +4,13 @@ import subprocess  # nosec
 import unittest
 from http import HTTPStatus
 from itertools import repeat
+from pathlib import PurePath
 from typing import TYPE_CHECKING, ClassVar, NoReturn
 from unittest.mock import ANY, DEFAULT, Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion, Project, ProjectGetter
+from update_time.io.filesystem import glob_for
 
 from tests.helpers import FakeFiles, mock_response
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from unittest.mock import _patch
 
+    from update_time.domain.file_type import FileType
     from update_time.domain.vulnerability import Vulnerability
     from update_time.primitives.command import Command
     from update_time.sources.pypi import ReleaseMetadata
@@ -39,6 +42,16 @@ mock_docker_hub_auth = patch("requests.Session.post", Mock(return_value=mock_res
 
 # The pyproject.toml at the root of the scan.
 PYPROJECT_TOML = SCAN_ROOT / "pyproject.toml"
+
+
+def scanned_files(file_type: FileType, *tree: str) -> list[str]:
+    """Return the files of the tree that the scan for the file type finds, once for each pattern that keeps the file."""
+
+    def glob(self: Path, pattern: str, *, case_sensitive: bool | None = None, **_: object) -> list[Path]:
+        return [self / path for path in tree if PurePath(path).full_match(pattern, case_sensitive=case_sensitive)]
+
+    with patch("pathlib.Path.cwd", return_value=SCAN_ROOT), patch("pathlib.Path.glob", autospec=True, side_effect=glob):
+        return [str(path.relative_to(SCAN_ROOT)) for path in glob_for(file_type)]
 
 
 # The upload times of the PyPI release metadata the uv updater tests answer with, with a changelog URL and without one.
