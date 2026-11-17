@@ -25,11 +25,21 @@ _YAML_PATTERNS = ("*.yml", "*.yaml")
 _DEVCONTAINER_FOLDERS = (".devcontainer", ".devcontainer/*")
 
 PYPROJECT_TOML = FileType("pyproject.toml", ("pyproject.toml",))
-# A requirements file is named `requirements.txt`, `requirements-<purpose>.txt` or `<purpose>-requirements.txt`, or
-# is any `.txt` file in a `requirements/` directory.
+# A requirements file is named `requirements.txt`, or adds a purpose to that name with a hyphen, an underscore, or a
+# dot, as `requirements-dev.txt`, `test_requirements.txt`, and `requirements.prod.txt` do. Any `.txt` file in a
+# `requirements/` directory is one too.
 REQUIREMENTS_TXT = FileType(
     "requirements.txt",
-    ("requirements.txt", "requirements-*.txt", "*-requirements.txt", "requirements/*.txt"),
+    (
+        "requirements.txt",
+        "requirements-*.txt",
+        "*-requirements.txt",
+        "requirements_*.txt",
+        "*_requirements.txt",
+        "requirements.*.txt",
+        "*.requirements.txt",
+        "requirements/*.txt",
+    ),
     case_sensitive=True,
 )
 INLINE_SCRIPT_METADATA = FileType("PEP 723 inline script metadata", ("*.py",))

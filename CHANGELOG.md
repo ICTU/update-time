@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Find a requirements file that adds its purpose with an underscore or a dot, such as `requirements_test.txt` or `requirements.prod.txt`, as well as with a hyphen. Closes [#571](https://github.com/ICTU/update-time/issues/571).
 
 ## 0.0.61 - 2026-11-17
 

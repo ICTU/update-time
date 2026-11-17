@@ -1,12 +1,14 @@
 """Unit tests for the requirements.txt update script."""
 
 import contextlib
+import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
 from mutation_time.mutation import Mutation, kills
 from update_time.domain import directive as directive_module
+from update_time.domain import file_type
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
@@ -46,6 +48,7 @@ from tests.update_time.updaters.helpers import (
     dated_pypi_index,
     no_vulnerabilities,
     osv,
+    scanned_files,
     unreachable_osv,
 )
 
@@ -1461,3 +1464,45 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.assert_no_info_logged()
                 self.assert_no_new_version_logged()
                 self.assert_no_warnings_logged()
+
+
+class ScannedRequirementsFilesTest(unittest.TestCase):
+    """Unit tests for which requirements files are scanned."""
+
+    @kills(
+        Mutation(
+            file_type,
+            '"requirements.txt",\n        "requirements-*.txt",',
+            '"requirements-*.txt",',
+            "a plain `requirements.txt` is never scanned",
+        ),
+        Mutation(file_type, '"requirements-*.txt",', "", "a `requirements-<purpose>.txt` is never scanned"),
+        Mutation(file_type, '"*-requirements.txt",', "", "a `<purpose>-requirements.txt` is never scanned"),
+        Mutation(file_type, '"requirements_*.txt",', "", "a `requirements_<purpose>.txt` is never scanned"),
+        Mutation(file_type, '"*_requirements.txt",', "", "a `<purpose>_requirements.txt` is never scanned"),
+        Mutation(file_type, '"requirements.*.txt",', "", "a `requirements.<purpose>.txt` is never scanned"),
+        Mutation(file_type, '"*.requirements.txt",', "", "a `<purpose>.requirements.txt` is never scanned"),
+        Mutation(file_type, '"requirements/*.txt",', "", "a file in a `requirements/` directory is never scanned"),
+    )
+    def test_the_conventional_names_are_scanned(self):
+        """Test that `requirements.txt`, a name adding a purpose, and a `.txt` file in `requirements/` are scanned."""
+        tree = (
+            "requirements.txt",
+            "requirements-dev.txt",
+            "dev-requirements.txt",
+            "requirements_test.txt",
+            "test_requirements.txt",
+            "requirements.dev.txt",
+            "dev.requirements.txt",
+            "requirements/base.txt",
+        )
+        self.assertCountEqual(scanned_files(file_type.REQUIREMENTS_TXT, *tree), tree)
+
+    @kills(
+        Mutation(file_type, '"requirements/*.txt",', '"requirements/*",', "every file in `requirements/` is scanned"),
+        Mutation(file_type, "case_sensitive=True", "case_sensitive=False", "a name in another case is scanned"),
+    )
+    def test_a_file_outside_the_naming_rule_is_skipped(self):
+        """Test that a `.in` file in `requirements/` and a name in another case are skipped."""
+        tree = ("requirements.txt", "requirements/base.in", "Requirements.txt")
+        self.assertEqual(scanned_files(file_type.REQUIREMENTS_TXT, *tree), ["requirements.txt"])

@@ -1,7 +1,6 @@
 """Unit tests for the Dockerfile base image update script."""
 
 import unittest
-from pathlib import Path, PurePath
 from unittest.mock import Mock, patch
 
 from mutation_time.mutation import Mutation, kills
@@ -9,7 +8,6 @@ from update_time.domain import file_type
 from update_time.domain.dependency import DependencyVersion, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.io import log
-from update_time.io.filesystem import glob_for
 from update_time.manifests import dockerfile as dockerfile_manifest
 from update_time.primitives.location import Location
 from update_time.updaters import update_dockerfile_base_image
@@ -18,9 +16,9 @@ from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 from tests.helpers import mock_path, requested_urls
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import SCAN_ROOT, docker_hub_version, docker_tag, message_of
+from tests.update_time.helpers import docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import mock_docker_registry
-from tests.update_time.updaters.helpers import mock_docker_hub_auth
+from tests.update_time.updaters.helpers import mock_docker_hub_auth, scanned_files
 
 
 @mock_docker_hub_auth
@@ -614,16 +612,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_no_warnings_logged()
 
 
-def _scanned_dockerfiles(*tree: str) -> list[str]:
-    """Return the files of the tree that the Dockerfile scan finds, once for each pattern that keeps the file."""
-
-    def glob(self: Path, pattern: str, *, case_sensitive: bool | None = None, **_: object) -> list[Path]:
-        return [self / path for path in tree if PurePath(path).full_match(pattern, case_sensitive=case_sensitive)]
-
-    with patch("pathlib.Path.cwd", return_value=SCAN_ROOT), patch("pathlib.Path.glob", autospec=True, side_effect=glob):
-        return [str(path.relative_to("/")) for path in glob_for(file_type.DOCKERFILES)]
-
-
 class ScannedDockerfilesTest(unittest.TestCase):
     """Unit tests for which Dockerfiles are scanned."""
 
@@ -641,7 +629,7 @@ class ScannedDockerfilesTest(unittest.TestCase):
             "Containerfile.dev",
             "app/containerfile",
         )
-        self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
+        self.assertCountEqual(scanned_files(file_type.DOCKERFILES, *tree), tree)
 
     def test_a_lowercase_dockerfile_or_containerfile_with_an_extension_is_skipped(self):
         """Test that a lowercase `dockerfile.<extension>` or `containerfile.<extension>` is skipped."""
@@ -653,17 +641,17 @@ class ScannedDockerfilesTest(unittest.TestCase):
             "containerfile.py",
             "containerfile.dev",
         )
-        self.assertEqual(_scanned_dockerfiles(*tree), ["dockerfile"])
+        self.assertEqual(scanned_files(file_type.DOCKERFILES, *tree), ["dockerfile"])
 
     def test_a_devcontainer_dockerfile_is_scanned(self):
         """Test that a `Dockerfile` in a `.devcontainer` folder or in one of its configuration folders is scanned."""
         tree = ".devcontainer/Dockerfile", ".devcontainer/python/Dockerfile", ".devcontainer/node/dockerfile"
-        self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
+        self.assertCountEqual(scanned_files(file_type.DOCKERFILES, *tree), tree)
 
     def test_a_hidden_dockerfile_is_scanned(self):
         """Test that a hidden `.<purpose>.Dockerfile` or `.<purpose>.Containerfile` is scanned, in any case."""
         tree = ".gitpod.dockerfile", "pkg/.web.Dockerfile", ".gitpod.containerfile"
-        self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
+        self.assertCountEqual(scanned_files(file_type.DOCKERFILES, *tree), tree)
 
     @kills(
         Mutation(
@@ -675,4 +663,4 @@ class ScannedDockerfilesTest(unittest.TestCase):
     )
     def test_a_dockerfile_in_another_hidden_folder_is_skipped(self):
         """Test that a `Dockerfile` in a hidden folder other than `.devcontainer` is skipped."""
-        self.assertEqual(_scanned_dockerfiles("Dockerfile", ".docker/Dockerfile"), ["Dockerfile"])
+        self.assertEqual(scanned_files(file_type.DOCKERFILES, "Dockerfile", ".docker/Dockerfile"), ["Dockerfile"])
