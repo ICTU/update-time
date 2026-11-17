@@ -1315,7 +1315,7 @@ wheels = [
 
 [[package]]
 name = "update-time"
-version = "0.0.60"
+version = "0.0.61"
 source = { editable = "." }
 dependencies = [
     { name = "cvss" },

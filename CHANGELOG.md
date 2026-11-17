@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.61 - 2026-11-17
+
 ### Added
 
 - End each log message in its name, such as `(new-version)`, which in a terminal links to the message's entry in `docs/log-messages.md`. The index shows a sample of each message and explains it. Closes [#543](https://github.com/ICTU/update-time/issues/543).
