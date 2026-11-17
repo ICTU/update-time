@@ -295,6 +295,7 @@ def _warning_project_samples(log: Logger) -> None:
     log.settings_unreadable(compiled, "pip", "uploaded-prior-to", "[Errno 2] No such file or directory: 'pip'")
     log.uv_cooldown_not_set(Path("pyproject.toml"))
     log.unsupported_package_manager(Path("pyproject.toml"), "poetry", "uv")
+    log.signals_of_more_than_one_manager(Path("pyproject.toml"), [Path("uv.lock"), Path("poetry.lock")], [])
     log.binary_lock(Path("package.json"), Path("bun.lockb"), Path("bun.lock"))
     log.yarn_without_a_cooldown(Path("package.json"), Path(), "1.22.22")
     log.tool_version_unknown(

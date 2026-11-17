@@ -138,7 +138,7 @@ Update-time does not ask a registry about a reference's image, and the line says
 DEBUG Not running yarn for packages/ui/package.json: the warning about its workspace root package.json says why (left-with-workspace-root)
 ```
 
-A package manager does not run for a member of a workspace, for the reason the warning about the workspace root gives. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
+A package manager does not run for a member of a workspace, for the reason the warning about the workspace root gives. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1) and [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
 
 ### marker-recognised
 
@@ -692,10 +692,10 @@ Update-time could not read a `package.json`, so it does not know which package m
 ### package-manager-unsupported
 
 ```console
-WARNING Skipping pyproject.toml: poetry is not supported, only uv (package-manager-unsupported)
+WARNING Not updating the dependencies of pyproject.toml: poetry manages them, and Update-time supports only uv (package-manager-unsupported)
 ```
 
-A package manager Update-time does not support manages a file, so Update-time skips the file. The line names the package manager, and the ones Update-time supports.
+A package manager Update-time does not support manages a file, as pdm or Poetry can manage a `pyproject.toml`. So Update-time does not update the file's dependencies. It still checks those of a `pyproject.toml`, and skips a `package.json`. The line names the package manager, and the ones Update-time supports. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
 
 ### pinned-version-unreadable
 
@@ -840,6 +840,14 @@ WARNING Not running a package manager for test/node/esm/package.json: test/node/
 ```
 
 The files of a directory name more than one package manager, as a `pnpm-lock.yaml` beside a `bun.lockb` does. Update-time cannot tell which one the project uses, so it runs none of them, and still checks the dependencies. Set the `packageManager` field to the one to run. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
+
+### several-python-package-managers
+
+```console
+WARNING Not running uv for pyproject.toml: uv.lock and poetry.lock name different package managers; remove the lock file or the table of the one the project no longer uses (several-python-package-managers)
+```
+
+The lock files beside the root of a `pyproject.toml`'s uv workspace name more than one package manager, as a `uv.lock` beside a `poetry.lock` does. Where neither a lock file nor a `[tool.uv]` table names the package manager, the other tables of the root's `pyproject.toml` do, as a `[tool.poetry]` table beside a `[tool.pdm]` table does. Update-time cannot tell which one the project uses, so it does not run uv, and still checks the dependencies. Remove the lock file or the table of the package manager the project no longer uses. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
 
 ### source-not-found
 

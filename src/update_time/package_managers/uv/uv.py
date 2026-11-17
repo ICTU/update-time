@@ -1,11 +1,12 @@
-"""uv's cooldown setting, the layout of a uv workspace, and the sources of the dependencies uv resolves.
+"""Whether uv runs for a pyproject.toml, uv's cooldown setting, the layout of a uv workspace, and uv's sources.
 
 uv also recompiles a requirements file it compiled, as `UvPipCompile`.
 """
 
 import os
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from enum import Enum, auto
 from graphlib import CycleError, TopologicalSorter
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ClassVar, override
@@ -34,10 +35,11 @@ if TYPE_CHECKING:
     )
 
 _LOG = get_logger("pyproject.toml")
-# Signals that a pyproject.toml is managed by a tool other than uv. Running uv on such a project would mishandle it
-# (e.g. write a stray uv.lock alongside the real lockfile), so those files are skipped for now.
-_NON_UV_TOOL_SECTIONS = ("poetry", "pdm")  # `[tool.poetry]` / `[tool.pdm]`
-_NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
+# The signals that a Python package manager manages a pyproject.toml: its lock file, by name, and its table under
+# `[tool]`, which carries the manager's name. A build backend reads its settings from the tool's table as well, so the
+# lock file decides before the table, and uv's table before the others.
+_LOCK_FILES = {"uv.lock": "uv", "poetry.lock": "poetry", "pdm.lock": "pdm"}
+_MANAGERS = tuple(_LOCK_FILES.values())
 
 # Update-time writes its cooldown into `[tool.uv] exclude-newer` with the managed-by comment. It recognises the comment
 # there by the lower-cased `update-time` word, so the prose can change.
@@ -51,45 +53,89 @@ EXCLUDE_NEWER_OPTION = "--exclude-newer"
 _SETTINGS_EXCLUDE_NEWER = re.compile(r"exclude_newer: ExcludeNewer \{\s*global: (?P<value>None|Some)\b")
 
 
-def other_manager(pyproject_toml: Path, config: PyprojectConfig) -> str | None:
-    """Return the Python dependency manager other than uv that the project signals (poetry, pdm), if any.
+@dataclass(frozen=True)
+class _Signals:
+    """The lock files beside a project, and the tables of its pyproject.toml, that name a Python package manager."""
 
-    A `[tool.poetry]`/`[tool.pdm]` section is authoritative; otherwise a sibling lockfile is used as a fallback.
-    """
-    for section in _NON_UV_TOOL_SECTIONS:
-        if section in config.tools:
-            return section
-    for lockfile, manager in _NON_UV_LOCKFILES.items():
-        if (pyproject_toml.parent / lockfile).exists():
-            return manager
-    return None
+    lock_files: tuple[Path, ...]
+    tables: tuple[str, ...]
 
+    def managers(self) -> tuple[str, ...]:
+        """Return the managers that the lock files name, or else uv where it has a table, or else the tables' managers.
 
-def workspace_root_is_scanned(pyproject_toml: Path) -> bool:
-    """Return whether the scan reaches the root of the project's uv workspace, and log why not where it does not."""
-    root = _workspace_root(pyproject_toml)
-    if is_scanned(root):
-        return True
-    _LOG.workspace_root_outside_the_scan(pyproject_toml, "uv", root)
-    return False
+        A `[tool.uv]` table is uv's alone, while a build backend reads the other tables as well.
+        """
+        if self.lock_files:
+            return tuple(_LOCK_FILES[lock_file.name] for lock_file in self.lock_files)
+        return ("uv",) if "uv" in self.tables else self.tables
 
 
-def manages(pyproject_toml: Path, config: PyprojectConfig) -> bool:
-    """Return whether uv manages the project, and log why not where it does not.
+class Decision(Enum):
+    """Whether uv runs for a pyproject.toml, or why not."""
 
-    uv manages a project whose workspace root has a uv.lock beside it or a `[tool.uv]` table, unless that table sets
-    `managed = false`. The project's own `config`, already parsed, serves where the project is its own workspace root.
+    RUN = auto()
+    UNMANAGED = auto()
+    SEVERAL_MANAGERS = auto()
+    NOTHING_TO_RESOLVE = auto()
+    ROOT_OUTSIDE_THE_SCAN = auto()
+
+
+def _signals(pyproject_toml: Path, config: PyprojectConfig) -> _Signals:
+    """Return the project's signals, without uv's where the config sets `managed = false`."""
+    managers = [manager for manager in _MANAGERS if manager != "uv" or config.uv.managed]
+    lock_files = tuple(
+        lock_file for lock_file in _lock_files(pyproject_toml.parent) if _LOCK_FILES[lock_file.name] in managers
+    )
+    return _Signals(lock_files, tuple(table for table in managers if table in config.tools))
+
+
+def _lock_files(directory: Path) -> tuple[Path, ...]:
+    """Return the lock file of each Python package manager that sits in the directory."""
+    return tuple(lock_file for name in _LOCK_FILES if (lock_file := directory / name).exists())
+
+
+def decision(pyproject_toml: Path, config: PyprojectConfig) -> Decision:
+    """Return whether uv runs for the project, and log why not where it does not.
+
+    The lock files beside the project's workspace root name its managers. Where none sits there, the tables of the
+    root's pyproject.toml name them, uv's first. A `[tool.uv]` table that sets `managed = false` leaves uv's lock file
+    and table out. A project that another manager manages, or more than one, gets its warning whether or not it
+    declares a dependency. The project's own `config`, already parsed, serves where the project is its own workspace
+    root.
     """
     root = _workspace_root(pyproject_toml)
     root_config = config if root == pyproject_toml else _config(root)
-    if not root_config.uv.managed:
+    signals = _signals(root, root_config)
+    managers = signals.managers()
+    if managers and managers != ("uv",):
+        _warn_about_the_managers(pyproject_toml, root, signals)
+        return Decision.SEVERAL_MANAGERS if len(managers) > 1 else Decision.UNMANAGED
+    if not config.declares_a_dependency:
+        _LOG.no_dependencies(pyproject_toml, "uv", "resolve")
+        return Decision.NOTHING_TO_RESOLVE
+    if not is_scanned(root):
+        _LOG.workspace_root_outside_the_scan(pyproject_toml, "uv", root)
+        return Decision.ROOT_OUTSIDE_THE_SCAN
+    if managers:
+        return Decision.RUN
+    if root_config.uv.managed:
+        _LOG.not_a_uv_project(pyproject_toml, UvLock.beside(root).path)
+    else:
         _LOG.project_marked_unmanaged(pyproject_toml, root)
-        return False
-    lock = UvLock.beside(root)
-    if lock.path.exists() or "uv" in root_config.tools:
-        return True
-    _LOG.not_a_uv_project(pyproject_toml, lock.path)
-    return False
+    return Decision.UNMANAGED
+
+
+def _warn_about_the_managers(pyproject_toml: Path, root: Path, signals: _Signals) -> None:
+    """Warn that the signals name a manager other than uv, or more than one, and point a member at its root's warning.
+
+    A member whose workspace root lies outside the scan gets the warning itself, since the root gets none.
+    """
+    if pyproject_toml != root and is_scanned(root):
+        _LOG.left_with_the_workspace_root(pyproject_toml, "uv", root)
+    elif len(managers := signals.managers()) > 1:
+        _LOG.signals_of_more_than_one_manager(pyproject_toml, signals.lock_files, signals.tables)
+    else:
+        _LOG.unsupported_package_manager(pyproject_toml, managers[0], "uv")
 
 
 def configure_cooldown(pyproject_toml: Path) -> None:

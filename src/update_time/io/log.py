@@ -1210,10 +1210,28 @@ class Logger:
         """Log that the tool that compiled a requirements file is not on the path."""
         return self._file_fields(path, executable=executable)
 
-    @_warning("Skipping %(location)s: %(manager)s is not supported, only %(supported)s", "package-manager-unsupported")
+    @_warning(
+        "Not updating the dependencies of %(location)s: %(manager)s manages them, and Update-time supports only "
+        "%(supported)s",
+        "package-manager-unsupported",
+    )
     def unsupported_package_manager(self, path: Path, manager: str, supported: str) -> dict[str, object]:
-        """Warn that a file's package manager is not supported."""
+        """Warn that a file's package manager is not supported, so its dependencies are not updated."""
         return self._file_fields(path, manager=manager, supported=supported)
+
+    @_warning(
+        "Not running uv for %(location)s: %(signals)s name different package managers; remove the lock file or the "
+        "table of the one the project no longer uses",
+        "several-python-package-managers",
+    )
+    def signals_of_more_than_one_manager(
+        self, path: Path, lock_files: Iterable[Path], tables: Iterable[str]
+    ) -> dict[str, object]:
+        """Warn that no package manager runs for a pyproject.toml whose lock files, or else tables, name several."""
+        signals = tuple(Location(lock_file) for lock_file in lock_files) or prose_list(
+            f"[tool.{table}]" for table in tables
+        )
+        return self._file_fields(path, signals=signals)
 
     @_debug(
         "Not running %(manager)s for %(location)s: it does not declare dependencies for %(manager)s to %(verb)s",

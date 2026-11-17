@@ -297,6 +297,11 @@ class LoggingTestCase(CacheClearingTestCase):
         expected = [self._expected_call(message, fields) for message, fields in errors]
         self.assertEqual(self.records(ERROR), expected)
 
+    def assert_warnings_logged(self, *warnings: tuple[LogMessage, Mapping[str, object]]) -> None:
+        """Assert the warnings were the run's only warnings, in this order."""
+        expected = [self._expected_call(message, dict(fields)) for message, fields in warnings]
+        self.assertEqual(self.records(WARNING), expected)
+
     @staticmethod
     def _new_version_fields(
         dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG, changes: object = ""
