@@ -64,6 +64,12 @@ UNMANAGED_FILE_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
 )
 
 
+# The policy for the markers of a pyproject.toml whose lock files or tables name more than one package manager.
+MORE_THAN_ONE_MANAGER_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+    Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT
+)
+
+
 # The policy for the markers of a pyproject.toml whose uv workspace root lies outside the scan root.
 WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
     Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT

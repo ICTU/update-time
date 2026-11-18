@@ -833,6 +833,7 @@ An `ignore[update]`, a bound, and a `set[cooldown=…]` each steer the update. U
 - a `requirements.txt` requirement that does not pin an exact version, outside the source of a file Update-time recompiles (see [Python dependencies](#markers))
 - a `pom.xml` dependency or plugin whose version Maven does not update (see [What dependencies are updated?](#what-dependencies-are-updated-2)), or whose pom's versions plugin configuration names rules of its own, which Maven follows instead of the marker (see [Maven dependencies](#markers-2))
 - a dependency of a `pyproject.toml` that uv does not manage, or of a workspace whose root lies outside the scan root
+- a dependency of a `pyproject.toml` whose lock files or tables name more than one package manager
 - a dependency of a `package.json` whose project does not have a lock file, has a binary `bun.lockb` or a yarn that cannot apply a cooldown, or holds the files of more than one package manager
 - an image that the file does not pull, or a reference that goes through a variable or a template Update-time cannot substitute (see [Docker images](#what-dependencies-are-updated-5))
 - a GitHub Action or pre-commit hook that names a full commit SHA without a comment (see [GitHub Actions and pre-commit hooks](#pinning-3))
@@ -1021,7 +1022,11 @@ Update-time recompiles a file only where the run reaches every source the file n
 
 Where the tool fails to recompile the file, Update-time logs the tool's error at `WARNING`, and reports at `ERROR` which file it did not recompile. Where the tool is not on the path, Update-time does not run it, and says so in that report.
 
-Update-time runs uv for a `pyproject.toml` that uv manages and that declares dependencies. It takes a `pyproject.toml` to be managed by uv where the root of its uv workspace has a `uv.lock` beside it or a `[tool.uv]` table, unless that table sets `managed = false`. A project outside a workspace is its own root. Update-time leaves every other `pyproject.toml` as it is, such as one that only configures tools, or one whose project pins its dependencies with pip-tools. uv locks a workspace as a whole, in a `uv.lock` beside its root. So Update-time also leaves a member as it is where its workspace root lies outside the scan root, as when the scan starts in that member. Update-time reports such a file at `DEBUG`.
+Update-time runs uv for a `pyproject.toml` that uv manages and that declares dependencies. The lock file beside the root of the project's uv workspace names the package manager that manages the project: a `uv.lock`, a `pdm.lock`, or a `poetry.lock`. A project outside a workspace is its own root. Where no lock file sits there, the root's `[tool.uv]` table names uv, or else its `[tool.pdm]` or `[tool.poetry]` table names the package manager. A `[tool.uv]` table that sets `managed = false` takes uv's lock file and table out of the decision.
+
+Where the lock files or the tables name pdm, Poetry, or more than one package manager, Update-time does not run uv, and warns once per workspace.
+
+Update-time leaves every other `pyproject.toml` as it is, such as one that only configures tools, or one whose project pins its dependencies with pip-tools. uv locks a workspace as a whole, in a `uv.lock` beside its root. So Update-time also leaves a member as it is where its workspace root lies outside the scan root, as when the scan starts in that member. Update-time reports such a file at `DEBUG`.
 
 To have Update-time update a project that uses uv but has neither a `uv.lock` nor a `[tool.uv]` table, run `uv lock` once. Update-time still checks the dependencies and the build requirements of a file it leaves as it is, and reports their markers.
 

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Find a requirements file that adds its purpose with an underscore or a dot, such as `requirements_test.txt` or `requirements.prod.txt`, as well as with a hyphen. Closes [#571](https://github.com/ICTU/update-time/issues/571).
+- Tell the package manager of a `pyproject.toml` by its lock file before its tables, so a project that builds with pdm-backend or poetry-core and locks with uv is updated, and check rather than skip the dependencies of a project that pdm or Poetry manages. Closes [#569](https://github.com/ICTU/update-time/issues/569).
 
 ## 0.0.61 - 2026-11-17
 
