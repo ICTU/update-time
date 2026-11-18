@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Show a new version's changes without markup the reader cannot use: HTML tags, the blank lines of HTML anchors and comments, reStructuredText underlines and double backticks, and the anchor of the next version's section. Look for the changes elsewhere when the changelog lists none under the version's heading. Closes [#567](https://github.com/ICTU/update-time/issues/567).
 - Find a requirements file that adds its purpose with an underscore or a dot, such as `requirements_test.txt` or `requirements.prod.txt`, as well as with a hyphen. Closes [#571](https://github.com/ICTU/update-time/issues/571).
 - Tell the package manager of a `pyproject.toml` by its lock file before its tables, so a project that builds with pdm-backend or poetry-core and locks with uv is updated, and check rather than skip the dependencies of a project that pdm or Poetry manages. Closes [#569](https://github.com/ICTU/update-time/issues/569).
 

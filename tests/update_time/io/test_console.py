@@ -12,6 +12,7 @@ from rich.text import Text
 
 from mutation_time.mutation import Mutation, kills
 from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion
+from update_time.formats import restructured_text
 from update_time.io import console as console_module
 from update_time.io.console import (
     _MARKDOWN_PARSER,
@@ -173,22 +174,39 @@ class RecordRenderingTests(TestCase):
         self.assertIn("Pinned", rendered)
         self.assertNotIn("\x1b[2mPinned", rendered)
 
+    def test_an_html_comment_is_not_shown(self):
+        """Test that a comment a changelog hides in its markup stays hidden, the box closing up around it."""
+        changes = Changes("## 1.2.0\n\n<!-- towncrier release notes start -->\n\n- A fix\n", markdown=True, url="")
+        self.assert_boxed(self.rendered_changes(changes), ["1.2.0", "", "• A fix"])
+
     @kills(
         Mutation(
-            console_module._RawHtml.__rich_console__,
-            "html = self.html.strip()\n"
-            '        if not (html.startswith("<!--") and html.endswith("-->")):\n'
-            '            yield Text(self.html.rstrip("\\n"))',
-            'yield Text(self.html.rstrip("\\n"))',
-            "a comment the changelog's author wrote to be invisible is printed in the log",
-        )
+            console_module._ChangelogMarkdown._without_blank_blocks,
+            "{index - 1, index, index + 1} & tags_alone",
+            "{index} & tags_alone",
+            "an HTML anchor above a heading still shows as a blank line, its paragraph kept without its text",
+        ),
+        Mutation(
+            console_module._ChangelogMarkdown._without_blank_blocks,
+            "and all(child.type",
+            "and any(child.type",
+            "a line of changes that opens with an HTML anchor is dropped, its text with it",
+        ),
     )
-    def test_an_html_comment_is_not_shown(self):
-        """Test that a comment a changelog hides in its markup stays hidden."""
-        changes = Changes("## 1.2.0\n\n<!-- towncrier release notes start -->\n\n- A fix\n", markdown=True, url="")
-        rendered = self.rendered_changes(changes)
-        self.assertNotIn("towncrier", rendered)
-        self.assertIn("• A fix", rendered)
+    def test_an_html_anchor_takes_no_line(self):
+        """Test that an HTML anchor stays hidden, alone on its line or before text, the box closing up around it."""
+        anchor = '<a name="release-1-2-0-fixed"></a>'
+        cases = {
+            "opening the changes": (f"{anchor}\n\n### Fixed\n\n- A fix\n", ["Fixed", "", "• A fix"]),
+            "between headings": (
+                f"## 1.2.0\n\n{anchor}\n\n### Fixed\n\n- A fix\n",
+                ["1.2.0", "", "Fixed", "", "• A fix"],
+            ),
+            "beside text": (f"{anchor}A fix\n", ["A fix"]),
+        }
+        for case, (markup, contents) in cases.items():
+            with self.subTest(case=case):
+                self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True, url="")), contents)
 
     @kills(
         Mutation(
@@ -199,19 +217,16 @@ class RecordRenderingTests(TestCase):
         ),
         Mutation(
             console_module._RawHtml.__rich_console__,
-            'yield Text(self.html.rstrip("\\n"))',
-            "yield Text(self.html)",
-            "a raw HTML block keeps the newline ending it, so a blank line follows every one",
+            "html.text(self.html)",
+            "self.html.strip()",
+            "a raw HTML block shows its tags, which the reader has to read past",
         ),
     )
-    def test_raw_html_in_a_markdown_changelog_is_shown_as_written(self):
-        """Test that a Markdown changelog's raw HTML block reaches the reader as the project wrote it."""
-        html = "<details>\n<summary>Dependency updates</summary>\n"
-        rendered = self.rendered_changes(
-            Changes(f"## 1.2.0\n\n{html}\n- bump foo\n</details>\n", markdown=True, url="")
-        )
-        block = ["1.2.0", "", "<details>", "<summary>Dependency updates</summary>", "", "• bump foo", "", "</details>"]
-        self.assert_boxed(rendered, block)
+    def test_raw_html_in_a_markdown_changelog_shows_its_text_without_its_tags(self):
+        """Test that a Markdown changelog's raw HTML block reaches the reader as the text it holds, without tags."""
+        details = "<details>\n<summary>Dependency updates</summary>\n\n- bump foo\n</details>\n"
+        rendered = self.rendered_changes(Changes(f"## 1.2.0\n\n{details}", markdown=True, url=""))
+        self.assert_boxed(rendered, ["1.2.0", "", "Dependency updates", "", "• bump foo"])
 
     @kills(
         Mutation(
@@ -232,6 +247,24 @@ class RecordRenderingTests(TestCase):
         for case, (markup, contents) in cases.items():
             with self.subTest(case=case):
                 self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True, url="")), contents)
+
+    @kills(
+        Mutation(
+            console_module._ChangelogMarkdown._without_blank_blocks,
+            'if tokens[index - 1].type == "paragraph_open"',
+            'if token.type == "inline"',
+            "a table cell holding nothing is dropped, moving the cells after it a column to the left",
+        )
+    )
+    def test_a_table_cell_without_text_keeps_the_cells_after_it_in_their_columns(self):
+        """Test that a table cell holding nothing, or an HTML tag alone, leaves the next cell under its heading."""
+        for case, cell in {"empty": " ", "tag alone": "<br>"}.items():
+            with self.subTest(case=case):
+                rendered = self.rendered_changes(
+                    Changes(f"| a | b | c |\n|---|---|---|\n| 1 |{cell}| 3 |\n", markdown=True, url="")
+                )
+                header, row = (next(line for line in rendered.splitlines() if text in line) for text in (" a ", " 1 "))
+                self.assertEqual(row.index("3"), header.index("c"), rendered)
 
     @kills(
         Mutation(
@@ -300,7 +333,7 @@ class RecordRenderingTests(TestCase):
         """Test that a shortcode a raw HTML block holds reaches the reader as its emoji, as one in the prose does."""
         html = "<details>\n<summary>:zap: Dependency updates</summary>\n"
         rendered = self.rendered_changes(Changes(f"{html}\n- :zap: bump foo\n</details>\n", markdown=True, url=""))
-        self.assertIn("<summary>⚡ Dependency updates</summary>", rendered)
+        self.assertIn("⚡ Dependency updates", rendered)
         self.assertNotIn(":zap:", rendered)
 
     @kills(
@@ -338,11 +371,62 @@ class RecordRenderingTests(TestCase):
                 self.assertEqual([line.strip() for line in rendered.splitlines()][-1], note)
                 self.assertNotIn(_BOX_TOP_LEFT, rendered)
 
-    def test_changes_that_are_not_markdown_render_as_written(self):
-        """Test that a changelog that is not Markdown is boxed too, keeping its lines and its markup as written."""
+    def test_changes_that_are_not_markdown_keep_their_lines_and_a_dash_as_written(self):
+        """Test that a changelog that is not Markdown is boxed too, keeping its lines and a dash as written."""
         changes = Changes("Fixed bug A\nFixed bug B\n- and a dash that is no bullet", markdown=False, url="")
         rendered = self.rendered_changes(changes)
         self.assert_boxed(rendered, changes.splitlines())
+
+    @kills(
+        Mutation(
+            restructured_text.text,
+            "for title, line in pairwise(lines) if not heading_underline(title, line))",
+            "for title, line in pairwise(lines))",
+            "a reStructuredText changelog shows the underline of each heading",
+        ),
+        Mutation(
+            restructured_text.heading_underline,
+            " or len(underline) >= _SHORTEST_UNDERLINE)",
+            ")",
+            "a reStructuredText changelog shows the underline of a heading that is shorter than its title",
+        ),
+    )
+    def test_a_heading_in_changes_that_are_not_markdown_shows_without_its_underline(self):
+        """Test that a heading underlined as reStructuredText marks one shows as its title alone."""
+        changes = Changes("3.13.0 (2026-10-23)\n----\n\n* Added Python 3.15.", markdown=False, url="")
+        self.assert_boxed(self.rendered_changes(changes), ["3.13.0 (2026-10-23)", "", "* Added Python 3.15."])
+
+    @kills(
+        Mutation(
+            restructured_text.heading_underline,
+            "and (len(underline) >= len(title) or len(underline) >= _SHORTEST_UNDERLINE)",
+            "and True",
+            "the box drops the `...` that says the changes were cut short, as if it underlined the line above",
+        )
+    )
+    def test_a_short_run_of_punctuation_in_changes_that_are_not_markdown_is_shown_as_written(self):
+        """Test that a run shorter than the line above it and than four characters, such as a `...`, stays."""
+        changes = Changes("1.0\n\n- Fixed bug A\n...", markdown=False, url="")
+        self.assert_boxed(self.rendered_changes(changes), changes.splitlines())
+
+    @kills(
+        Mutation(
+            restructured_text.text,
+            'return _INLINE_LITERAL.sub(r"\\1", shown)',
+            "return shown",
+            "a reStructuredText changelog shows the double backticks around each inline literal",
+        ),
+        Mutation(
+            restructured_text,
+            '_INLINE_LITERAL = re.compile(r"``(.+?)``")',
+            '_INLINE_LITERAL = re.compile(r"``(.+)``")',
+            "a line holding two inline literals keeps the backticks closing the first and opening the second",
+        ),
+    )
+    def test_an_inline_literal_in_changes_that_are_not_markdown_shows_without_its_backticks(self):
+        """Test that each inline literal reStructuredText marks with double backticks shows as its text alone."""
+        changes = Changes("* Nest ``ThreadSensitiveContext`` with an ``executor``.", markdown=False, url="")
+        self.assert_boxed(self.rendered_changes(changes), ["* Nest ThreadSensitiveContext with an executor."])
 
     def test_the_changes_url_is_shown_in_full_below_the_box(self):
         """Test that the URL of the page the changes come from is shown in full below the box, folded if it's long."""

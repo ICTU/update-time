@@ -10,7 +10,6 @@ import requests
 
 from mutation_time.mutation import Mutation, kills
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, PinnedDependency, Release, Yank
 from update_time.formats import markdown as markdown_format
@@ -213,7 +212,7 @@ class GetChangesTest(LoggingTestCase):
         )
         changes = get_changes("package-served-as-markdown", "1.1")
         self.assertEqual(changes, markdown_changes("1.1"))
-        self.assertTrue(is_markdown(changes))
+        self.assertTrue(changes.markdown)
 
     @kills(
         Mutation(
@@ -246,7 +245,7 @@ class GetChangesTest(LoggingTestCase):
                 )
                 changes = get_changes(f"package-{name}", "1.1")
                 self.assertEqual(changes, markdown_changes("1.1"))
-                self.assertEqual(is_markdown(changes), markdown)
+                self.assertEqual(changes.markdown, markdown)
 
     @kills(
         Mutation(
@@ -361,7 +360,7 @@ class GetChangesTest(LoggingTestCase):
                 self.create_mock_response(mock_get, {"info": info})
                 changes = get_changes(f"package-6-{content_type}", "1.1")
                 self.assertEqual(changes, changelog_text)
-                self.assertEqual(is_markdown(changes), markdown)
+                self.assertEqual(changes.markdown, markdown)
 
     def test_github_url_in_description_that_has_no_changelog(self, mock_get: Mock):
         """Test that a GitHub release without a body yields no changelog."""
@@ -451,7 +450,7 @@ class GetChangesTest(LoggingTestCase):
                 self.create_discovery_responses(mock_get, package, files=files, repository=repository)
                 changes = get_changes(package, "1.1")
                 self.assertEqual(changes, "1.1\n===\n\n- Fixed foo")
-                self.assertFalse(is_markdown(changes))
+                self.assertFalse(changes.markdown)
                 self.assertEqual(changes.url, f"https://github.com/{repository}/blob/HEAD/{directory}/{path}")
 
     @kills(
@@ -468,7 +467,7 @@ class GetChangesTest(LoggingTestCase):
         self.create_discovery_responses(mock_get, "flask", files=files, repository="pallets/flask")
         changes = get_changes("flask", "1.1")
         self.assertEqual(changes, markdown_changes("1.1"))
-        self.assertTrue(is_markdown(changes))
+        self.assertTrue(changes.markdown)
 
     def test_documentation_changelog_naming_no_version(self, mock_get: Mock):
         """Test that a documentation directory whose changelog names another version supplies no changes."""
