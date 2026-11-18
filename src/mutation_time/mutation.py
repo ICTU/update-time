@@ -620,11 +620,11 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
         @functools.wraps(method)
         def wrapper(self: unittest.TestCase, *args: object, **kwargs: object) -> object:
             result = method(self, *args, **kwargs)
-            if not self._outcome.success:  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            if not self._outcome.success:  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
                 return result
             if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":
                 return result
-            cleanups = self._cleanups  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            cleanups = self._cleanups  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
             # `doCleanups` runs the cleanups from the end of the list, so the check at its front runs after the others:
             cleanups.insert(0, (_fail_unless_killed, (self, mutations), {}))
             return result
