@@ -12,7 +12,6 @@ import requests
 from mutation_time.mutation import Mutation, kills
 from update_time.domain import cooldown
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDependency, Release, Unserved
 from update_time.io.log import Logger
@@ -169,7 +168,7 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a newer release is resolved, with its changelog, its commit SHA, and the markup GitHub uses."""
         latest = get_latest_version("owner/repository", "1.0")
         self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
-        self.assertTrue(is_markdown(latest.changes))
+        self.assertTrue(latest.changes.markdown)
 
     @patch_github(
         releases=[github_release_json("1.1", published_at=PAST_COOLDOWN_DATE)], tags=[], commit=github_commits_json()
@@ -710,7 +709,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         """Test that the body of the matching release is returned as Markdown, linking the release's page."""
         changes = changes_from_release(GitHubRepository("owner", "repo with changes"), "any", "1.1")
         self.assertEqual(changes, "Changelog")
-        self.assertTrue(is_markdown(changes))
+        self.assertTrue(changes.markdown)
         self.assertEqual(changes.url, self.RELEASE_PAGE)
 
     @patch_get([github_release_json("9.9")])
@@ -810,7 +809,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                 respond_per_url(mock_get, responses)
                 changes = changes_from_changelog_file(self.MONOREPO, "1.1")
                 self.assertEqual(changes, self.CHANGES)
-                self.assertEqual(is_markdown(changes), markdown)
+                self.assertEqual(changes.markdown, markdown)
                 self.assertEqual(changes.url, page_url(name))
 
     @kills(

@@ -2,13 +2,7 @@
 
 import re
 
-from update_time.formats import markdown, restructured_text
-
-
-def is_markdown(changes: str) -> bool:
-    """Return whether the changes are written in Markdown."""
-    return getattr(changes, "markdown", False)
-
+from update_time.formats import html, markdown, restructured_text
 
 # The version a changelog names at the head of a section.
 _VERSION = re.compile(r"\d+(?:\.\d+)+")
@@ -23,14 +17,12 @@ def _heading_level(lines: list[str], index: int) -> str:
 
     Markdown marks a heading with a run of `#` before the title, reStructuredText by underlining the title with a
     run of one punctuation character. Either run says which level the heading is at, so two headings marked with
-    the same run head sections at the same level. A blank line titles nothing, so a run below it heads nothing.
+    the same run head sections at the same level.
     """
     line = lines[index]
-    if not line.strip():
-        return ""
     if (marked := markdown.heading(line)) is not None:
         return "#" * marked[0]
-    return restructured_text.underline_character(lines[index + 1] if index + 1 < len(lines) else "")
+    return restructured_text.heading_underline(line, lines[index + 1] if index + 1 < len(lines) else "")
 
 
 def _names_version(line: str, version: str) -> bool:
@@ -163,16 +155,37 @@ def _find_anchor(lines: list[str], version: str) -> tuple[str, int | None]:
     return version, start
 
 
+def _heading_length(lines: list[str], index: int) -> int:
+    """Return the number of lines the heading at the index spans, an underline included, or 0 when none starts there."""
+    if not _heading_level(lines, index):
+        return 0
+    return 1 if markdown.heading(lines[index]) else 2
+
+
+def _separates_sections(line: str) -> bool:
+    """Return whether the line sits between a version's changes and the next section: blank, or the section's anchor."""
+    return not line.strip() or restructured_text.is_label(line) or html.is_anchor(line)
+
+
+def _without_trailing_separators(lines: list[str]) -> list[str]:
+    """Return the lines without the blank lines and the anchors that end them."""
+    while lines and _separates_sections(lines[-1]):
+        lines = lines[:-1]
+    return lines
+
+
 def get_version_changes_from_changelog(text: str, version: str) -> str:
-    """Return the changes for the version from the changelog, or nothing when the changelog does not name it."""
+    """Return the changes for the version from the changelog, or nothing when the changelog lists none for it."""
     all_lines = text.splitlines()
     version, start = _find_anchor(all_lines, version)
     if start is None:
         return ""
     end = _next_version_index(all_lines, start, version)
-    lines = all_lines[start:end]
-    if not lines[-1].strip():
-        lines = lines[:-1]
+    entries_start = start + _heading_length(all_lines, start)
+    entries = _without_trailing_separators(all_lines[entries_start:end])
+    if not entries:
+        return ""
+    lines = all_lines[start:entries_start] + entries
     if len(lines) > _MAX_LENGTH and end is None:
         lines = [*lines[:_MAX_LENGTH], "..."]
     return "\n".join(lines)

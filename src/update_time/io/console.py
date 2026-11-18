@@ -17,8 +17,8 @@ from rich.style import Style
 from rich.text import Text
 from rich.theme import Theme
 
-from update_time.domain.changelog import is_markdown
 from update_time.domain.dependency import NO_CHANGES
+from update_time.formats import html, restructured_text
 from update_time.primitives.digest import SHA256_DIGEST
 
 if TYPE_CHECKING:
@@ -143,7 +143,7 @@ _CHANGELOG_LABEL = "Changelog"
 
 
 class _RawHtml(MarkdownElement):
-    """A block of raw HTML in a changelog, shown as the project wrote it.
+    """A block of raw HTML in a changelog, shown as the text it holds.
 
     Rich drops such a block, a terminal having nowhere to render it, and a `<details>` section holds changes.
     """
@@ -153,15 +153,13 @@ class _RawHtml(MarkdownElement):
         """Create the element from the raw HTML the token holds."""
         return cls(token.content)
 
-    def __init__(self, html: str) -> None:
+    def __init__(self, markup: str) -> None:
         """Keep the raw HTML the block holds."""
-        self.html = html
+        self.html = markup
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        """Render the raw HTML as the text it is, and a comment as the nothing its author meant it to be."""
-        html = self.html.strip()
-        if not (html.startswith("<!--") and html.endswith("-->")):
-            yield Text(self.html.rstrip("\n"))
+        """Render the text the raw HTML holds, without its tags."""
+        yield Text(html.text(self.html))
 
 
 # The kinds of token a changelog writes for its reader: its prose and its raw HTML. A code span and a fenced block
@@ -170,15 +168,35 @@ _READ_AS_TEXT = ("text", "html_block")
 
 
 class _ChangelogMarkdown(Markdown):
-    """Markdown that shows raw HTML, renders shortcodes as emoji, unindents headings, and drops a leading line break."""
+    """Markdown that shows raw HTML, hides blank blocks, renders shortcodes as emoji, and unindents headings."""
 
     elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}
 
     def __init__(self, markup: str, *, hyperlinks: bool) -> None:
-        """Parse the changes, then replace their shortcodes and unindent their headings."""
+        """Parse the changes, then drop their blank blocks, replace their shortcodes, and unindent their headings."""
         super().__init__(markup, hyperlinks=hyperlinks)
+        self.parsed = self._without_blank_blocks(self.parsed)
         self._replace_shortcodes(self.parsed)
         self._unindent_headings(self.parsed)
+
+    @staticmethod
+    def _without_blank_blocks(tokens: list[Token]) -> list[Token]:
+        """Return the tokens without the blocks that show as a blank line, such as an anchor or a comment.
+
+        A paragraph of HTML tags alone drops its opening and closing tokens with it.
+        """
+        tags_alone = {
+            index
+            for index, token in enumerate(tokens)
+            if tokens[index - 1].type == "paragraph_open"
+            and all(child.type == "html_inline" for child in token.children or ())
+        }
+        return [
+            token
+            for index, token in enumerate(tokens)
+            if not {index - 1, index, index + 1} & tags_alone
+            and not (token.type == "html_block" and not html.text(token.content))
+        ]
 
     @staticmethod
     def _replace_shortcodes(tokens: list[Token]) -> None:
@@ -222,13 +240,13 @@ class _LogHandler(RichHandler):
             return box
         return Group(box, Text.assemble(f"{_CHANGELOG_LABEL}: ", (changes.url, Style(link=changes.url))))
 
-    def _changes_markup(self, changes: str) -> ConsoleRenderable:
-        """Return the changes as Markdown when the changelog writes them in it, and as text otherwise.
+    def _changes_markup(self, changes: Changes) -> ConsoleRenderable:
+        """Return the changes rendered as Markdown when written in it, and as reStructuredText's text otherwise.
 
         A terminal makes a link clickable, so Rich hides its URL there and prints it everywhere else.
         """
-        if not is_markdown(changes):
-            return Text(changes)
+        if not changes.markdown:
+            return Text(restructured_text.text(changes))
         return _ChangelogMarkdown(changes, hyperlinks=self.console.is_terminal)
 
 

@@ -8,6 +8,7 @@ flowchart TD
   domain --> primitives
   formats --> primitives
   io --> domain
+  io --> formats
   io --> primitives
   lock_files --> domain
   lock_files --> formats

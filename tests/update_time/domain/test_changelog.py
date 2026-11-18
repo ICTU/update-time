@@ -5,8 +5,8 @@ import unittest
 from mutation_time.mutation import Mutation, kills
 from update_time.domain import changelog
 from update_time.domain.changelog import get_version_changes_from_changelog
+from update_time.formats import html, restructured_text
 from update_time.formats import markdown as markdown_format
-from update_time.formats import restructured_text
 
 # The characters reStructuredText allows a heading to be underlined with, as the specification lists them at
 # https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#sections.
@@ -298,6 +298,67 @@ class SectionEndTest(unittest.TestCase):
         text = f"Changelog\n=========\n\n{v1_change}\n\n0.9\n===\n\n- Fixed ...\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
+    @kills(
+        Mutation(
+            restructured_text.is_label,
+            "return _LABEL.fullmatch(line) is not None",
+            "return False",
+            "a reStructuredText changelog's changes end with the label of the next version's section",
+        ),
+        Mutation(
+            html.is_anchor,
+            "return _ANCHOR.fullmatch(line) is not None",
+            "return False",
+            "a towncrier changelog's changes end with the HTML anchor of the next version's section",
+        ),
+    )
+    def test_changes_end_before_the_anchor_of_the_next_section(self):
+        """Test that the changes leave out the anchor a changelog puts above the next version's heading."""
+        cases = {
+            "reStructuredText label": ("1.0\n===\n\n- Fixed ...", ".. _v0-9:\n\n0.9\n===\n\n- Changed ...\n"),
+            "HTML anchor": ("## 1.0\n\n- Fixed ...", '<a name="release-0-9"></a>\n\n## 0.9\n\n- Changed ...\n'),
+        }
+        for case, (v1_change, next_section) in cases.items():
+            with self.subTest(case=case):
+                text = f"Changelog\n\n{v1_change}\n\n{next_section}"
+                self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
+    @kills(
+        Mutation(
+            changelog.get_version_changes_from_changelog,
+            "if not entries:",
+            "if False:",
+            "a version whose section holds its heading alone is reported with the heading as its changes",
+        ),
+        Mutation(
+            changelog._heading_length,
+            "return 1 if markdown.heading(lines[index]) else 2",
+            "return 1",
+            "a version whose section holds its underlined heading alone is reported with the underline as its changes",
+        ),
+    )
+    def test_section_holding_only_its_heading_has_no_changes(self):
+        """Test that a section holding nothing but its heading has no changes, whether Markdown or underlined."""
+        cases = {"Markdown heading": "## 1.0\n\n## 0.9\n", "underlined heading": "1.0\n===\n\n0.9\n===\n"}
+        for case, sections in cases.items():
+            with self.subTest(case=case):
+                text = f"Changelog\n\n{sections}\n- Changed ...\n"
+                self.assertEqual(get_version_changes_from_changelog(text, "1.0"), "")
+
+    @kills(
+        Mutation(
+            changelog._heading_length,
+            "return 0",
+            "return 1",
+            "a changelog naming the version in a line of prose alone reports its changes as empty",
+        )
+    )
+    def test_prose_line_naming_the_version_alone_is_the_changes(self):
+        """Test that a line of prose naming the version is its changes when the next heading follows it."""
+        v1_change = "Version 1.0 fixes the crash on startup."
+        text = f"Changes\n\n{v1_change}\n\n## 0.9\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
     def test_subsection_heading_does_not_end_the_section(self):
         """Test that a subsection, underlined with another character than the version, does not end the section."""
         v1_change = "1.0\n===\n\nBugs fixed\n----------\n\n- Fixed ..."
@@ -305,9 +366,9 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _NO_BLANK_GUARD = Mutation(
-        changelog._heading_level,
-        "if not line.strip():",
-        "if False:",
+        restructured_text.heading_underline,
+        "title.strip()\n        and ",
+        "",
         "a run of punctuation that underlines nothing cuts the entry short where it stands",
     )
 
@@ -319,7 +380,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _STRIPPED_UNDERLINE = Mutation(
-        restructured_text.underline_character,
+        restructured_text.heading_underline,
         "underline = line.rstrip()",
         "underline = line.strip()",
         "a run of punctuation indented inside a literal block cuts the entry short above it",
@@ -328,7 +389,7 @@ class SectionEndTest(unittest.TestCase):
     @kills(_STRIPPED_UNDERLINE)
     def test_indented_punctuation_run_does_not_end_the_section(self):
         """Test that a run of punctuation indented out of column 1, as a literal block holds, does not end it."""
-        v1_change = "1.0\n===\n\nExample::\n\n    text\n    ===\n\n- Fixed ..."
+        v1_change = "1.0\n===\n\nExample::\n\n    text\n    ====\n\n- Fixed ..."
         text = f"Changelog\n\n{v1_change}\n\n0.9\n===\n\n- Fixed ...\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
@@ -369,14 +430,6 @@ class SectionEndTest(unittest.TestCase):
                 text = f"Changelog\n\n{v1_change}\n\n{v0_line}\n\n- Fixed ...\n"
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
-    _NO_HEADING_BOUND = Mutation(
-        changelog._ends_section,
-        "return bool(heading_level)",
-        "return False",
-        "a version named in prose rather than in a heading reports the rest of the changelog as its changes",
-    )
-
-    @kills(_NO_HEADING_BOUND)
     def test_prose_anchored_section_ends_at_the_next_heading(self):
         """Test that a section a prose mention introduced ends at the next Markdown heading, however deep."""
         v1_change = "Upgrading to 1.0 is recommended.\n\n- Fixed ...\n- Changed ..."

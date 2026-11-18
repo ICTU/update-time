@@ -473,7 +473,6 @@ a JSON key naming no version is read as a feature reference without a tag.
 a TOML escape: the spec parses as `pkg>=1.0`.
 a `<5` bound on a v4 pin is live, so no redundancy warning.
 a changelog underlining its headings with backticks or tildes reports no changes at all, its file read as one fenced code block.
-a comment the changelog's author wrote to be invisible is printed in the log.
 a cooldown steers an update, and no update is resolved for such a reference.
 a decorated test carries no registration, so a second one on it goes undetected.
 a decorated test reports under the wrapper's name, so a failing run names no test.
