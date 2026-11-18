@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.62 - 2026-11-18
+
 ### Fixed
 
 - Show a new version's changes without markup the reader cannot use: HTML tags, the blank lines of HTML anchors and comments, reStructuredText underlines and double backticks, and the anchor of the next version's section. Look for the changes elsewhere when the changelog lists none under the version's heading. Closes [#567](https://github.com/ICTU/update-time/issues/567).
