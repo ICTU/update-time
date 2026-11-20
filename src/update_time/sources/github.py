@@ -26,6 +26,7 @@ from update_time.domain.dependency import (
     Release,
     Unserved,
     VersionString,
+    every_project,
     is_valid,
 )
 from update_time.formats import markdown, restructured_text
@@ -678,7 +679,7 @@ def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None
     return newest_tag
 
 
-@partial(ProjectGetter, declares_archival=True)
+@partial(ProjectGetter, declares_archival=every_project)
 def project(dependency: DependencyName) -> Project:
     """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
     repository = repository_of(dependency)

@@ -12,7 +12,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.dependency import NO_CHANGES, Archival, Changes, Project, ProjectGetter, Release
+from update_time.domain.dependency import NO_CHANGES, Archival, Changes, Project, ProjectGetter, Release, every_project
 from update_time.domain.source import Source
 from update_time.domain.vulnerability import Ecosystem
 from update_time.formats import xml
@@ -48,7 +48,7 @@ _VERSION_ROW = re.compile(
 _PUBLISHED_FORMAT = "%Y-%m-%d %H:%M"
 
 
-@partial(ProjectGetter, declares_archival=True)
+@partial(ProjectGetter, declares_archival=every_project)
 def project(artefact: DependencyName) -> Project:
     """Return the artefact's newest release on Maven Central, with the archival GitHub declares for its source."""
     return Project(newest=_newest_release(artefact), archival=_archival(artefact))

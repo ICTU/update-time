@@ -35,8 +35,8 @@ def mock_new_version_getter(release: DependencyVersion) -> Mock:
     return _mock_callable(release)
 
 
-def mock_project_getter(*, declares_archival: bool = False) -> Mock:
+def mock_project_getter() -> Mock:
     """Return a mock project getter answering with an empty project (see `_mock_callable`)."""
     get_project = _mock_callable(Project())
-    get_project.declares_archival = declares_archival
+    get_project.declares_archival = Mock(return_value=False)
     return get_project

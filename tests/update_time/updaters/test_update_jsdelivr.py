@@ -8,6 +8,7 @@ from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
+from update_time.references import resolve
 from update_time.sources import jsdelivr
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
@@ -238,7 +239,13 @@ class UpdateJsdelivrsTest(LoggingTestCase):
             "return DependencyVersion(version=pinned.version, unserved=Unserved.VERSION)",
             "return DependencyVersion(version=pinned.version)",
             "a URL whose version is not PEP 440 is looked up at the npm registry and checked for staleness",
-        )
+        ),
+        Mutation(
+            resolve._archival_alone,
+            "if not get_project.declares_archival(dependency):",
+            "if False:",
+            "a URL whose version is not PEP 440 is looked up at the npm registry, although npm does not archive",
+        ),
     )
     def test_a_url_whose_version_is_not_pep_440_is_not_checked_for_staleness(self, mock_get: Mock, mock_glob: Mock):
         """Test that a URL on a version such as `1.` is left alone, and the npm registry is not asked about it."""

@@ -378,10 +378,9 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file.write_text.assert_called_once_with("# update-time: set[stale-after=90]\n3.13.2\n")
         self.assert_stale_dependency_logged("python", "3.13.2", Location(version_file, 2))
 
-    def test_the_yanked_vulnerable_and_archived_scopes_are_reported_as_redundant(self, mock_glob: Mock):
-        """Test that a `yanked`, `vulnerable`, or `archived` marker on an entry is reported as redundant."""
+    def test_the_yanked_and_vulnerable_scopes_are_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `yanked` or `vulnerable` marker on an entry is reported as redundant."""
         for directive, reason in (
-            ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
             ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
             ("set[vulnerability-level=none]", Reason.NO_VULNERABILITY_REPORTS),
         ):

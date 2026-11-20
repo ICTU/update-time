@@ -184,12 +184,11 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged("node", docker_hub_version("19"), Location(mock_package_json, 3))
         self.assert_no_warnings_logged()
 
-    def test_the_yanked_vulnerable_and_archived_scopes_are_reported_as_redundant(self, mock_glob: Mock):
-        """Test that a `yanked`, `vulnerable`, or `archived` marker on the engine is reported as redundant."""
+    def test_the_yanked_and_vulnerable_scopes_are_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `yanked` or `vulnerable` marker on the engine is reported as redundant."""
         for directives, reason in (
             ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
             ("set[vulnerability-level=none]", Reason.NO_VULNERABILITY_REPORTS),
-            ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
         ):
             with self.subTest(directives=directives):
                 mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))

@@ -10,6 +10,7 @@ from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
     Archival,
+    ArchivedSubject,
     DependencyVersion,
     FloatingPin,
     PinnedDependency,
@@ -17,6 +18,7 @@ from update_time.domain.dependency import (
     ProjectGetter,
     Release,
     Unserved,
+    every_project,
 )
 from update_time.domain.directive import Reason
 from update_time.domain.marker import NO_MARKER, Marker, Scope
@@ -73,7 +75,8 @@ def _with_a_yank_getter(get_new_version: NewVersionGetter) -> Source:
 def _with_a_project_getter_declaring_archival(get_new_version: NewVersionGetter) -> Source:
     """Return a source of the getter whose project getter declares whether the project is archived."""
     return Source(
-        project=ProjectGetter(lambda _dependency: Project(), declares_archival=True), new_version=get_new_version
+        project=ProjectGetter(lambda _dependency: Project(), declares_archival=every_project),
+        new_version=get_new_version,
     )
 
 
@@ -306,13 +309,22 @@ class LatestVersionTest(unittest.TestCase):
             self.reference(marker=marker), "allow[floating-pin]", Reason.NEVER_PINNED
         )
 
-    def test_the_project_the_source_reports_dates_the_reference_unless_the_version_is_not_served(self):
-        """Test that the project dates the reference, unless the source does not serve its repository or version."""
-        project = Project(newest=Release("3.16", STALE_DATE))
+    @kills(
+        Mutation(
+            resolve_module._reported_project,
+            "return _archival_alone(source.project, reference.dependency)",
+            "return NO_PROJECT",
+            "an image on a tag Docker Hub does not serve is not checked for archival",
+        )
+    )
+    def test_the_project_reported_depends_on_what_the_source_serves(self):
+        """Test that a repository not served drops the project, and a version not served drops its newest release."""
+        archival = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
+        project = Project(newest=Release("3.16", STALE_DATE), archival=archival)
         cases = {
             "a version the source serves": (None, project),
             "a repository not served": (Unserved.REPOSITORY, Project()),
-            "a version not served": (Unserved.VERSION, Project()),
+            "a version not served": (Unserved.VERSION, Project(archival=archival)),
             "a repository that does not tag a release": (Unserved.RELEASES, project),
         }
         for case, (unserved, expected) in cases.items():
@@ -320,7 +332,8 @@ class LatestVersionTest(unittest.TestCase):
                 self.log.reset_mock()  # Judge each case on the calls of its own run.
                 served = DependencyVersion(version="3.15", unserved=unserved)
                 source = Source(
-                    project=ProjectGetter(Mock(return_value=project)), new_version=mock_new_version_getter(served)
+                    project=ProjectGetter(Mock(return_value=project), declares_archival=every_project),
+                    new_version=mock_new_version_getter(served),
                 )
                 latest_version(self.reference(), source, self.log)
                 self.assertEqual(self.log.report_staleness.call_args.args[0].project, expected)
@@ -328,15 +341,9 @@ class LatestVersionTest(unittest.TestCase):
     @kills(
         Mutation(
             resolve_module._reported_project,
-            "if not _project_is_checked(source.project, reference.marker):",
+            "if not _project_is_checked(source.project, reference):",
             "if False:",
             "a run with the check off asks the source about a project it does not check",
-        ),
-        Mutation(
-            resolve_module._reported_project,
-            "_project_is_checked(source.project, reference.marker)",
-            "_project_is_checked(source.project, type(reference.marker)())",
-            "a reference's own threshold does not reach the gate, so a run with the check off looks it up for none",
         ),
     )
     def test_a_source_declaring_no_archival_is_asked_only_if_a_marker_sets_a_threshold(self):
@@ -376,7 +383,7 @@ class ReportProjectChecksTest(unittest.TestCase):
 
     def project(self, archival: Archival) -> ProjectGetter:
         """Return a project getter answering with the project's archival, which it declares."""
-        return ProjectGetter(Mock(return_value=Project(archival=archival)), declares_archival=True)
+        return ProjectGetter(Mock(return_value=Project(archival=archival)), declares_archival=every_project)
 
     def test_reports_both_checks_for_the_project(self):
         """Test that what the getter answers reaches the archival report and the staleness report alike."""
@@ -394,20 +401,3 @@ class ReportProjectChecksTest(unittest.TestCase):
         get_project.assert_not_called()
         self.log.report_staleness.assert_not_called()
         self.log.report_archival.assert_not_called()
-
-    @kills(
-        Mutation(
-            resolve_module.report_project_checks,
-            "_project_is_checked(get_project, reference.marker)",
-            "_project_is_checked(get_project, type(reference.marker)())",
-            "a reference's own threshold does not reach the gate, so a run with the check off looks it up for none",
-        )
-    )
-    def test_a_source_reporting_no_archival_is_asked_about_a_reference_with_a_threshold_of_its_own(self):
-        """Test that a reference setting a staleness threshold of its own is looked up with the check switched off."""
-        get_project = mock_project_getter()
-        with staleness_disabled:
-            report_project_checks(self.reference(STALE_AFTER_90), self.log, get_project)
-        get_project.assert_called_once_with("humanize")
-        resolved = resolved_reference("humanize", self.path, marker=STALE_AFTER_90)
-        self.log.report_staleness.assert_called_once_with(resolved, 90)

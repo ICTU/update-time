@@ -1,7 +1,7 @@
 """Test helpers that simulate an OCI registry (plus Docker Hub) and the shared image-updater test suite.
 
 This is the machinery only the image tests need: a fake registry that answers the OCI auth/listing/manifest flow
-and Docker Hub's per-tag metadata (`mock_docker_registry` and its `RegistryRequestsMixin`), and the parametrized
+and Docker Hub's proprietary API (`mock_docker_registry` and its `RegistryRequestsMixin`), and the parametrized
 `ImageUpdaterTestMixin` that every `image:tag[@digest]` updater inherits. It builds on the shared helpers
 (`mock_response`, `mock_path`, `docker_tag`, `LoggingTestCase`), which import nothing back from here.
 """
@@ -14,10 +14,12 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 from mutation_time.mutation import Mutation, kills
+from update_time.domain import directive as directive_module
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.domain.reference import DriftedPin
+from update_time.domain.source import Source
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.references import resolve, rewrite
@@ -31,6 +33,7 @@ from tests.update_time.helpers import (
     docker_hub_version,
     docker_tag,
     message_of,
+    staleness_disabled,
 )
 
 if TYPE_CHECKING:
@@ -164,6 +167,37 @@ def _push_date_response(url: str, by_name: dict[str, dict[str, object]], *, ok: 
     return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {})) if ok else service_unavailable(url)
 
 
+def _is_repository_request(url: str) -> bool:
+    """Return whether the URL asks Docker Hub's proprietary API about a repository rather than about its tags."""
+    return "/namespaces/" in url and "/tags" not in url
+
+
+def _repository_response(*, archived: bool) -> Mock:
+    """Answer Docker Hub's repository request with the repository's archival status."""
+    return mock_response({"status_description": "archived" if archived else "active"})
+
+
+def _docker_hub_response(
+    url: str, tags: tuple[dict[str, object], ...], by_name: dict[str, dict[str, object]], unavailable: Endpoint | None
+) -> Mock:
+    """Answer a request to Docker Hub's proprietary API: the tag listing, a repository, or a tag's push date."""
+    if "/tags?" in url:  # The tag listing: every tag with its digest.
+        return _tag_digests_response(url, tags, ok=unavailable is not Endpoint.TAG_DIGESTS)
+    if _is_repository_request(url):
+        return _repository_response(archived=False)
+    # A tag's metadata, which carries its push date. Only a tag that resolved a digest gets this far.
+    return _push_date_response(url, by_name, ok=unavailable is not Endpoint.PUSH_DATE)
+
+
+def _with_archived_repository(registry: Callable[..., Mock]) -> Callable[..., Mock]:
+    """Return the registry's side effect, with Docker Hub answering that the repository is archived."""
+
+    def get(url: str, *args: object, **kwargs: object) -> Mock:
+        return _repository_response(archived=True) if _is_repository_request(url) else registry(url, *args, **kwargs)
+
+    return get
+
+
 def mock_docker_registry(
     *tags: dict[str, object],
     names: list[str] | None = None,
@@ -172,14 +206,15 @@ def mock_docker_registry(
     challenge: bool = True,
     page_size: int | None = None,
 ) -> Callable[..., Mock]:
-    """Return a Session.get/.head side effect that mimics an OCI registry plus Docker Hub's per-tag metadata.
+    """Return a Session.get/.head side effect that mimics an OCI registry plus Docker Hub's proprietary API.
 
     It models the full flow. The `/v2/` probe answers the OCI auth challenge pointing at the registry's token
     endpoint, the token request returns a token, and `tags/list` returns the names of the given tags unless
     overridden. A manifest `HEAD` returns the tag's digest in the `Docker-Content-Digest` header, and Docker Hub's
     proprietary per-tag request returns that tag's push date. Each of the last two answers 404 for a tag it
     doesn't know. Docker Hub's proprietary tag listing returns the given tags with their digests, a page at a
-    time, reading the page and its size off the URL as Docker Hub does.
+    time, reading the page and its size off the URL as Docker Hub does. Docker Hub's proprietary repository
+    request returns the repository as active.
     The same callable is assigned to both `Session.get` and `Session.head`; it routes purely on the URL.
 
     Knobs for the less common flows:
@@ -193,6 +228,8 @@ def mock_docker_registry(
       anonymous registry that isn't queried with a token (e.g. mcr.microsoft.com).
     - `page_size` splits the tag listing into pages of that many names, each linking to the next via the `Link`
       header (as the OCI spec and `next_page_url` expect), to model a paginated listing.
+
+    Wrap the side effect in `_with_archived_repository` to model a repository Docker Hub archived.
     """
     by_name = {cast("str", tag["name"]): tag for tag in tags}
     tag_names = list(by_name) if names is None else names
@@ -207,10 +244,7 @@ def mock_docker_registry(
             return _tags_list_response(url, tag_names, list_ok=names_ok, page_size=page_size)
         if "/manifests/" in url:
             return _manifest_response(url, by_name)
-        if "/tags?" in url:  # Docker Hub's proprietary tag listing: every tag with its digest.
-            return _tag_digests_response(url, tags, ok=unavailable is not Endpoint.TAG_DIGESTS)
-        # Docker Hub proprietary per-tag metadata (the push date); only reached for a tag that resolved a digest.
-        return _push_date_response(url, by_name, ok=unavailable is not Endpoint.PUSH_DATE)
+        return _docker_hub_response(url, tags, by_name, unavailable)
 
     def unserved(url: str, *_args: object, **_kwargs: object) -> Mock:
         if url.endswith("/v2/") or url.startswith("https://auth.docker.io/"):  # Docker Hub still hands out a token.
@@ -291,27 +325,32 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
                 self.assert_held_back_by_cooldown_logged("python", "3.15", location, days=days, directive=directive)
                 self.assert_no_warnings_logged()
 
-    def test_cooldown_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
-        """Test that a `cooldown` marker on an image off Docker Hub is reported, since no tag there carries a date."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        marker = self.marker_line("set[cooldown=30]")
-        mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
-        self.run_updater(mock_file)
-        mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
-        self.assert_redundant_directive_logged(
-            Reason.NO_COOLDOWN_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "set[cooldown=30]"
+    @kills(
+        Mutation(
+            oci,
+            "declares_archival=is_docker_hub_image",
+            "declares_archival=bool",
+            "an `ignore[archived]` on an image off Docker Hub decides nothing without being reported",
         )
-
-    def test_stale_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
-        """Test that a `stale` marker on an image off Docker Hub is reported, since no tag there carries a date."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        marker = self.marker_line("set[stale-after=90]")
-        mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
-        self.run_updater(mock_file)
-        mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
-        self.assert_redundant_directive_logged(
-            Reason.NO_STALENESS_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "set[stale-after=90]"
-        )
+    )
+    def test_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
+        """Test that a cooldown, staleness threshold, or `ignore[archived]` on an image off Docker Hub is redundant."""
+        cases = {
+            "set[cooldown=30]": Reason.NO_COOLDOWN_DATES,
+            "set[stale-after=90]": Reason.NO_STALENESS_DATES,
+            "ignore[archived]": Reason.NO_ARCHIVAL_SIGNAL,
+        }
+        for directive, reason in cases.items():
+            with self.subTest(directive=directive):
+                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+                marker = self.marker_line(directive)
+                mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
+                self.run_updater(mock_file)
+                updated = marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}")
+                mock_file.write_text.assert_called_once_with(updated)
+                self.assert_redundant_directive_logged(
+                    reason, "ghcr.io/owner/python", Location(mock_file, 2), directive
+                )
 
     def test_floating_pin_marker_on_a_version_tag_is_reported_as_redundant(self) -> None:
         """Test that `allow[floating-pin]` on a tag naming a version is reported, since that tag does not float."""
@@ -332,6 +371,41 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged("python", "3.15", Location(mock_file, 2))
+
+    @kills(
+        Mutation(
+            resolve._project_is_checked,
+            "declares_archival(reference.dependency)",
+            'declares_archival("ghcr.io/")',
+            "with the staleness check switched off, the archival of an image is never checked",
+        )
+    )
+    @staleness_disabled
+    def test_archived_image_warned_with_the_staleness_check_switched_off(self) -> None:
+        """Test that an image whose Docker Hub repository is archived is warned about and updated, staleness off."""
+        self.requests.side_effect = _with_archived_repository(mock_docker_registry(docker_tag("1.31", DIGEST2)))
+        image = "nginxinc/nginx-unprivileged"
+        mock_file = mock_path(self.reference(f"{image}:1.30@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(self.reference(f"{image}:1.31@{DIGEST2}"))
+        self.assert_archived_repository_logged(image, Location(mock_file, 1))
+
+    @kills(
+        Mutation(
+            oci,
+            "@partial(ProjectGetter, declares_archival=is_docker_hub_image)",
+            "@ProjectGetter",
+            "an `ignore[archived]` on an active image is also reported as lacking an archival signal",
+        )
+    )
+    def test_ignore_archived_on_an_active_repository_is_reported_as_redundant(self) -> None:
+        """Test that an `ignore[archived]` on an image whose repository is active is reported as redundant."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        marker = self.marker_line("ignore[archived]")
+        mock_file = mock_path(marker + self.reference(f"python:3.14@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(marker + self.reference(f"python:3.15@{DIGEST2}"))
+        self.assert_redundant_ignore_archived_logged("python", Location(mock_file, 2))
 
     def test_snapshot_on_a_living_image_is_not_stale(self) -> None:
         """Test that a snapshot pinned long ago is not reported as stale while its image keeps publishing.
@@ -727,15 +801,28 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
             "held_back = marker.ignores(Scope.UPDATE)",
             "an `ignore[update]` on an image never looked up hides why the image is left as it is",
         ),
+        Mutation(
+            directive_module,
+            "consequence=Consequence.ARCHIVAL_NEVER_CHECKED,",
+            "",
+            "an `ignore[archived]` on an image never looked up is blamed on its source rather than on the variable",
+        ),
+        Mutation(
+            Source.reports_archival,
+            "and self.why_image_not_looked_up(pinned) is None",
+            "",
+            "an `ignore[archived]` on an image never looked up decides nothing without being reported",
+        ),
     )
     def test_markers_on_a_reference_through_a_variable_are_redundant_because_of_it(self) -> None:
-        """Test that a staleness threshold, cooldown, bound, or `ignore[update]` on the reference is redundant.
+        """Test that a staleness threshold, `ignore[archived]`, cooldown, bound, or `ignore[update]` is redundant.
 
         None of them holds anything back: the reference is reported as left alone, as it is without a marker.
         """
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         cases = {
             "set[stale-after=90]": Consequence.STALENESS_NEVER_CHECKED,
+            "ignore[archived]": Consequence.ARCHIVAL_NEVER_CHECKED,
             "set[cooldown=30]": Consequence.NEVER_UPDATED,
             "allow[update<5]": Consequence.NEVER_UPDATED,
             "ignore[update]": Consequence.NEVER_UPDATED,

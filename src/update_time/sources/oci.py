@@ -3,8 +3,8 @@
 This is a generic OCI distribution client: it resolves image references on any registry (Docker Hub, ghcr.io,
 mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry's auth via the OCI
 `WWW-Authenticate` challenge, and reading the digest to pin from the tag's manifest. Docker-Hub-specific behavior
-(the push date the cooldown and the staleness check rely on, and credentials that raise the rate limit) lives in
-`docker_hub`.
+(the push date the cooldown and the staleness check rely on, a repository's archival, and credentials that raise the
+rate limit) lives in `docker_hub`.
 """
 
 import re
@@ -23,6 +23,7 @@ from update_time.domain.dependency import (
     LOWEST_VERSION,
     MAIN_VERSION,
     UNDATED,
+    Archival,
     DependencyName,
     DependencyVersion,
     FloatingPin,
@@ -384,7 +385,7 @@ class TagGetter:
         return Source(
             project=_project,
             new_version=self,
-            dates_versions_of=self._dates_the_versions_of,
+            dates_versions_of=_is_on_docker_hub,
             why_image_not_looked_up=self._image_not_looked_up,
         )
 
@@ -399,10 +400,6 @@ class TagGetter:
         if re.search(VARIABLE, f"{pinned.name}:{pinned.version}"):
             return ImageNotLookedUp.THROUGH_A_VARIABLE
         return self.image_not_pulled(pinned)
-
-    def _dates_the_versions_of(self, pinned: PinnedDependency) -> bool:
-        """Return whether the pinned image's versions carry a date, which they do not when no registry is asked."""
-        return self._image_not_looked_up(pinned) is None and _is_on_docker_hub(pinned)
 
 
 @dataclass(frozen=True)
@@ -590,10 +587,15 @@ def _labels(tag: Tag) -> tuple[Tag, ...]:
     return tuple(Tag(name=part) for part in tag.name.split("-"))
 
 
-@ProjectGetter
+@partial(ProjectGetter, declares_archival=is_docker_hub_image)
 def _project(image: DependencyName) -> Project:
-    """Return what the image's registry reports about the image: its newest release, where the registry dates one."""
-    return Project(newest=_newest_release(image))
+    """Return what the image's registry reports about the image: its newest release and its archival, where it can."""
+    return Project(newest=_newest_release(image), archival=_archival(image))
+
+
+def _archival(image: str) -> Archival | None:
+    """Return whether the image's repository is archived, or None where its registry does not say."""
+    return docker_hub.archival(_repository(image)) if is_docker_hub_image(image) else None
 
 
 def _newest_release(image: str) -> Release | None:
