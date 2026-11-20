@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.io import network as network_module
 from update_time.io.network import report_network_settings
 
@@ -13,13 +13,11 @@ from tests.helpers import patch_environ
 class ReportNetworkSettingsTest(unittest.TestCase):
     """Unit tests for logging the network settings."""
 
-    @kills(
-        Mutation(
-            network_module._redacted_url,
-            '":".join(_REDACTED for part',
-            '":".join(part for part',
-            "a proxy's user and password are written to the log",
-        )
+    @kills.replace(
+        network_module._redacted_url,
+        '":".join(_REDACTED for part',
+        '":".join(part for part',
+        "a proxy's user and password are written to the log",
     )
     def test_a_proxy_is_logged_with_its_user_and_password_redacted(self):
         """Test that a proxy is logged as its URL with a user and a password each redacted, or as unreadable."""
@@ -46,19 +44,16 @@ class ReportNetworkSettingsTest(unittest.TestCase):
                 report_network_settings(logger)
                 logger.network_settings.assert_called_once_with({"https": logged}, "", "")
 
-    @kills(
-        Mutation(
-            network_module.report_network_settings,
-            'or os.environ.get("CURL_CA_BUNDLE") or',
-            "or",
-            "a CA bundle CURL_CA_BUNDLE names is logged as the default one, though requests uses it",
-        ),
-        Mutation(
-            network_module.report_network_settings,
-            'os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")',
-            'os.environ.get("CURL_CA_BUNDLE") or os.environ.get("REQUESTS_CA_BUNDLE")',
-            "the CA bundle CURL_CA_BUNDLE names is logged, though requests uses the one REQUESTS_CA_BUNDLE names",
-        ),
+    @kills.delete(
+        network_module.report_network_settings,
+        ' os.environ.get("CURL_CA_BUNDLE") or',
+        "a CA bundle CURL_CA_BUNDLE names is logged as the default one, though requests uses it",
+    )
+    @kills.replace(
+        network_module.report_network_settings,
+        'os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")',
+        'os.environ.get("CURL_CA_BUNDLE") or os.environ.get("REQUESTS_CA_BUNDLE")',
+        "the CA bundle CURL_CA_BUNDLE names is logged, though requests uses the one REQUESTS_CA_BUNDLE names",
     )
     def test_the_ca_bundle_is_read_from_requests_ca_bundle_first_and_curl_ca_bundle_second(self):
         """Test that REQUESTS_CA_BUNDLE wins over CURL_CA_BUNDLE, and that CURL_CA_BUNDLE is read without it."""

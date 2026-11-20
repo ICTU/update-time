@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.primitives.location import Location
 
 from tests.helpers import patch_pathlib_path
@@ -20,13 +20,10 @@ class LocationTest(unittest.TestCase):
         """Test that a location without a line renders as the relative path alone, with no trailing colon."""
         self.assertEqual(str(Location(Path.cwd() / "docs" / "requirements.txt")), "docs/requirements.txt")
 
-    @kills(
-        Mutation(
-            Location.relative,
-            "self.path.parts[:2] == cwd.parts[:2]",
-            "True",
-            "a path sharing only the root with the working directory is logged with a `..` for every directory",
-        )
+    @kills.force_true(
+        Location.relative,
+        "self.path.parts[:2] == cwd.parts[:2]",
+        "a path sharing only the root with the working directory is logged with a `..` for every directory",
     )
     @patch_pathlib_path(cwd=Path("/repository/sub"))
     def test_relative_keeps_a_path_that_shares_only_the_root_with_the_working_directory(self):
@@ -37,13 +34,11 @@ class LocationTest(unittest.TestCase):
         """Test that a path that is relative already stays as it is."""
         self.assertEqual(Location(Path("docs/requirements.txt")).relative(), Path("docs/requirements.txt"))
 
-    @kills(
-        Mutation(
-            Location.relative,
-            "self.path.parts[:2] == cwd.parts[:2]",
-            "self.path.is_relative_to(cwd)",
-            "a path above the working directory is logged as its absolute path",
-        )
+    @kills.replace(
+        Location.relative,
+        "self.path.parts[:2] == cwd.parts[:2]",
+        "self.path.is_relative_to(cwd)",
+        "a path above the working directory is logged as its absolute path",
     )
     @patch_pathlib_path(cwd=Path("/repository/sub"))
     def test_relative_walks_up_to_a_path_outside_the_working_directory(self):

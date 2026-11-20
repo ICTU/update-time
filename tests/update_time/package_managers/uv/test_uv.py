@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.manifests import pyproject_config
@@ -52,13 +52,11 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         configure_cooldown(pyproject_toml)
         return pyproject_toml
 
-    @kills(
-        Mutation(
-            uv,
-            'remove this comment to set exclude-newer yourself"',
-            'remove this comment to prevent Update-time from changing it"',
-            "the managed-by comment does not name the setting it hands over",
-        )
+    @kills.replace(
+        uv,
+        'remove this comment to set exclude-newer yourself"',
+        'remove this comment to prevent Update-time from changing it"',
+        "the managed-by comment does not name the setting it hands over",
     )
     def test_writes_when_absent(self):
         """Test that the cooldown is written, with the managed-by comment, when the project configures none."""
@@ -82,13 +80,10 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         self.assertIn("exclude-newer-package = { msgpack = false }", written)
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
 
-    @kills(
-        Mutation(
-            uv.configure_cooldown,
-            "_LOG.uv_cooldown_not_set(pyproject_toml)",
-            "pass",
-            "a pyproject.toml that cannot hold the cooldown is passed over without a word",
-        )
+    @kills.delete_statement(
+        uv.configure_cooldown,
+        "_LOG.uv_cooldown_not_set(pyproject_toml)",
+        "a pyproject.toml that cannot hold the cooldown is passed over without a word",
     )
     def test_warns_about_a_file_whose_tool_tables_cannot_hold_the_cooldown(self):
         """Test that a pyproject.toml whose `tool` is not a table is warned about, and neither written nor logged."""
@@ -96,14 +91,12 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         pyproject_toml.write_text.assert_not_called()
         self.assert_logged(message_of(Logger.uv_cooldown_not_set), location=ANY)
 
-    @kills(
-        Mutation(
-            uv.configure_cooldown,
-            "# A user-set exclude-newer: leave it alone.\n"
-            "            _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())",
-            "# A user-set exclude-newer: leave it alone.\n            pass",
-            "the log does not say that the project's own exclude-newer overrides the run's cooldown",
-        )
+    @kills.replace(
+        uv.configure_cooldown,
+        "# A user-set exclude-newer: leave it alone.\n"
+        "            _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())",
+        "# A user-set exclude-newer: leave it alone.\n            pass",
+        "the log does not say that the project's own exclude-newer overrides the run's cooldown",
     )
     def test_leaves_a_user_value_untouched(self):
         """Test that an exclude-newer without the managed-by comment is left alone, and logged as the cooldown."""
@@ -112,20 +105,18 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         self.assert_no_info_logged()
         self.assert_project_cooldown_logged(pyproject_toml, "uv exclude-newer")
 
-    @kills(
-        Mutation(
-            uv.settings_hold_exclude_newer,
-            "file.parent, file",
-            "Path.cwd(), file",
-            "uv reads the settings of the directory Update-time runs in rather than those of the project",
-        ),
-        Mutation(
-            uv.configure_cooldown,
-            "# An exclude-newer set outside the file, such as in a uv.toml: leave it alone.\n"
-            "        _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())",
-            "# An exclude-newer set outside the file, such as in a uv.toml: leave it alone.\n        pass",
-            "the log does not say that an exclude-newer in uv's settings overrides the run's cooldown",
-        ),
+    @kills.replace(
+        uv.settings_hold_exclude_newer,
+        "file.parent",
+        "Path.cwd()",
+        "uv reads the settings of the directory Update-time runs in rather than those of the project",
+    )
+    @kills.replace(
+        uv.configure_cooldown,
+        "# An exclude-newer set outside the file, such as in a uv.toml: leave it alone.\n"
+        "        _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())",
+        "# An exclude-newer set outside the file, such as in a uv.toml: leave it alone.\n        pass",
+        "the log does not say that an exclude-newer in uv's settings overrides the run's cooldown",
     )
     def test_leaves_an_exclude_newer_that_uvs_settings_hold_elsewhere(self):
         """Test that nothing is written where uv's settings, in the file's directory, hold an `exclude-newer`."""
@@ -146,13 +137,10 @@ class ConfigureCooldownTest(UvSettingsTestCase):
                 self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', pyproject_toml.write_text.call_args.args[0])
                 self.assert_logged_among_others(message_of(Logger.uv_settings_unreadable), location=ANY)
 
-    @kills(
-        Mutation(
-            uv.configure_cooldown,
-            'not is_installed("uv")',
-            "False",
-            "Update-time writes a cooldown for a missing uv, which nothing reads",
-        )
+    @kills.force_false(
+        uv.configure_cooldown,
+        'not is_installed("uv")',
+        "Update-time writes a cooldown for a missing uv, which nothing reads",
     )
     def test_writes_nothing_where_uv_is_not_on_the_path(self):
         """Test that Update-time neither asks a missing uv for its settings nor writes a cooldown for it."""
@@ -173,13 +161,10 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         pyproject_toml = self.configure(pyproject("a==1.0") + _managed("7 days"))
         self.assertIn('exclude-newer = "14 days"', pyproject_toml.write_text.call_args.args[0])
 
-    @kills(
-        Mutation(
-            uv.configure_cooldown,
-            '_LOG.project_cooldown(pyproject_toml, "UV_EXCLUDE_NEWER", COOLDOWN.get())',
-            "pass",
-            "the log does not say that UV_EXCLUDE_NEWER overrides the run's cooldown",
-        )
+    @kills.delete(
+        uv.configure_cooldown,
+        '_LOG.project_cooldown(pyproject_toml, "UV_EXCLUDE_NEWER", COOLDOWN.get())',
+        "the log does not say that UV_EXCLUDE_NEWER overrides the run's cooldown",
     )
     @patch_environ({"UV_EXCLUDE_NEWER": "2024-01-01"})
     def test_environment_override_writes_nothing(self):
@@ -247,14 +232,12 @@ class WorkspaceTableTest(unittest.TestCase):
         """Test that a missing/unreadable pyproject.toml (e.g. an ancestor with none) yields None, not an error."""
         self.assertIsNone(_workspace_table(Mock(read_text=Mock(side_effect=OSError))))
 
-    @kills(
-        Mutation(
-            pyproject_config,
-            '"workspace"), _is_table',
-            '"workspace"), bool',
-            "a pyproject.toml whose workspace is not a table stops the walk up the tree with a traceback",
-            raises="AttributeError: 'str' object has no attribute 'get'",
-        ),
+    @kills.replace(
+        pyproject_config,
+        '"workspace"), _is_table',
+        '"workspace"), bool',
+        "a pyproject.toml whose workspace is not a table stops the walk up the tree with a traceback",
+        raises="AttributeError: 'str' object has no attribute 'get'",
     )
     def test_malformed_pyproject_toml(self):
         """Test that an unrelated, malformed pyproject.toml up the tree yields None instead of crashing."""
@@ -278,25 +261,21 @@ class ByWorkspaceTest(LoggingTestCase):
         with FakeFiles(files).patched():
             return [list(group) for group in uv.by_workspace(PyprojectToml(path) for path in projects)]
 
-    @kills(
-        Mutation(
-            uv._path_sourced_roots,
-            "for path in _sourcing_files(project.path)}",
-            "for path in [project.path]}",
-            "the order passes over the path sources of a workspace root, which its members inherit",
-        ),
-        Mutation(
-            uv._path_sourced_projects,
-            "\n        if source.dependency in declared",
-            "",
-            "the order counts a source that uv passes over, so it finds a cycle uv does not have",
-        ),
-        Mutation(
-            uv._ordered_workspaces,
-            "_LOG.path_source_cycle(root for root in workspaces if root in cycle)",
-            "pass",
-            "a cycle of path sources has its workspaces updated together without saying why",
-        ),
+    @kills.replace(
+        uv._path_sourced_roots,
+        "_sourcing_files(project.path)",
+        "[project.path]",
+        "the order passes over the path sources of a workspace root, which its members inherit",
+    )
+    @kills.delete(
+        uv._path_sourced_projects,
+        "if source.dependency in declared",
+        "the order counts a source that uv passes over, so it finds a cycle uv does not have",
+    )
+    @kills.delete(
+        uv._ordered_workspaces,
+        "_LOG.path_source_cycle(root for root in workspaces if root in cycle)",
+        "a cycle of path sources has its workspaces updated together without saying why",
     )
     def test_a_workspace_comes_after_the_workspaces_it_sources_by_path(self):
         """Test that each group comes after the groups it sources by path, and that a cycle forms one group."""

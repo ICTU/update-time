@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
@@ -65,13 +65,11 @@ class _ScriptLockTestCase(UvLockTestCase):
 class ScriptLockTest(_ScriptLockTestCase):
     """Unit tests for the exact pins of a script, which take the versions uv locks for the script."""
 
-    @kills(
-        Mutation(
-            lock._with_cutoff,
-            "cooldown_cutoff(COOLDOWN.get())",
-            "cooldown_cutoff(0)",
-            "uv locks a script, or a workspace without a lock, without the cooldown `--cooldown` sets",
-        ),
+    @kills.replace(
+        lock._with_cutoff,
+        "cooldown_cutoff(COOLDOWN.get())",
+        "cooldown_cutoff(0)",
+        "uv locks a script, or a workspace without a lock, without the cooldown `--cooldown` sets",
     )
     def test_a_script_without_a_lock_takes_the_locked_versions_and_is_left_without_a_lock(
         self, run: Mock, get: Mock, glob: Mock
@@ -109,13 +107,11 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assertEqual(["--upgrade" in command for command in uv_locks(run)], [False, True, False])
         self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [True, True, False])
 
-    @kills(
-        Mutation(
-            lock._with_cutoff,
-            "settings_hold_exclude_newer(target.command,",
-            "settings_hold_exclude_newer(_UV_LOCK,",
-            "Update-time asks uv's settings for the directory, leaving out the script's own exclude-newer",
-        )
+    @kills.replace(
+        lock._with_cutoff,
+        "settings_hold_exclude_newer(target.command,",
+        "settings_hold_exclude_newer(_UV_LOCK,",
+        "Update-time asks uv's settings for the directory, leaving out the script's own exclude-newer",
     )
     def test_a_script_locks_without_a_cutoff_where_uvs_settings_for_the_script_hold_an_exclude_newer(
         self, run: Mock, get: Mock, glob: Mock
@@ -155,13 +151,10 @@ class ScriptLockTest(_ScriptLockTestCase):
         published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
         self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
 
-    @kills(
-        Mutation(
-            uv_module.declarations_of,
-            "if isinstance(file, PyprojectToml) else frozenset()",
-            "",
-            "a script takes on the sources of a workspace root above it, which `uv lock --script` ignores",
-        )
+    @kills.delete(
+        uv_module.declarations_of,
+        "if isinstance(file, PyprojectToml) else frozenset()",
+        "a script takes on the sources of a workspace root above it, which `uv lock --script` ignores",
     )
     def test_a_pin_the_workspace_root_beside_the_script_sources_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pin moves and is reported, though a workspace root beside the script sources its package."""
@@ -172,13 +165,10 @@ class ScriptLockTest(_ScriptLockTestCase):
         published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
         self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
 
-    @kills(
-        Mutation(
-            lock._LockUpdate._restore_lock,
-            "failure = log.lock_not_removed if target.uv_lock_text is None else log.file_not_restored",
-            "failure = log.file_not_restored",
-            "the run reports a lock it cannot remove as one it cannot give back the text it held before the run",
-        ),
+    @kills.delete(
+        lock._LockUpdate._restore_lock,
+        "log.lock_not_removed if target.uv_lock_text is None else ",
+        "the run reports a lock it cannot remove as one it cannot give back the text it held before the run",
     )
     def test_a_lock_the_run_cannot_remove_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that a lock the run created and cannot remove is reported, and the script keeps its new pins."""
@@ -207,20 +197,18 @@ class ScriptLockTest(_ScriptLockTestCase):
             (message_of(Logger.lock_not_read), {"location": Location(other_lock), "error": str(error)})
         )
 
-    @kills(
-        Mutation(
-            update_python_inline_script_metadata._scripts,
-            "except (OSError, UnicodeDecodeError) as error:",
-            "except OSError as error:",
-            "a .py file that is not UTF-8 stops the update of every script",
-            raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
-        ),
-        Mutation(
-            update_python_inline_script_metadata._scripts,
-            "_LOG.unreadable_script(path, error)",
-            "_ = error",
-            "the run skips an unreadable .py file without a word",
-        ),
+    @kills.replace(
+        update_python_inline_script_metadata._scripts,
+        "except (OSError, UnicodeDecodeError) as error:",
+        "except OSError as error:",
+        "a .py file that is not UTF-8 stops the update of every script",
+        raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+    )
+    @kills.replace(
+        update_python_inline_script_metadata._scripts,
+        "_LOG.unreadable_script(path, error)",
+        "_ = error",
+        "the run skips an unreadable .py file without a word",
     )
     def test_a_py_file_that_cannot_be_read_is_reported_and_skipped(self, run: Mock, get: Mock, glob: Mock):
         """Test that a .py file the run cannot read is reported, and that uv locks the other scripts alone."""
@@ -248,13 +236,10 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            update_python_inline_script_metadata._scripts,
-            "_LOG.path(path)",
-            "pass",
-            "a script is not logged as checked before the lines about it",
-        )
+    @kills.delete(
+        update_python_inline_script_metadata._scripts,
+        "_LOG.path(path)",
+        "a script is not logged as checked before the lines about it",
     )
     def test_a_failed_uv_lock_of_the_script_as_written_is_reported_at_error_and_nothing_locks_after_it(
         self, run: Mock, get: Mock, glob: Mock
@@ -270,13 +255,11 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_path_logged_first(_SCRIPT)
         self.assert_recognised_marker_logged("package", Location(_SCRIPT, 4), Marker(ignored_scopes=Scope.UPDATE))
 
-    @kills(
-        Mutation(
-            update_python_inline_script_metadata._scripts,
-            "if carries_a_block:\n            _LOG.path(path)",
-            "_LOG.path(path)\n        if carries_a_block:",
-            "every .py file is logged as checked, whether or not it carries a script block",
-        )
+    @kills.replace(
+        update_python_inline_script_metadata._scripts,
+        "if carries_a_block:\n            _LOG.path(path)",
+        "_LOG.path(path)\n        if carries_a_block:",
+        "every .py file is logged as checked, whether or not it carries a script block",
     )
     def test_skip_py_file_without_script_block(self, run: Mock, get: Mock, glob: Mock):
         """Test that a .py file without a `# /// script` block is left untouched and not logged as checked."""
@@ -319,19 +302,16 @@ class ScriptRedundantDirectiveTest(_ScriptLockTestCase):
             Reason.MANAGER_RESOLVES_THE_VERSION, "package", Location(_SCRIPT, 4), "ignore[update]"
         )
 
-    @kills(
-        Mutation(
-            marker_policy._unkept_lock_bound_redundancy,
-            "return None if declaration.pins_a_version else Reason.BOUND_DECIDES_NOTHING",
-            "return None",
-            "a bound on a range in a script without a lock goes unreported, though the run removes its lock",
-        ),
-        Mutation(
-            lock._Member.bounded_declarations,
-            "if self.policy.bound_redundancy(declaration) is None]",
-            "if declaration.narrowable]",
-            "a bound on a range narrows the lock the run removes, and is judged at the version that lock records",
-        ),
+    @kills.delete(
+        marker_policy._unkept_lock_bound_redundancy,
+        "if declaration.pins_a_version else Reason.BOUND_DECIDES_NOTHING",
+        "a bound on a range in a script without a lock goes unreported, though the run removes its lock",
+    )
+    @kills.replace(
+        lock._Member.bounded_declarations,
+        "if self.policy.bound_redundancy(declaration) is None]",
+        "if declaration.narrowable]",
+        "a bound on a range narrows the lock the run removes, and is judged at the version that lock records",
     )
     def test_a_bound_on_a_dependency_without_an_exact_pin_narrows_nothing_and_is_reported_where_the_script_had_no_lock(
         self, run: Mock, get: Mock, glob: Mock

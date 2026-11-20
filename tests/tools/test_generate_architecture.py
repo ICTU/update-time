@@ -9,7 +9,7 @@ from archunitpython.graph.graph_reporter import GraphReportEdge
 from tools import generate_architecture
 from tools.generate_architecture import diagram, main
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 
 
 def _edge(source: str, target: str, count: int = 1) -> GraphReportEdge:
@@ -25,13 +25,11 @@ class DiagramTest(unittest.TestCase):
         drawn = diagram([_edge("io", "domain"), _edge("domain", "primitives")])
         self.assertEqual(sorted(set(re.findall(r"\b[a-z_]+\b", drawn)) - {"flowchart"}), ["domain", "io", "primitives"])
 
-    @kills(
-        Mutation(
-            generate_architecture.diagram,
-            'arrows = [f"  {_layer(edge.source)} --> {_layer(edge.target)}" for edge in edges]',
-            'arrows = [f"  {_layer(edge.source)} -->|{edge.count}| {_layer(edge.target)}" for edge in edges]',
-            "each arrow carries its count of imports, so a new import between two layers leaves the document stale",
-        )
+    @kills.append(
+        generate_architecture.diagram,
+        'arrows = [f"  {_layer(edge.source)} -->',
+        "|{edge.count}|",
+        "each arrow carries its count of imports, so a new import between two layers leaves the document stale",
     )
     def test_an_edge_is_one_arrow_without_its_count_of_imports(self):
         """Test that the layers one layer imports from another get one arrow, which does not count the imports."""

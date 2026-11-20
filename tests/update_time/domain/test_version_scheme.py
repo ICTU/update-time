@@ -2,7 +2,7 @@
 
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import version_scheme
 from update_time.domain.version_scheme import SEMVER
 
@@ -10,43 +10,41 @@ from update_time.domain.version_scheme import SEMVER
 class SemverTest(unittest.TestCase):
     """Unit tests for the semver version scheme."""
 
-    @kills(
-        Mutation(
-            version_scheme._semver_order,
-            "int(number) for number",
-            "number for number",
-            "semver compares release numbers as text, so 1.10 orders below 1.2",
-        ),
-        Mutation(
-            version_scheme._semver_order,
-            "return release, (1,)",
-            "return release, (0,)",
-            "semver orders a release below its own pre-releases",
-        ),
-        Mutation(
-            version_scheme._semver_order,
-            '(0, int(part), "") if part.isdigit()',
-            "(1, 0, part) if part.isdigit()",
-            "semver compares numeric pre-release identifiers as text, so beta.11 orders below beta.2",
-        ),
-        Mutation(
-            version_scheme._semver_order,
-            "else (1, 0, part)",
-            "else (-1, 0, part)",
-            "semver orders an alphanumeric pre-release identifier below a numeric one",
-        ),
-        Mutation(
-            version_scheme._semver_order,
-            "is None:\n        return None",
-            "is None:\n        return (999,), (1,)",
-            "semver orders a version it cannot read above every other version",
-        ),
-        Mutation(
-            version_scheme._semver_order,
-            "is None:\n        return None",
-            "is None:\n        return (), (1,)",
-            "semver orders a version it cannot read below every other version",
-        ),
+    @kills.replace(
+        version_scheme._semver_order,
+        "int(number) for number",
+        "number for number",
+        "semver compares release numbers as text, so 1.10 orders below 1.2",
+    )
+    @kills.replace(
+        version_scheme._semver_order,
+        "return release, (1,)",
+        "return release, (0,)",
+        "semver orders a release below its own pre-releases",
+    )
+    @kills.replace(
+        version_scheme._semver_order,
+        '(0, int(part), "") if part.isdigit()',
+        "(1, 0, part) if part.isdigit()",
+        "semver compares numeric pre-release identifiers as text, so beta.11 orders below beta.2",
+    )
+    @kills.append(
+        version_scheme._semver_order,
+        "else (",
+        "-",
+        "semver orders an alphanumeric pre-release identifier below a numeric one",
+    )
+    @kills.replace(
+        version_scheme._semver_order,
+        "is None:\n        return None",
+        "is None:\n        return (999,), (1,)",
+        "semver orders a version it cannot read above every other version",
+    )
+    @kills.replace(
+        version_scheme._semver_order,
+        "is None:\n        return None",
+        "is None:\n        return (), (1,)",
+        "semver orders a version it cannot read below every other version",
     )
     def test_a_downgrade_is_a_move_to_a_version_semver_orders_lower(self):
         """Test that a move is a downgrade where semver orders the new version below the version."""

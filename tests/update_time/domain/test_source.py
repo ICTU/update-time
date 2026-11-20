@@ -2,7 +2,7 @@
 
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.source import Source
 
@@ -10,21 +10,17 @@ from update_time.domain.source import Source
 class ReleaseTest(unittest.TestCase):
     """Unit tests for the release a source reports for a version."""
 
-    @kills(
-        Mutation(
-            Source.release,
-            "changes = NO_CHANGES if self.changes is None else self.changes(dependency, version)",
-            "changes = self.changes(dependency, version)",
-            "a source without a changes getter is asked for changes all the same",
-            raises="TypeError: 'NoneType' object is not callable",
-        ),
-        Mutation(
-            Source.release,
-            "published = None if self.publication_date is None else self.publication_date(dependency, version)",
-            "published = self.publication_date(dependency, version)",
-            "a source without a publication getter is asked for a date all the same",
-            raises="TypeError: 'NoneType' object is not callable",
-        ),
+    @kills.delete(
+        Source.release,
+        "NO_CHANGES if self.changes is None else ",
+        "a source without a changes getter is asked for changes all the same",
+        raises="TypeError: 'NoneType' object is not callable",
+    )
+    @kills.delete(
+        Source.release,
+        "None if self.publication_date is None else ",
+        "a source without a publication getter is asked for a date all the same",
+        raises="TypeError: 'NoneType' object is not callable",
     )
     def test_a_source_without_changes_or_dates_releases_the_version_alone(self):
         """Test that a source without a changes getter or a publication getter reports the version and nothing else."""

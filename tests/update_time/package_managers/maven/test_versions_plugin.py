@@ -3,21 +3,16 @@
 import re
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.package_managers.maven import versions_plugin
 
 
 class PreReleasePatternTest(unittest.TestCase):
     """Unit tests for the pattern of versions no goal may adopt."""
 
-    @kills(
-        Mutation(versions_plugin, "milestone|", "", "a milestone spelled out is adopted as if it were a release"),
-        Mutation(
-            versions_plugin,
-            "|[ab][0-9])",
-            ")",
-            "an alpha or beta spelled as Maven's alias is adopted as if it were a release",
-        ),
+    @kills.delete(versions_plugin, "milestone|", "a milestone spelled out is adopted as if it were a release")
+    @kills.delete(
+        versions_plugin, "|[ab][0-9]", "an alpha or beta spelled as Maven's alias is adopted as if it were a release"
     )
     def test_the_pattern_matches_each_pre_release_spelling(self):
         """Test that the pattern matches a pre-release in each spelling, Maven's aliases included."""
@@ -39,13 +34,11 @@ class PreReleasePatternTest(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertIsNotNone(re.fullmatch(versions_plugin._PRE_RELEASES, version))
 
-    @kills(
-        Mutation(
-            versions_plugin,
-            "[ab][0-9])",
-            "[ab])",
-            "an `a` or `b` that Maven reads as an unknown qualifier, and sorts above the release, is held back",
-        ),
+    @kills.replace(
+        versions_plugin,
+        "[ab][0-9])",
+        "[ab])",
+        "an `a` or `b` that Maven reads as an unknown qualifier, and sorts above the release, is held back",
     )
     def test_the_pattern_leaves_releases_and_unknown_qualifiers_alone(self):
         """Test that the pattern leaves a release alone, and an alias letter Maven reads as an unknown qualifier."""
@@ -69,56 +62,42 @@ class OtherVariantsPatternTest(unittest.TestCase):
             with self.subTest(current=current, version=version):
                 self.assertIsNotNone(re.fullmatch(versions_plugin._other_variants(current), version))
 
-    @kills(
-        Mutation(versions_plugin, "(?i:", "(?:", "a release qualifier spelled in capitals counts as a variant"),
-        Mutation(versions_plugin, "ga|", "", "a dependency on a plain release ignores a release qualified as GA"),
-        Mutation(versions_plugin, "|final", "", "a dependency on a plain release ignores a release qualified as Final"),
-        Mutation(
-            versions_plugin, "|release", "", "a dependency on a release qualified as RELEASE ignores the plain releases"
-        ),
-        Mutation(
-            versions_plugin,
-            '"v[0-9]{8}',
-            '"[0-9]{8}',
-            "a dependency on a release dated after a v holds back every update",
-        ),
-        Mutation(
-            versions_plugin, "(-[0-9]{4})?", "", "a dependency on a release dated to the minute holds back every update"
-        ),
-        Mutation(versions_plugin, "|sp[0-9]*", "", "a dependency on a service pack holds back every later release"),
-        Mutation(
-            versions_plugin, "|-[0-9]+)?", ")?", "a dependency on a revision holds back every release but that revision"
-        ),
-        Mutation(
-            versions_plugin._variant_pattern,
-            r"({_PRE_RELEASE_QUALIFIER}(?![a-z]))?",
-            "",
-            "a dependency on a pre-release never moves to its release",
-        ),
-        Mutation(
-            versions_plugin._variant_pattern,
-            "(?![a-z]))?",
-            ".*)?",
-            "a dependency on a pre-release of a variant moves to the plain release",
-        ),
-        Mutation(
-            versions_plugin._variant_pattern,
-            "(?![a-z]))?",
-            ")?",
-            "a variant starting with an m is read as a milestone",
-        ),
-        Mutation(
-            versions_plugin._variant_pattern,
-            "(?![a-z]))?",
-            "(?=[-._]))?",
-            "a dependency on a pre-release ending its version never moves to its release",
-        ),
-        Mutation(
-            versions_plugin._variant_pattern,
-            "version.removesuffix(_SNAPSHOT)",
-            "version",
-            "a property on a snapshot never moves to a release",
-        ),
+    @kills.replace(versions_plugin, "(?i:", "(?:", "a release qualifier spelled in capitals counts as a variant")
+    @kills.delete(versions_plugin, "ga|", "a dependency on a plain release ignores a release qualified as GA")
+    @kills.delete(versions_plugin, "|final", "a dependency on a plain release ignores a release qualified as Final")
+    @kills.delete(
+        versions_plugin, "|release", "a dependency on a release qualified as RELEASE ignores the plain releases"
+    )
+    @kills.replace(
+        versions_plugin, '"v[0-9]{8}', '"[0-9]{8}', "a dependency on a release dated after a v holds back every update"
+    )
+    @kills.delete(
+        versions_plugin, "(-[0-9]{4})?", "a dependency on a release dated to the minute holds back every update"
+    )
+    @kills.delete(versions_plugin, "|sp[0-9]*", "a dependency on a service pack holds back every later release")
+    @kills.delete(versions_plugin, "|-[0-9]+", "a dependency on a revision holds back every release but that revision")
+    @kills.delete(
+        versions_plugin._variant_pattern,
+        r"({_PRE_RELEASE_QUALIFIER}(?![a-z]))?",
+        "a dependency on a pre-release never moves to its release",
+    )
+    @kills.replace(
+        versions_plugin._variant_pattern,
+        "(?![a-z]))?",
+        ".*)?",
+        "a dependency on a pre-release of a variant moves to the plain release",
+    )
+    @kills.delete(versions_plugin._variant_pattern, "(?![a-z])", "a variant starting with an m is read as a milestone")
+    @kills.replace(
+        versions_plugin._variant_pattern,
+        "(?![a-z]))?",
+        "(?=[-._]))?",
+        "a dependency on a pre-release ending its version never moves to its release",
+    )
+    @kills.delete(
+        versions_plugin._variant_pattern,
+        ".removesuffix(_SNAPSHOT)",
+        "a property on a snapshot never moves to a release",
     )
     def test_the_pattern_leaves_a_version_on_the_same_variant_alone(self):
         """Test that the pattern leaves a version on the current variant alone.
@@ -146,13 +125,11 @@ class OtherVariantsPatternTest(unittest.TestCase):
             with self.subTest(current=current, version=version):
                 self.assertIsNone(re.fullmatch(versions_plugin._other_variants(current), version))
 
-    @kills(
-        Mutation(
-            versions_plugin._other_variants,
-            '"|".join(unique(map(_variant_pattern, versions)))',
-            "_variant_pattern(versions[0])",
-            "an artefact declared on two variants holds back every version on the second",
-        )
+    @kills.replace(
+        versions_plugin._other_variants,
+        '"|".join(unique(map(_variant_pattern, versions)))',
+        "_variant_pattern(versions[0])",
+        "an artefact declared on two variants holds back every version on the second",
     )
     def test_the_pattern_for_two_variants_leaves_a_version_on_either_alone(self):
         """Test that the pattern for versions on two variants matches a version on neither, and leaves either alone."""
@@ -161,13 +138,11 @@ class OtherVariantsPatternTest(unittest.TestCase):
         self.assertIsNone(re.fullmatch(pattern, "33.1.0-jre"))
         self.assertIsNone(re.fullmatch(pattern, "33.1.0-android"))
 
-    @kills(
-        Mutation(
-            versions_plugin._other_variants,
-            "if not all(",
-            "if not any(",
-            "a declaration without a number holds back what its artefact's other declaration does not keep",
-        )
+    @kills.replace(
+        versions_plugin._other_variants,
+        "if not all(",
+        "if not any(",
+        "a declaration without a number holds back what its artefact's other declaration does not keep",
     )
     def test_the_pattern_for_a_version_without_a_number_is_empty(self):
         """Test that the pattern is empty for a version that does not start with a number, and beside one that does."""

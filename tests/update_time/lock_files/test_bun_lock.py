@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.lock_files import bun_lock
 
 from tests.helpers import mock_path
@@ -13,31 +13,26 @@ from tests.update_time.lock_files.helpers import bun_lock_contents
 class LockedVersionsTest(unittest.TestCase):
     """Unit tests for the versions a bun.lock records for the dependencies of each workspace."""
 
-    @kills(
-        Mutation(
-            bun_lock._workspace_versions,
-            "for section in DEPENDENCY_SECTIONS",
-            "for section in DEPENDENCY_SECTIONS[:1]",
-            "the versions bun moved for dev and optional dependencies go unreported",
-        ),
-        Mutation(
-            bun_lock._workspace_versions,
-            " if path else None",
-            "",
-            "a root named after a package it depends on gets the versions that package's own dependencies resolve to",
-        ),
-        Mutation(
-            bun_lock._entry,
-            "packages[own] if member is not None and own in packages else packages[dependency]",
-            "packages[dependency]",
-            "a member that resolves a dependency to a version of its own gets the version the workspaces share",
-        ),
-        Mutation(
-            bun_lock._version,
-            ' or ":" in version',
-            "",
-            "a workspace member, a git repository, or a path reads as the version of a dependency",
-        ),
+    @kills.append(
+        bun_lock._workspace_versions,
+        "for section in DEPENDENCY_SECTIONS",
+        "[:1]",
+        "the versions bun moved for dev and optional dependencies go unreported",
+    )
+    @kills.delete(
+        bun_lock._workspace_versions,
+        " if path else None",
+        "a root named after a package it depends on gets the versions that package's own dependencies resolve to",
+    )
+    @kills.delete(
+        bun_lock._entry,
+        "packages[own] if member is not None and own in packages else ",
+        "a member that resolves a dependency to a version of its own gets the version the workspaces share",
+    )
+    @kills.delete(
+        bun_lock._version,
+        ' or ":" in version',
+        "a workspace member, a git repository, or a path reads as the version of a dependency",
     )
     def test_versions_per_workspace(self):
         """Test that each workspace gets the version the lock records for it, and an entry without one is left out."""
@@ -76,14 +71,12 @@ class LockedVersionsTest(unittest.TestCase):
             with self.subTest(case):
                 self.assertEqual(bun_lock.locked_versions(mock_path(bun_lock_contents(workspaces, packages))), expected)
 
-    @kills(
-        Mutation(
-            bun_lock._version,
-            "next(iter(package.elements()), yaml.Document())",
-            "package.elements()[0]",
-            "an empty bun.lock entry stops the run",
-            raises="IndexError: list index out of range",
-        )
+    @kills.replace(
+        bun_lock._version,
+        "next(iter(package.elements()), yaml.Document())",
+        "package.elements()[0]",
+        "an empty bun.lock entry stops the run",
+        raises="IndexError: list index out of range",
     )
     def test_entry_without_a_resolution_is_left_out(self):
         """Test that the lock records no version for a dependency whose entry does not start with a resolution."""
@@ -95,13 +88,10 @@ class LockedVersionsTest(unittest.TestCase):
                 contents = lock.replace(entry, entry_without_a_resolution)
                 self.assertEqual(bun_lock.locked_versions(mock_path(contents)), {Path(): {}})
 
-    @kills(
-        Mutation(
-            bun_lock.locked_versions,
-            ' or "lockfileVersion" not in document',
-            "",
-            "a bun.lock holding merge conflict markers reads as a lock that records nothing",
-        )
+    @kills.delete(
+        bun_lock.locked_versions,
+        ' or "lockfileVersion" not in document',
+        "a bun.lock holding merge conflict markers reads as a lock that records nothing",
     )
     def test_lock_that_does_not_hold_the_json_bun_writes_raises(self):
         """Test that a lock that does not parse, or does not name the version of its format, raises a ValueError."""

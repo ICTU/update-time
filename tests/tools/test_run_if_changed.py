@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 from tools import run_if_changed
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 
 from tests.helpers import FakeFiles
 
@@ -229,13 +229,10 @@ class MainTest(unittest.TestCase):
             self.assertEqual(run_if_changed.main(), _SKIPPED)
         self.assertEqual(_commands_run(run), [])
 
-    @kills(
-        Mutation(
-            run_if_changed.main,
-            "if not status and fingerprints is not None:",
-            "if fingerprints is not None:",
-            "a failing run leaves its fingerprint, so the next run skips the command although it still fails",
-        )
+    @kills.delete(
+        run_if_changed.main,
+        "not status and ",
+        "a failing run leaves its fingerprint, so the next run skips the command although it still fails",
     )
     def test_a_command_that_fails_leaves_no_fingerprint_and_gives_a_failing_exit_status(self):
         """Test that a failing command does not leave a fingerprint, and gives its status, or 1 for the skip status."""
@@ -247,25 +244,22 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(_commands_run(run), [_COMMAND])
                 self.assertNotIn(_RECORD_FILE, files)
 
-    @kills(
-        Mutation(
-            run_if_changed._fingerprint,
-            "node.body = node.body[1:] or [ast.Pass()]",
-            "pass",
-            "an edit to a docstring alone reads as a change to the code, so the tests run all the same",
-        ),
-        Mutation(
-            run_if_changed._fingerprint,
-            "ast.dump(tree)",
-            "ast.dump(tree, include_attributes=True)",
-            "code that moves to another line reads as changed, so a comment above it runs the tests all the same",
-        ),
-        Mutation(
-            run_if_changed._fingerprint,
-            '"pragma" in token.string]',
-            '"never" in token.string]',
-            "a coverage pragma removed alone reads as unchanged, so the coverage gate never sees the line it exposed",
-        ),
+    @kills.delete_statement(
+        run_if_changed._fingerprint,
+        "node.body = node.body[1:] or [ast.Pass()]",
+        "an edit to a docstring alone reads as a change to the code, so the tests run all the same",
+    )
+    @kills.append(
+        run_if_changed._fingerprint,
+        "ast.dump(tree",
+        ", include_attributes=True",
+        "code that moves to another line reads as changed, so a comment above it runs the tests all the same",
+    )
+    @kills.replace(
+        run_if_changed._fingerprint,
+        '"pragma" in token.string]',
+        '"never" in token.string]',
+        "a coverage pragma removed alone reads as unchanged, so the coverage gate never sees the line it exposed",
     )
     def test_an_edit_to_docstrings_or_comments_alone_skips_the_command(self):
         """Test that editing docstrings or comments alone skips the command, and editing a coverage pragma does not."""
@@ -297,14 +291,12 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(run_if_changed.main(), exit_status)
                 self.assertEqual(files[_RECORD_FILE] != fingerprint, rewritten)
 
-    @kills(
-        Mutation(
-            run_if_changed._source,
-            "except FileNotFoundError:",
-            "except ValueError:",
-            "a file removed but not yet committed ends the run with a traceback, which reads as unchanged code",
-            raises="FileNotFoundError: [Errno 2] No such file or directory: 'src/other.py'",
-        )
+    @kills.replace(
+        run_if_changed._source,
+        "except FileNotFoundError:",
+        "except ValueError:",
+        "a file removed but not yet committed ends the run with a traceback, which reads as unchanged code",
+        raises="FileNotFoundError: [Errno 2] No such file or directory: 'src/other.py'",
     )
     def test_a_python_file_added_or_removed_since_the_fingerprint_is_a_code_change(self):
         """Test that, after a first run, a file added or removed is reported as a code change."""
@@ -325,14 +317,12 @@ class MainTest(unittest.TestCase):
                 listed.extend(added)
                 self.assertEqual(run_if_changed.main(), 0)
 
-    @kills(
-        Mutation(
-            run_if_changed._fingerprints,
-            "except SyntaxError as error:",
-            "except ValueError as error:",
-            "a file that does not parse ends the run with a traceback rather than running the tests",
-            raises="SyntaxError: invalid syntax",
-        )
+    @kills.replace(
+        run_if_changed._fingerprints,
+        "except SyntaxError as error:",
+        "except ValueError as error:",
+        "a file that does not parse ends the run with a traceback rather than running the tests",
+        raises="SyntaxError: invalid syntax",
     )
     def test_a_python_file_that_does_not_parse_is_a_code_change_and_says_so(self):
         """Test that a file that does not parse is reported as a code change, and that stderr names it."""
@@ -345,15 +335,13 @@ class MainTest(unittest.TestCase):
         self.assertIn(str(_ANSWER), stderr.getvalue())
         self.assertNotIn(_RECORD_FILE, files)
 
-    @kills(
-        Mutation(
-            run_if_changed._recorded,
-            "except json.JSONDecodeError as error:",
-            "except KeyError as error:",
-            "a fingerprint left half written ends every run with a traceback until someone removes it",
-            raises="json.decoder.JSONDecodeError: "
-            "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
-        )
+    @kills.replace(
+        run_if_changed._recorded,
+        "except json.JSONDecodeError as error:",
+        "except KeyError as error:",
+        "a fingerprint left half written ends every run with a traceback until someone removes it",
+        raises="json.decoder.JSONDecodeError: "
+        "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
     )
     def test_a_fingerprint_that_does_not_parse_runs_the_command_and_says_so(self):
         """Test that a fingerprint that is not JSON runs the command, and that stderr names the fingerprint."""
@@ -365,20 +353,17 @@ class MainTest(unittest.TestCase):
             self.assertEqual(run_if_changed.main(), 0)
         self.assertIn(str(_RECORD_FILE), stderr.getvalue())
 
-    @kills(
-        Mutation(
-            run_if_changed._paths,
-            "if result.returncode:",
-            "if False:",
-            "a git that exits with an error lists nothing, which reads as an unchanged tree",
-        ),
-        Mutation(
-            run_if_changed._paths,
-            "except OSError as error:",
-            "except ValueError as error:",
-            "a missing git ends the run with a traceback rather than running the tests",
-            raises="FileNotFoundError: [Errno 2] No such file or directory: 'git'",
-        ),
+    @kills.force_false(
+        run_if_changed._paths,
+        "result.returncode",
+        "a git that exits with an error lists nothing, which reads as an unchanged tree",
+    )
+    @kills.replace(
+        run_if_changed._paths,
+        "except OSError as error:",
+        "except ValueError as error:",
+        "a missing git ends the run with a traceback rather than running the tests",
+        raises="FileNotFoundError: [Errno 2] No such file or directory: 'git'",
     )
     def test_a_git_that_fails_is_reported_as_a_change_and_says_why(self):
         """Test that a git that fails or is missing is reported as a change, and that stderr says why."""

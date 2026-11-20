@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.io.log import Logger
 from update_time.manifests import circle_ci_config as circle_ci_config_manifest
@@ -74,13 +74,11 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(config_yml, 1))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            circle_ci_config_manifest.machine_images,
-            '(image := node["machine"]["image"].string()) is not None}\n',
-            '(image := node["machine"]["image"].string()) is not None and ":" in image}\n',
-            "a machine-executor image naming no tag is not collected, so it is looked up on a registry",
-        )
+    @kills.append(
+        circle_ci_config_manifest.machine_images,
+        '(image := node["machine"]["image"].string()) is not None',
+        ' and ":" in image',
+        "a machine-executor image naming no tag is not collected, so it is looked up on a registry",
     )
     def test_machine_image_without_a_tag_is_skipped(self):
         """Test that a machine-executor image naming no tag is left unchanged and looked up nowhere."""
@@ -91,13 +89,11 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.requests.assert_not_called()
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            circle_ci.update_circle_ci_config,
-            "ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE",
-            "ImageNotLookedUp.BUILT_IMAGE",
-            "a machine-executor image is reported as one a Compose file builds",
-        )
+    @kills.replace(
+        circle_ci.update_circle_ci_config,
+        "MACHINE_EXECUTOR_IMAGE",
+        "BUILT_IMAGE",
+        "a machine-executor image is reported as one a Compose file builds",
     )
     def test_machine_image_skipped(self):
         """Test that a machine-executor image is left unchanged, not looked up on Docker Hub, and reported."""

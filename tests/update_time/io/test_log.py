@@ -1,11 +1,11 @@
 """Logger unit tests."""
 
 import contextlib
+import dataclasses
 import logging
 import re
 import signal
 from collections import Counter
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -15,7 +15,7 @@ from unittest.mock import ANY, Mock, patch
 
 from rich.logging import RichHandler
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.dependency import (
     Archival,
@@ -347,13 +347,11 @@ class LoggerTests(TestCase):
                     f"{explanation}",
                 )
 
-    @kills(
-        Mutation(
-            log_module.Logger,
-            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s"',
-            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is"',
-            "the line reports that a reference was left as it is without naming why the file does not pull its image",
-        )
+    @kills.replace(
+        log_module.Logger,
+        '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s"',
+        '"Reference %(dependency)s%(tag)s in %(location)s was left as it is"',
+        "the line reports that a reference was left as it is without naming why the file does not pull its image",
     )
     def test_image_not_looked_up(self, mock_log: Mock):
         """Test that a reference whose image the file does not pull is reported with the reason it does not."""
@@ -367,13 +365,10 @@ class LoggerTests(TestCase):
             "the Compose file builds this image",
         )
 
-    @kills(
-        Mutation(
-            Logger,
-            'was left as it is: the registry does not serve the image\'s "\n        "repository"',
-            'was left as it is"',
-            "the line reports that a reference was left as it is without naming that its repository is not served",
-        )
+    @kills.delete(
+        Logger,
+        ': the registry does not serve the image\'s "\n        "repository',
+        "the line reports that a reference was left as it is without naming that its repository is not served",
     )
     def test_repository_not_served(self, mock_log: Mock):
         """Test that a reference whose registry does not serve the image's repository is reported with that reason."""
@@ -622,13 +617,11 @@ class LoggerTests(TestCase):
             "newest release 5.0.0 was published 512 days ago (> 90)",
         )
 
-    @kills(
-        Mutation(
-            log_module,
-            '"Incompatible Python version %(dependency)s in %(location)s: version %(version)s falls outside the "',
-            '"%(dependency)s %(version)s in %(location)s falls outside the "',
-            "the warning opens with the bare dependency name, unlike every other warning about a dependency",
-        )
+    @kills.replace(
+        log_module,
+        '"Incompatible Python version %(dependency)s in %(location)s: version %(version)s falls outside the "',
+        '"%(dependency)s %(version)s in %(location)s falls outside the "',
+        "the warning opens with the bare dependency name, unlike every other warning about a dependency",
     )
     def test_python_version_outside_requires_python_warning(self, mock_log: Mock):
         """Test that an entry outside the `requires-python` is warned about with a label, as a dependency is."""
@@ -835,7 +828,7 @@ class LoggerTests(TestCase):
         )
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         _new_logger().report_yank(
-            replace(resolved, marker=parse_directives("ignore[update] ignore[yanked] allow[hash-drift]"))
+            dataclasses.replace(resolved, marker=parse_directives("ignore[update] ignore[yanked] allow[hash-drift]"))
         )
         self.assert_message(
             mock_log,
@@ -866,13 +859,11 @@ class LoggerTests(TestCase):
         _new_logger().report_yank(resolved)
         mock_log.assert_not_called()
 
-    @kills(
-        Mutation(
-            log_module.Logger,
-            '_ignoring("the %(advisory)s vulnerability warning")',
-            '_ignoring("the %(advisories)s vulnerability warning")',
-            "the silenced line names a field the log call does not supply, so the line is lost at render time",
-        )
+    @kills.replace(
+        log_module.Logger,
+        '_ignoring("the %(advisory)s vulnerability warning")',
+        '_ignoring("the %(advisories)s vulnerability warning")',
+        "the silenced line names a field the log call does not supply, so the line is lost at render time",
     )
     def test_ignored_vulnerability(self, mock_log: Mock):
         """Test that a vulnerability warning a marker silenced reads with the advisory it silenced."""
@@ -887,13 +878,11 @@ class LoggerTests(TestCase):
             f"in {at('requirements.txt:9')} (update-time: set[vulnerability-level=none])",
         )
 
-    @kills(
-        Mutation(
-            log_module.Logger,
-            '_ignoring("the %(advisory)s vulnerability warning", "--ignore-vulnerability %(identifiers)s")',
-            '_ignoring("the %(identifiers)s vulnerability warning", "--ignore-vulnerability %(advisory)s")',
-            "the run-wide line names what was passed in its subject and the advisory in its cause, swapping the two",
-        )
+    @kills.replace(
+        log_module.Logger,
+        '_ignoring("the %(advisory)s vulnerability warning", "--ignore-vulnerability %(identifiers)s")',
+        '_ignoring("the %(identifiers)s vulnerability warning", "--ignore-vulnerability %(advisory)s")',
+        "the run-wide line names what was passed in its subject and the advisory in its cause, swapping the two",
     )
     def test_globally_ignored_vulnerability(self, mock_log: Mock):
         """Test that the run-wide option's line reads with the advisory, and quotes the identifiers it was passed."""
@@ -1010,13 +999,11 @@ class LoggerTests(TestCase):
             "Running Update-time v0.0.48 on macOS-26.7.1-arm64-arm-64bit-Mach-O with Python 3.14.7",
         )
 
-    @kills(
-        Mutation(
-            log_module.Logger.arguments,
-            "shlex.join(arguments)",
-            '" ".join(arguments)',
-            "an argument holding a space is logged as two arguments",
-        )
+    @kills.replace(
+        log_module.Logger.arguments,
+        "shlex.join(arguments)",
+        '" ".join(arguments)',
+        "an argument holding a space is logged as two arguments",
     )
     def test_arguments_logged_at_debug(self, mock_log: Mock):
         """Test that the command-line arguments are logged at debug level, quoted as the shell reads them."""

@@ -3,7 +3,7 @@
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import Project, Release
 from update_time.domain.staleness import STALE_AFTER, is_stale, release_judged_alike
 
@@ -51,13 +51,11 @@ class IsStaleTest(unittest.TestCase):
 class ReleaseJudgedAlikeTest(unittest.TestCase):
     """Unit tests for telling whether two staleness thresholds judge a project's newest release alike."""
 
-    @kills(
-        Mutation(
-            release_judged_alike,
-            ") != is_stale(",
-            ") or is_stale(",
-            "a threshold that warns about the release, as the run does, is never reported as redundant",
-        )
+    @kills.replace(
+        release_judged_alike,
+        ") != is_stale(",
+        ") or is_stale(",
+        "a threshold that warns about the release, as the run does, is never reported as redundant",
     )
     def test_a_release_both_thresholds_judge_alike(self):
         """Test that a release is returned where neither threshold warns about it, and where both do."""

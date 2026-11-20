@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import cooldown
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
@@ -103,13 +103,10 @@ class GitHubRepositoryTest(unittest.TestCase):
         """Test that a GitHub URL names a repository."""
         self.assert_repository(GitHubRepository("ICTU", "quality-time"), "https://github.com/ICTU/quality-time")
 
-    @kills(
-        Mutation(
-            github.github_repository,
-            "if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:",
-            "if len(path_parts) > 1:",
-            "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
-        )
+    @kills.delete(
+        github.github_repository,
+        " and path_parts[0] != _GITHUB_SPONSORS_PATH",
+        "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
     )
     def test_github_sponsors_url(self):
         """Test that a GitHub sponsors URL does not name a repository."""
@@ -349,14 +346,11 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a tag is skipped, and the skip logged with the reason, when its commit has no committer date."""
         self.assert_tag_skipped("owner/no date", "the commit has no committer date")
 
-    @kills(
-        Mutation(
-            github._committer_date,
-            "not committer or ",
-            "",
-            "a commit whose committer GitHub reports as null ends the run with a traceback",
-            raises="AttributeError: 'NoneType' object has no attribute 'get'",
-        ),
+    @kills.delete(
+        github._committer_date,
+        "not committer or ",
+        "a commit whose committer GitHub reports as null ends the run with a traceback",
+        raises="AttributeError: 'NoneType' object has no attribute 'get'",
     )
     @patch_github(
         releases=[], tags=[github_tag_json("v1.1")], commit={"sha": COMMIT_SHA, "commit": {"committer": None}}
@@ -365,19 +359,16 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a tag is skipped, and the skip logged with the reason, when GitHub reports a null committer."""
         self.assert_tag_skipped("owner/no date", "the commit has no committer date")
 
-    @kills(
-        Mutation(
-            github.get_latest_version,
-            "lambda version: version.version == current,",
-            "lambda version: False,",
-            "a rate-limited commit leaves the reference unpinned, holding back its own version as well",
-        ),
-        Mutation(
-            cooldown.CooldownWalk.past,
-            "if publication.value is not None:",
-            "if True:",
-            "a rate-limited commit is remembered as held back without a date, which the held-back line cannot render",
-        ),
+    @kills.replace(
+        github.get_latest_version,
+        "lambda version: version.version == current,",
+        "lambda version: False,",
+        "a rate-limited commit leaves the reference unpinned, holding back its own version as well",
+    )
+    @kills.force_true(
+        cooldown.CooldownWalk.past,
+        "publication.value is not None",
+        "a rate-limited commit is remembered as held back without a date, which the held-back line cannot render",
     )
     @patch_github(
         releases=[],
@@ -476,14 +467,11 @@ class NewestReleaseTest(LoggingTestCase):
         """Test that a repo whose releases fell behind its tags takes its newest release from the newest tag."""
         self.assertEqual(_newest_release(GitHubRepository("owner", "mixed")), Release("2.0", FRESH_DATE))
 
-    @kills(
-        Mutation(
-            github.TaggedVersion.version_string,
-            "return str(self.version) if self.has_valid_version else self.tag_name",
-            "return str(self.version)",
-            "a release tagged with something that is no version ends the run with a traceback",
-            raises="packaging.version.InvalidVersion: Invalid version: 'nightly'",
-        ),
+    @kills.delete(
+        github.TaggedVersion.version_string,
+        " if self.has_valid_version else self.tag_name",
+        "a release tagged with something that is no version ends the run with a traceback",
+        raises="packaging.version.InvalidVersion: Invalid version: 'nightly'",
     )
     @patch_github(releases=[github_release_json("nightly", published_at=FRESH_DATE)], tags=[])
     def test_release_tagged_with_no_version(self):
@@ -574,14 +562,12 @@ class GetReleaseTest(LoggingTestCase):
         ]
         self.assert_releases("monorepo tagging per package", cases)
 
-    @kills(
-        Mutation(
-            github.release_tags,
-            'for name in names for joiner in ("-v", "-", "@", "/")',
-            'for name in names for joiner in ("-v", "-", "@", "/") if name == package or joiner != "/"',
-            "a monorepo joining the unscoped name and the version with a slash has no changelog reported",
-            raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
-        ),
+    @kills.append(
+        github.release_tags,
+        'for name in names for joiner in ("-v", "-", "@", "/")',
+        ' if name == package or joiner != "/"',
+        "a monorepo joining the unscoped name and the version with a slash has no changelog reported",
+        raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
     )
     @patch_get(
         [
@@ -602,13 +588,11 @@ class GetReleaseTest(LoggingTestCase):
         ]
         self.assert_releases("monorepo tagging without the scope", cases)
 
-    @kills(
-        Mutation(
-            github._package_names,
-            "[package] if unscoped == package else [package, unscoped]",
-            "[package] if unscoped == package else [unscoped, package]",
-            "a repository tagging one version both with and without the scope has the wrong release reported for it",
-        ),
+    @kills.replace(
+        github._package_names,
+        "[package, unscoped]",
+        "[unscoped, package]",
+        "a repository tagging one version both with and without the scope has the wrong release reported for it",
     )
     @patch_get(
         [
@@ -637,13 +621,11 @@ class GetReleaseTest(LoggingTestCase):
         ]
         self.assert_releases("monorepo tagging the version too", cases)
 
-    @kills(
-        Mutation(
-            github.release_tags,
-            '("-v", "-", "@", "/")',
-            '("-", "-v", "@", "/")',
-            "a repository spelling one version's tag both ways has the wrong release reported for it",
-        ),
+    @kills.replace(
+        github.release_tags,
+        '"-v", "-"',
+        '"-", "-v"',
+        "a repository spelling one version's tag both ways has the wrong release reported for it",
     )
     @patch_get(
         [
@@ -719,14 +701,12 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
             changes_from_release(GitHubRepository("owner", "repo without matching release"), "any", "1.1"), ""
         )
 
-    @kills(
-        Mutation(
-            github.TaggedVersion.from_release,
-            'release.get("body")',
-            'release["body"]',
-            "a release GitHub answers without a body ends the run with a traceback",
-            raises="KeyError: 'body'",
-        ),
+    @kills.replace(
+        github.TaggedVersion.from_release,
+        'release.get("body")',
+        'release["body"]',
+        "a release GitHub answers without a body ends the run with a traceback",
+        raises="KeyError: 'body'",
     )
     @patch_get(
         [
@@ -765,13 +745,11 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         responses[file_url("CHANGELOG.md")] = mock_response(text=self.CHANGELOG)
         respond_per_url(mock_get, responses)
 
-    @kills(
-        Mutation(
-            github.changes_from_changelog_file,
-            "if directory:",
-            "_list_contents(repository)\n    if directory:",
-            "a package whose own directory holds its changelog costs a listing of the repository's root as well",
-        ),
+    @kills.prepend(
+        github.changes_from_changelog_file,
+        "if directory:",
+        "_list_contents(repository)\n    ",
+        "a package whose own directory holds its changelog costs a listing of the repository's root as well",
     )
     @patch("requests.Session.get")
     def test_changelog_file_in_a_directory(self, mock_get: Mock):
@@ -789,13 +767,11 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         self.assertEqual(changes, self.CHANGES)
         self.assertIn(contents_url(self.MONOREPO, "packages/package"), requested_urls(mock_get))
 
-    @kills(
-        Mutation(
-            github._changes_from_files,
-            'markdown=markdown.is_file(entry["name"])',
-            "markdown=False",
-            "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
-        ),
+    @kills.replace(
+        github._changes_from_files,
+        'markdown=markdown.is_file(entry["name"])',
+        "markdown=False",
+        "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
     )
     @patch("requests.Session.get")
     def test_the_changes_link_the_files_page_in_the_markup_its_extension_names(self, mock_get: Mock):
@@ -812,13 +788,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                 self.assertEqual(changes.markdown, markdown)
                 self.assertEqual(changes.url, page_url(name))
 
-    @kills(
-        Mutation(
-            github,
-            "@cache\ndef _changelog_file(",
-            "def _changelog_file(",
-            "a changelog file is downloaded again for every package that falls back to it",
-        ),
+    @kills.uncache(
+        github._changelog_file, "a changelog file is downloaded again for every package that falls back to it"
     )
     @patch("requests.Session.get")
     def test_changelog_file_is_fetched_once(self, mock_get: Mock):
@@ -828,13 +799,10 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.0", "packages/two"), "")
         self.assertEqual(requested_urls(mock_get).count(file_url("CHANGELOG.md")), 1)
 
-    @kills(
-        Mutation(
-            github._list_contents,
-            "(HTTPStatus.NOT_FOUND,) if directory else ()",
-            "()",
-            "a package whose registry metadata names a directory that moved warns on every run",
-        ),
+    @kills.delete(
+        github._list_contents,
+        "(HTTPStatus.NOT_FOUND,) if directory else ",
+        "a package whose registry metadata names a directory that moved warns on every run",
     )
     @patch("requests.Session.get")
     def test_directory_that_cannot_be_listed_leaves_the_root_to_supply_the_changes(self, mock_get: Mock):
@@ -861,14 +829,11 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                 else:
                     self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            github._list,
-            "return tuple(listing) if isinstance(listing, list) else ()",
-            "return tuple(listing)",
-            "a directory the contents endpoint answers with a file ends the run with a traceback",
-            raises="TypeError: string indices must be integers, not 'str'",
-        ),
+    @kills.delete(
+        github._list,
+        " if isinstance(listing, list) else ()",
+        "a directory the contents endpoint answers with a file ends the run with a traceback",
+        raises="TypeError: string indices must be integers, not 'str'",
     )
     @patch("requests.Session.get")
     def test_directory_answered_as_a_file(self, mock_get: Mock):
@@ -941,13 +906,8 @@ class GitHubRateLimitTest(LoggingTestCase):
                 archival(GitHubRepository("owner", "repository"))
                 self.assert_error_logged(message, limit=60, reset=utc_date_and_time(self.RESET))
 
-    @kills(
-        Mutation(
-            github,
-            "@cache\ndef _log_used_up_rate_limit(",
-            "def _log_used_up_rate_limit(",
-            "a used-up rate limit is reported once for every request GitHub refuses",
-        )
+    @kills.uncache(
+        github._log_used_up_rate_limit, "a used-up rate limit is reported once for every request GitHub refuses"
     )
     @patch_environ()
     @patch("requests.Session.get")
@@ -961,13 +921,11 @@ class GitHubRateLimitTest(LoggingTestCase):
             message_of(Logger.github_rate_limit_used_up), limit=60, reset=utc_date_and_time(self.RESET)
         )
 
-    @kills(
-        Mutation(
-            github._report_used_up_rate_limit,
-            'if response.headers.get("X-RateLimit-Remaining") != "0":',
-            "if response.ok:",
-            "every request GitHub refuses is reported as a used-up rate limit, whatever the reason",
-        )
+    @kills.replace(
+        github._report_used_up_rate_limit,
+        'if response.headers.get("X-RateLimit-Remaining") != "0":',
+        "if response.ok:",
+        "every request GitHub refuses is reported as a used-up rate limit, whatever the reason",
     )
     @patch_environ()
     @patch("requests.Session.get")

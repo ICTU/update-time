@@ -7,7 +7,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.bound import Verb
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.markers import parser as parser_module
@@ -72,13 +72,11 @@ class ParseMarkerScopeTest(unittest.TestCase):
                 self.assertEqual(marker, Marker())
                 self.assertEqual(marker.default_directives, (directive,))
 
-    @kills(
-        Mutation(
-            Marker.merge,
-            "default_directives=self.default_directives + other.default_directives,",
-            "default_directives=self.default_directives or other.default_directives,",
-            "a marker asking for the default more than once is reported for the first such directive alone",
-        )
+    @kills.replace(
+        Marker.merge,
+        "default_directives=self.default_directives + other.default_directives,",
+        "default_directives=self.default_directives or other.default_directives,",
+        "a marker asking for the default more than once is reported for the first such directive alone",
     )
     def test_every_directive_asking_for_the_default_is_recorded_in_the_order_written(self):
         """Test that the directives asking for the default in a bracket and on the line above are all recorded."""
@@ -172,25 +170,18 @@ class ParseMarkerSetTest(unittest.TestCase):
                 marker = parse_marker(_line(f"humanize==4.15.0  # update-time: set[{item}]"))
                 self.assertEqual(marker, expected)
 
-    @kills(
-        Mutation(
-            parser_module,
-            "(?P<key>{_STALE_AFTER}|{_COOLDOWN})",
-            r"(?P<key>[\w-]+)",
-            "a `set` item takes any key, so one naming a scope rather than an option sets a value",
-        ),
-        Mutation(
-            parser_module,
-            r"=(?P<days>\d+)",
-            r"=(?P<days>-?\d+)",
-            "a `set` item takes a negative day count",
-        ),
-        Mutation(
-            parser_module,
-            "(?P<level>{'|'.join([*RISK_LEVELS, NO_RISK_LEVEL])})",
-            r"(?P<level>\w+)",
-            "a `set` item takes any word as a risk level",
-        ),
+    @kills.replace(
+        parser_module,
+        "(?P<key>{_STALE_AFTER}|{_COOLDOWN})",
+        r"(?P<key>[\w-]+)",
+        "a `set` item takes any key, so one naming a scope rather than an option sets a value",
+    )
+    @kills.append(parser_module, r"=(?P<days>", r"-?", "a `set` item takes a negative day count")
+    @kills.replace(
+        parser_module,
+        "(?P<level>{'|'.join([*RISK_LEVELS, NO_RISK_LEVEL])})",
+        r"(?P<level>\w+)",
+        "a `set` item takes any word as a risk level",
     )
     def test_an_unreadable_item_is_rejected(self):
         """Test that a `set` item Update-time cannot read is reported as an invalid item."""

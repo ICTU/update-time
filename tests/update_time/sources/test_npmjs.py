@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import Release, Yank
 from update_time.sources import npmjs
 from update_time.sources.npmjs import (
@@ -58,14 +58,12 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
         """Test that an unreachable registry yields no publication date instead of crashing."""
         self.assertIsNone(get_publication_datetime("package", "1.0"))
 
-    @kills(
-        Mutation(
-            npmjs.get_publication_datetime,
-            '.get("time", {}).get(version))',
-            '.get("time", {})[version])',
-            "a version the registry dates nowhere in its time map ends the run with a traceback",
-            raises="KeyError: '9.9'",
-        ),
+    @kills.replace(
+        npmjs.get_publication_datetime,
+        '.get("time", {}).get(version))',
+        '.get("time", {})[version])',
+        "a version the registry dates nowhere in its time map ends the run with a traceback",
+        raises="KeyError: '9.9'",
     )
     @patch_get({"time": {}})
     def test_get_publication_datetime_for_unlisted_version(self):
@@ -229,13 +227,11 @@ class GetChangesFallbackTest(LoggingTestCase):
         self.assertEqual(get_changes("package", "1.0"), "Release notes")
         self.assertNotIn(contents_url(_REPOSITORY), requested_urls(mock_get))
 
-    @kills(
-        Mutation(
-            npmjs.get_changes,
-            "source.repository, version, source.directory",
-            'source.repository, version, ""',
-            "the changelog file of a package a monorepo builds from a directory is looked for in the root",
-        ),
+    @kills.replace(
+        npmjs.get_changes,
+        "source.directory",
+        '""',
+        "the changelog file of a package a monorepo builds from a directory is looked for in the root",
     )
     @patch("requests.Session.get")
     def test_changelog_file_in_the_directory_the_registry_names(self, mock_get: Mock):

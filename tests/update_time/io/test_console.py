@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion
 from update_time.formats import restructured_text
 from update_time.io import console as console_module
@@ -91,13 +91,10 @@ class RecordRenderingTests(TestCase):
         self.assertEqual(sides, {(_BOX_SIDE, _BOX_SIDE)}, rendered)
         self.assertEqual([line.strip(_BOX_SIDE).strip() for line in lines[1:-1]], contents, rendered)
 
-    @kills(
-        Mutation(
-            console_module._LogHandler._changes_markup,
-            "return _ChangelogMarkdown(changes, hyperlinks=self.console.is_terminal)",
-            "return _ChangelogMarkdown(changes, hyperlinks=True)",
-            "a link's URL is written into an escape nothing renders, so a file or a CI log holds the text alone",
-        )
+    @kills.force_true(
+        console_module._LogHandler._changes_markup,
+        "self.console.is_terminal",
+        "a link's URL is written into an escape nothing renders, so a file or a CI log holds the text alone",
     )
     def test_a_links_url_is_printed_where_nothing_can_be_clicked(self):
         """Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log."""
@@ -111,13 +108,10 @@ class RecordRenderingTests(TestCase):
         self.assertIn("Pinned pkg in requirements.txt:3 to 1.2.0", rendered)
         self.assertEqual(rendered.splitlines()[1:], [])
 
-    @kills(
-        Mutation(
-            console_module.named_message,
-            'len(message.plain.partition("\\n")[0])',
-            "len(message.plain)",
-            "the name of a command's failure follows the output the command wrote, so it reads as part of that output",
-        )
+    @kills.delete(
+        console_module.named_message,
+        '.partition("\\n")[0]',
+        "the name of a command's failure follows the output the command wrote, so it reads as part of that output",
     )
     def test_the_name_of_a_message_of_several_lines_ends_its_first_line(self):
         """Test that a message of several lines, such as a command's output, carries its name on its first line."""
@@ -138,32 +132,27 @@ class RecordRenderingTests(TestCase):
                 first_line = self.rendered_changes(changes).splitlines()[0]
                 self.assertTrue(first_line.rstrip().endswith("requirements.txt:3: 1.2.0 (new-version)"), first_line)
 
-    @kills(
-        Mutation(
-            console_module.named_message,
-            "append(name, link)",
-            "append(name)",
-            "the name of the log message is plain text, so a terminal cannot open its entry in the index",
-        )
+    @kills.delete(
+        console_module.named_message,
+        "#{name}",
+        "the name of the log message links to the top of the index rather than to its entry",
     )
     def test_the_name_of_a_message_is_a_hyperlink(self):
         """Test that the name of a log message is a link a terminal can open, to the name's heading in the index."""
         url = "https://github.com/ICTU/update-time/blob/main/docs/log-messages.md#pinned-to-version"
         self.assertIn(f";{url}\x1b\\", self.rendered(self.report_pin, styles=True))
 
-    @kills(
-        Mutation(
-            console_module.named_message,
-            "named.stylize(_MESSAGE_NAME_STYLE, first_line_end)",
-            'named.stylize("", first_line_end)',
-            "the name of a log message is as bright as the message, so the message no longer stands out",
-        ),
-        Mutation(
-            console_module.named_message,
-            "named.stylize(_MESSAGE_NAME_STYLE, first_line_end)",
-            "named.stylize(_MESSAGE_NAME_STYLE, 0)",
-            "the message is as dim as its name, so the message no longer stands out",
-        ),
+    @kills.replace(
+        console_module.named_message,
+        "_MESSAGE_NAME_STYLE",
+        '""',
+        "the name of a log message is as bright as the message, so the message no longer stands out",
+    )
+    @kills.replace(
+        console_module.named_message,
+        "named.stylize(_MESSAGE_NAME_STYLE, first_line_end)",
+        "named.stylize(_MESSAGE_NAME_STYLE, 0)",
+        "the message is as dim as its name, so the message no longer stands out",
     )
     def test_the_name_of_a_message_is_dim(self):
         """Test that the name of a log message renders dim, with the parentheses around it, and the message does not."""
@@ -179,19 +168,17 @@ class RecordRenderingTests(TestCase):
         changes = Changes("## 1.2.0\n\n<!-- towncrier release notes start -->\n\n- A fix\n", markdown=True, url="")
         self.assert_boxed(self.rendered_changes(changes), ["1.2.0", "", "• A fix"])
 
-    @kills(
-        Mutation(
-            console_module._ChangelogMarkdown._without_blank_blocks,
-            "{index - 1, index, index + 1} & tags_alone",
-            "{index} & tags_alone",
-            "an HTML anchor above a heading still shows as a blank line, its paragraph kept without its text",
-        ),
-        Mutation(
-            console_module._ChangelogMarkdown._without_blank_blocks,
-            "and all(child.type",
-            "and any(child.type",
-            "a line of changes that opens with an HTML anchor is dropped, its text with it",
-        ),
+    @kills.replace(
+        console_module._ChangelogMarkdown._without_blank_blocks,
+        "{index - 1, index, index + 1} & tags_alone",
+        "{index} & tags_alone",
+        "an HTML anchor above a heading still shows as a blank line, its paragraph kept without its text",
+    )
+    @kills.replace(
+        console_module._ChangelogMarkdown._without_blank_blocks,
+        "all(",
+        "any(",
+        "a line of changes that opens with an HTML anchor is dropped, its text with it",
     )
     def test_an_html_anchor_takes_no_line(self):
         """Test that an HTML anchor stays hidden, alone on its line or before text, the box closing up around it."""
@@ -208,19 +195,16 @@ class RecordRenderingTests(TestCase):
             with self.subTest(case=case):
                 self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True, url="")), contents)
 
-    @kills(
-        Mutation(
-            console_module._ChangelogMarkdown,
-            'elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}',
-            "elements: ClassVar = {**Markdown.elements}",
-            "a raw HTML block is dropped, taking the changes a `<details>` section wraps with it",
-        ),
-        Mutation(
-            console_module._RawHtml.__rich_console__,
-            "html.text(self.html)",
-            "self.html.strip()",
-            "a raw HTML block shows its tags, which the reader has to read past",
-        ),
+    @kills.delete(
+        console_module._ChangelogMarkdown,
+        ', "html_block": _RawHtml',
+        "a raw HTML block is dropped, taking the changes a `<details>` section wraps with it",
+    )
+    @kills.replace(
+        console_module._RawHtml.__rich_console__,
+        "html.text(self.html)",
+        "self.html.strip()",
+        "a raw HTML block shows its tags, which the reader has to read past",
     )
     def test_raw_html_in_a_markdown_changelog_shows_its_text_without_its_tags(self):
         """Test that a Markdown changelog's raw HTML block reaches the reader as the text it holds, without tags."""
@@ -228,13 +212,10 @@ class RecordRenderingTests(TestCase):
         rendered = self.rendered_changes(Changes(f"## 1.2.0\n\n{details}", markdown=True, url=""))
         self.assert_boxed(rendered, ["1.2.0", "", "Dependency updates", "", "• bump foo"])
 
-    @kills(
-        Mutation(
-            console_module._ChangelogMarkdown.__rich_console__,
-            "if index or segment != Segment.line():",
-            "if True:",
-            "the list, quote, or table that opens a changelog gets a line break above it",
-        )
+    @kills.force_true(
+        console_module._ChangelogMarkdown.__rich_console__,
+        "index or segment != Segment.line()",
+        "the list, quote, or table that opens a changelog gets a line break above it",
     )
     def test_changes_opening_with_a_list_a_quote_or_a_table_get_no_leading_line_break(self):
         """Test that the box starts with the list, quote, or table that opens the changes."""
@@ -248,13 +229,11 @@ class RecordRenderingTests(TestCase):
             with self.subTest(case=case):
                 self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True, url="")), contents)
 
-    @kills(
-        Mutation(
-            console_module._ChangelogMarkdown._without_blank_blocks,
-            'if tokens[index - 1].type == "paragraph_open"',
-            'if token.type == "inline"',
-            "a table cell holding nothing is dropped, moving the cells after it a column to the left",
-        )
+    @kills.replace(
+        console_module._ChangelogMarkdown._without_blank_blocks,
+        'if tokens[index - 1].type == "paragraph_open"',
+        'if token.type == "inline"',
+        "a table cell holding nothing is dropped, moving the cells after it a column to the left",
     )
     def test_a_table_cell_without_text_keeps_the_cells_after_it_in_their_columns(self):
         """Test that a table cell holding nothing, or an HTML tag alone, leaves the next cell under its heading."""
@@ -266,13 +245,10 @@ class RecordRenderingTests(TestCase):
                 header, row = (next(line for line in rendered.splitlines() if text in line) for text in (" a ", " 1 "))
                 self.assertEqual(row.index("3"), header.index("c"), rendered)
 
-    @kills(
-        Mutation(
-            console_module.configure_logging,
-            "logging.getLogger(_MARKDOWN_PARSER).setLevel(WARNING)\n    return handler",
-            "return handler",
-            "the Markdown parser traces every block rule it tries, burying the run's own debug output",
-        )
+    @kills.delete(
+        console_module.configure_logging,
+        "logging.getLogger(_MARKDOWN_PARSER).setLevel(WARNING)\n    ",
+        "the Markdown parser traces every block rule it tries, burying the run's own debug output",
     )
     def test_the_markdown_parser_logs_nothing_at_debug_level(self):
         """Test that rendering a Markdown changelog at debug level adds no record of its own to the output."""
@@ -288,25 +264,21 @@ class RecordRenderingTests(TestCase):
         self.assertIn("PyPI page: coverage 7.16.0", rendered)
         self.assertNotIn("[coverage 7.16.0]", rendered)
 
-    @kills(
-        Mutation(
-            console_module._ChangelogMarkdown._unindent_headings,
-            "title.children[0].content.lstrip()",
-            "title.children[0].content",
-            "a heading opening with non-breaking spaces is indented by them",
-        ),
-        Mutation(
-            console_module._ChangelogMarkdown._unindent_headings,
-            ' and title.children[0].type == "text":',
-            ":",
-            "a code span opening a heading loses the spaces the project wrote in it",
-        ),
-        Mutation(
-            console_module._ChangelogMarkdown._unindent_headings,
-            "title.children[0].content.lstrip()",
-            'title.children[0].content.replace("\\xa0", "")',
-            "a heading loses the non-breaking spaces inside its title, running its words together",
-        ),
+    @kills.delete(
+        console_module._ChangelogMarkdown._unindent_headings,
+        ".lstrip()",
+        "a heading opening with non-breaking spaces is indented by them",
+    )
+    @kills.delete(
+        console_module._ChangelogMarkdown._unindent_headings,
+        ' and title.children[0].type == "text"',
+        "a code span opening a heading loses the spaces the project wrote in it",
+    )
+    @kills.replace(
+        console_module._ChangelogMarkdown._unindent_headings,
+        "lstrip()",
+        'replace("\\xa0", "")',
+        "a heading loses the non-breaking spaces inside its title, running its words together",
     )
     def test_a_heading_drops_only_the_non_breaking_spaces_opening_its_text(self):
         """Test that a heading keeps its spaces, in code or out, except the non-breaking ones opening its title."""
@@ -321,13 +293,11 @@ class RecordRenderingTests(TestCase):
                 rendered = self.rendered_changes(Changes(markup, markdown=True, url=""))
                 self.assertIn(f"{_BOX_SIDE} {title}", rendered)
 
-    @kills(
-        Mutation(
-            console_module,
-            '_READ_AS_TEXT = ("text", "html_block")',
-            '_READ_AS_TEXT = ("text",)',
-            "a shortcode in a <details> section's summary is shown as typed, beside prose that gets its emoji",
-        )
+    @kills.replace(
+        console_module,
+        '_READ_AS_TEXT = ("text", "html_block")',
+        '_READ_AS_TEXT = ("text",)',
+        "a shortcode in a <details> section's summary is shown as typed, beside prose that gets its emoji",
     )
     def test_a_shortcode_in_a_raw_html_block_renders_as_its_emoji(self):
         """Test that a shortcode a raw HTML block holds reaches the reader as its emoji, as one in the prose does."""
@@ -336,13 +306,11 @@ class RecordRenderingTests(TestCase):
         self.assertIn("⚡ Dependency updates", rendered)
         self.assertNotIn(":zap:", rendered)
 
-    @kills(
-        Mutation(
-            console_module._ChangelogMarkdown.__init__,
-            "super().__init__(markup, hyperlinks=hyperlinks)",
-            "super().__init__(Emoji.replace(markup), hyperlinks=hyperlinks)",
-            "replacing before the parse eats the shortcodes a code span and a fenced block hold",
-        )
+    @kills.replace(
+        console_module._ChangelogMarkdown.__init__,
+        "super().__init__(markup, hyperlinks=hyperlinks)",
+        "super().__init__(Emoji.replace(markup), hyperlinks=hyperlinks)",
+        "replacing before the parse eats the shortcodes a code span and a fenced block hold",
     )
     def test_a_shortcode_renders_as_its_emoji_except_inside_code(self):
         """Test that a shortcode in the prose reaches the reader as its emoji, and one inside code as written."""
@@ -351,13 +319,11 @@ class RecordRenderingTests(TestCase):
         self.assertIn("⚡ fixed :zap: in", rendered)  # the prose has its emoji, the code span keeps its shortcode
         self.assertIn("label: ':zap:'", rendered)  # and so does the fenced block
 
-    @kills(
-        Mutation(
-            console_module._LogHandler.render_message,
-            "return Group(rendered, Text(note))",
-            "return Group(rendered, Panel(Text(note)))",
-            "Update-time's own note about a changelog is boxed as if it were a changelog's changes",
-        )
+    @kills.replace(
+        console_module._LogHandler.render_message,
+        "return Group(rendered, Text(note))",
+        "return Group(rendered, Panel(Text(note)))",
+        "Update-time's own note about a changelog is boxed as if it were a changelog's changes",
     )
     def test_a_note_about_the_changelog_is_not_boxed(self):
         """Test that Update-time's own note about a changelog renders as a bare line, the box holding changes alone."""
@@ -377,51 +343,43 @@ class RecordRenderingTests(TestCase):
         rendered = self.rendered_changes(changes)
         self.assert_boxed(rendered, changes.splitlines())
 
-    @kills(
-        Mutation(
-            restructured_text.text,
-            "for title, line in pairwise(lines) if not heading_underline(title, line))",
-            "for title, line in pairwise(lines))",
-            "a reStructuredText changelog shows the underline of each heading",
-        ),
-        Mutation(
-            restructured_text.heading_underline,
-            " or len(underline) >= _SHORTEST_UNDERLINE)",
-            ")",
-            "a reStructuredText changelog shows the underline of a heading that is shorter than its title",
-        ),
+    @kills.delete(
+        restructured_text.text,
+        " if not heading_underline(title, line)",
+        "a reStructuredText changelog shows the underline of each heading",
+    )
+    @kills.delete(
+        restructured_text.heading_underline,
+        " or len(underline) >= _SHORTEST_UNDERLINE",
+        "a reStructuredText changelog shows the underline of a heading that is shorter than its title",
     )
     def test_a_heading_in_changes_that_are_not_markdown_shows_without_its_underline(self):
         """Test that a heading underlined as reStructuredText marks one shows as its title alone."""
         changes = Changes("3.13.0 (2026-10-23)\n----\n\n* Added Python 3.15.", markdown=False, url="")
         self.assert_boxed(self.rendered_changes(changes), ["3.13.0 (2026-10-23)", "", "* Added Python 3.15."])
 
-    @kills(
-        Mutation(
-            restructured_text.heading_underline,
-            "and (len(underline) >= len(title) or len(underline) >= _SHORTEST_UNDERLINE)",
-            "and True",
-            "the box drops the `...` that says the changes were cut short, as if it underlined the line above",
-        )
+    @kills.replace(
+        restructured_text.heading_underline,
+        "and (len(underline) >= len(title) or len(underline) >= _SHORTEST_UNDERLINE)",
+        "and True",
+        "the box drops the `...` that says the changes were cut short, as if it underlined the line above",
     )
     def test_a_short_run_of_punctuation_in_changes_that_are_not_markdown_is_shown_as_written(self):
         """Test that a run shorter than the line above it and than four characters, such as a `...`, stays."""
         changes = Changes("1.0\n\n- Fixed bug A\n...", markdown=False, url="")
         self.assert_boxed(self.rendered_changes(changes), changes.splitlines())
 
-    @kills(
-        Mutation(
-            restructured_text.text,
-            'return _INLINE_LITERAL.sub(r"\\1", shown)',
-            "return shown",
-            "a reStructuredText changelog shows the double backticks around each inline literal",
-        ),
-        Mutation(
-            restructured_text,
-            '_INLINE_LITERAL = re.compile(r"``(.+?)``")',
-            '_INLINE_LITERAL = re.compile(r"``(.+)``")',
-            "a line holding two inline literals keeps the backticks closing the first and opening the second",
-        ),
+    @kills.replace(
+        restructured_text.text,
+        'return _INLINE_LITERAL.sub(r"\\1", shown)',
+        "return shown",
+        "a reStructuredText changelog shows the double backticks around each inline literal",
+    )
+    @kills.replace(
+        restructured_text,
+        '_INLINE_LITERAL = re.compile(r"``(.+?)``")',
+        '_INLINE_LITERAL = re.compile(r"``(.+)``")',
+        "a line holding two inline literals keeps the backticks closing the first and opening the second",
     )
     def test_an_inline_literal_in_changes_that_are_not_markdown_shows_without_its_backticks(self):
         """Test that each inline literal reStructuredText marks with double backticks shows as its text alone."""

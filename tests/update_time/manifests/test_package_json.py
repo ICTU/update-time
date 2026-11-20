@@ -4,7 +4,7 @@ import json
 import unittest
 from typing import TYPE_CHECKING
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.reference import Reference
 from update_time.manifests import npm_declaration, package_json
 from update_time.manifests.npm_declaration import CatalogEntry, Catalogs, Declaration
@@ -123,13 +123,11 @@ class CatalogsTest(unittest.TestCase):
                 self.assertEqual(list(read.catalogs().entries), [CatalogEntry(name, "left-pad")])
                 self.assertEqual([declaration.dependency for declaration in read.declarations()], ["left-pad"])
 
-    @kills(
-        Mutation(
-            package_json.PackageJson._catalogs,
-            "(catalog_name(name), (*named_catalogs, name))",
-            "(str(name), (*named_catalogs, name))",
-            "a version bun moved for a `catalog:` dependency is reported at the member, not at the default catalog",
-        )
+    @kills.replace(
+        package_json.PackageJson._catalogs,
+        "(catalog_name(name)",
+        "(str(name)",
+        "a version bun moved for a `catalog:` dependency is reported at the member, not at the default catalog",
     )
     def test_the_named_catalog_default_is_the_unnamed_one(self):
         """Test that the entries of a named catalog called default are located as the unnamed catalog's."""
@@ -223,13 +221,11 @@ class DeclarationsTest(unittest.TestCase):
                     ],
                 )
 
-    @kills(
-        Mutation(
-            npm_declaration._catalog,
-            "return catalog_name(spec.removeprefix(_CATALOG_PROTOCOL))",
-            "return spec.removeprefix(_CATALOG_PROTOCOL)",
-            "a `catalog:default` dependency is reported at the member rather than at the unnamed catalog",
-        )
+    @kills.replace(
+        npm_declaration._catalog,
+        "return catalog_name(spec.removeprefix(_CATALOG_PROTOCOL))",
+        "return spec.removeprefix(_CATALOG_PROTOCOL)",
+        "a `catalog:default` dependency is reported at the member rather than at the unnamed catalog",
     )
     def test_the_default_catalog_is_the_unnamed_one(self):
         """Test that a dependency declared as `catalog:default` takes its version from the unnamed catalog."""

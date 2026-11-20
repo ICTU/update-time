@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
@@ -75,13 +75,11 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_unpinned_floating_tag_logged("acme/api", "ci", location, FloatingPin.NOT_LISTED)
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            docker_compose_manifest.built_images,
-            'for service in document["services"].values()\n',
-            'for service in document["services"].values()[:1]\n',
-            "only the first service is read, so an image a later service builds is looked up on a registry",
-        )
+    @kills.append(
+        docker_compose_manifest.built_images,
+        'for service in document["services"].values()',
+        "[:1]",
+        "only the first service is read, so an image a later service builds is looked up on a registry",
     )
     def test_every_reference_to_a_built_image_is_left_alone(self):
         """Test that a built image is left as it is, looked up nowhere, and reported, in each service naming it."""
@@ -104,13 +102,10 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_left_alone_unqueried(mock_manifest, "acme/api", "1.2.3", 6, built)
         self.assert_left_alone_unqueried(mock_manifest, "acme/db", "2.0.0", 9, built)
 
-    @kills(
-        Mutation(
-            oci.ImagesNotPulled,
-            'frozenset(image.partition("@")[0] for image in self.images)',
-            "frozenset(self.images)",
-            "a digest the file records beside a built image's tag survives into the match, so the image is looked up",
-        )
+    @kills.delete(
+        oci.ImagesNotPulled,
+        'image.partition("@")[0] for image in ',
+        "a digest the file records beside a built image's tag survives into the match, so the image is looked up",
     )
     def test_a_built_image_pinned_to_a_digest_is_left_alone(self):
         """Test that a built image is left as it is when its reference carries the digest an earlier run pinned."""
@@ -119,14 +114,12 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.run_compose_updater(mock_manifest)
         self.assert_left_alone_unqueried(mock_manifest, "acme/api", "1.2.3", 4, ImageNotLookedUp.BUILT_IMAGE)
 
-    @kills(
-        Mutation(
-            docker_compose_manifest.built_images,
-            '(image := service["image"].string()) is not None\n',
-            '((image := service["image"].string()) or True)\n',
-            "a service that builds an image without tagging one aborts the run",
-            raises="AttributeError: 'NoneType' object has no attribute 'partition'",
-        ),
+    @kills.replace(
+        docker_compose_manifest.built_images,
+        '(image := service["image"].string()) is not None\n',
+        '((image := service["image"].string()) or True)\n',
+        "a service that builds an image without tagging one aborts the run",
+        raises="AttributeError: 'NoneType' object has no attribute 'partition'",
     )
     def test_image_the_file_does_not_build_is_updated(self):
         """Test that an image a service pulls is updated, whatever the service beside it builds."""
@@ -148,14 +141,11 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
                 )
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            yaml_format.Document.__contains__,
-            "return isinstance(self._value, dict) and key in self._value\n",
-            "return key in self._value\n",
-            "a service declared with no body is read as a mapping, ending the run",
-            raises="TypeError: argument of type 'NoneType' is not a container or iterable",
-        ),
+    @kills.delete(
+        yaml_format.Document.__contains__,
+        "isinstance(self._value, dict) and ",
+        "a service declared with no body is read as a mapping, ending the run",
+        raises="TypeError: argument of type 'NoneType' is not a container or iterable",
     )
     def test_a_malformed_compose_file_is_updated(self):
         """Test that Update-time updates the images in a malformed Compose file instead of ending the run."""
@@ -173,14 +163,12 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
                 mock_manifest.write_text.assert_called_once_with(expected)
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            oci.ImagesNotPulled.__call__,
-            'as_written = f"{pinned.name}{tag_of(pinned.version)}"\n'
-            "        return self.reason if as_written in self._without_digests else None\n",
-            'return self.reason if pinned.name in {i.partition(":")[0] for i in self._without_digests} else None\n',
-            "a reference is matched on its name alone, so every tag of a built repository is left alone",
-        )
+    @kills.replace(
+        oci.ImagesNotPulled.__call__,
+        'as_written = f"{pinned.name}{tag_of(pinned.version)}"\n'
+        "        return self.reason if as_written in self._without_digests else None\n",
+        'return self.reason if pinned.name in {i.partition(":")[0] for i in self._without_digests} else None\n',
+        "a reference is matched on its name alone, so every tag of a built repository is left alone",
     )
     def test_other_tag_of_a_built_repository_is_updated(self):
         """Test that a service pulling another tag of the repository the file builds has that tag updated."""
@@ -192,14 +180,11 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_new_version_logged("acme/api", docker_hub_version("3.0.0"), Location(mock_manifest, 6))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            references_file.update_yaml_files,
-            "get_new_version = TagGetter(ImagesNotPulled(find_images(document), reason))\n",
-            'get_new_version = get_new_version if "get_new_version" in dir() else '
-            "TagGetter(ImagesNotPulled(find_images(document), reason))\n",
-            "the getter built for one file judges the files after it, so what one file builds reaches them all",
-        )
+    @kills.append(
+        references_file.update_yaml_files,
+        "get_new_version = ",
+        'get_new_version if "get_new_version" in dir() else ',
+        "the getter built for one file judges the files after it, so what one file builds reaches them all",
     )
     def test_a_file_builds_an_image_for_itself_only(self):
         """Test that an image one Compose file builds is updated in another Compose file that pulls it."""
@@ -212,15 +197,12 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_new_version_logged("acme/api", docker_hub_version("1.3.0"), Location(puller, 3))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            references_resolve._why_the_pin_never_floats,
-            "if image_not_looked_up is not None:\n"
-            "        return ImageNotLookedUpReason(image_not_looked_up, Consequence.TAG_NEVER_PINNED)\n"
-            "    return None",
-            "return None",
-            "the warning names a pin that does not float, where it should name the image the file does not pull",
-        )
+    @kills.delete(
+        references_resolve._why_the_pin_never_floats,
+        "if image_not_looked_up is not None:\n"
+        "        return ImageNotLookedUpReason(image_not_looked_up, Consequence.TAG_NEVER_PINNED)\n"
+        "    ",
+        "the warning names a pin that does not float, where it should name the image the file does not pull",
     )
     def test_an_opt_in_on_a_built_image_names_why_the_image_is_not_pulled(self):
         """Test that an opt-in on an image the Compose file builds is reported as redundant, naming the build."""
@@ -257,13 +239,11 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
             among_others=True,
         )
 
-    @kills(
-        Mutation(
-            references_resolve._warn_about_redundant_update_directives,
-            "if never_updated is None:\n        log.warn_if_redundant_bound(reference)\n        return",
-            "log.warn_if_redundant_bound(reference)\n    if never_updated is None:\n        return",
-            "a bound on an image never looked up is reported twice, once as never having an effect",
-        )
+    @kills.replace(
+        references_resolve._warn_about_redundant_update_directives,
+        "if never_updated is None:\n        log.warn_if_redundant_bound(reference)\n        return",
+        "log.warn_if_redundant_bound(reference)\n    if never_updated is None:\n        return",
+        "a bound on an image never looked up is reported twice, once as never having an effect",
     )
     def test_a_bound_on_a_built_image_is_redundant_once_because_of_the_build(self):
         """Test that a bound on a built image is reported once, naming the build, rather than judged at its version."""

@@ -90,13 +90,10 @@ class AuditTest(unittest.TestCase):
         findings = _audit([(_REGISTERED, _ODD_REPORTED_AS_EVEN)], run)
         self.assertEqual(findings, [_Finding(_REGISTERED, _ODD_REPORTED_AS_EVEN.regression, [_ANOTHER_KILLER])])
 
-    @kills(
-        Mutation(
-            audit_module._finding,
-            "outcome is Outcome.KILLED",
-            "outcome",
-            "every candidate that passes without the mutation counts as a kill, whatever the mutated run shows",
-        )
+    @kills.delete(
+        audit_module._finding,
+        "is Outcome.KILLED",
+        "every candidate that passes without the mutation counts as a kill, whatever the mutated run shows",
     )
     def test_a_registration_only_its_own_test_kills(self):
         """Test that a registration whose mutation the other tests that ran its lines survive is not reported."""
@@ -118,13 +115,11 @@ class AuditTest(unittest.TestCase):
         passes.assert_called_once_with(_ANOTHER_KILLER)
         checked.assert_not_called()
 
-    @kills(
-        Mutation(
-            audit_module._audit,
-            "cache(_passes_unmutated)",
-            "_passes_unmutated",
-            "a candidate runs against the code as it is again for each registration it is a candidate for",
-        )
+    @kills.replace(
+        audit_module._audit,
+        "cache(_passes_unmutated)",
+        "_passes_unmutated",
+        "a candidate runs against the code as it is again for each registration it is a candidate for",
     )
     def test_a_candidate_of_several_registrations_is_run_against_the_unmutated_code_once(self):
         """Test that a candidate is run against the code as it is once, however many registrations it is checked for."""
@@ -190,13 +185,11 @@ class MainTest(unittest.TestCase):
             "registrations other tests kill as well: 1\n",
         )
 
-    @kills(
-        Mutation(
-            audit_module.main,
-            "if loader.errors:",
-            "if False:",
-            "the audit passes over a test module that fails to import, leaving its registrations unaudited",
-        )
+    @kills.replace(
+        audit_module.main,
+        "if loader.errors:",
+        "if False:",
+        "the audit passes over a test module that fails to import, leaving its registrations unaudited",
     )
     def test_a_test_module_that_fails_to_import_fails_the_run_unaudited(self):
         """Test that a test module discovery cannot import is reported, and fails the run before any audit."""

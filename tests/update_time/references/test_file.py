@@ -4,7 +4,7 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import FileType
 from update_time.domain.source import Source
@@ -57,19 +57,17 @@ class UpdateYamlFilesTest(unittest.TestCase):
                 logger=logger,
             )
 
-    @kills(
-        Mutation(
-            file_module.update_yaml_files,
-            "else:\n",
-            "if True:\n",
-            "a file that does not parse is rewritten anyway, having been reported",
-        ),
-        Mutation(
-            file_module.update_yaml_files,
-            "logger.invalid_file(path, yaml_format.FORMAT)\n",
-            "logger.invalid_file(path, yaml_format.FORMAT)\n            return\n",
-            "a file that does not parse ends the walk, so the files after it are never updated",
-        ),
+    @kills.replace(
+        file_module.update_yaml_files,
+        "else:\n",
+        "if True:\n",
+        "a file that does not parse is rewritten anyway, having been reported",
+    )
+    @kills.append(
+        file_module.update_yaml_files,
+        "logger.invalid_file(path, yaml_format.FORMAT)",
+        "; return",
+        "a file that does not parse ends the walk, so the files after it are never updated",
     )
     def test_file_that_does_not_parse_is_reported_and_skipped(self, mock_glob: Mock):
         """Test that a file whose YAML does not parse is reported and left as it is, and the walk goes on."""

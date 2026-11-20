@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
 from update_time.formats import toml as toml_module
@@ -85,14 +85,12 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
                 warn_about_pins([file], _LOG, {})
                 self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
-    @kills(
-        Mutation(
-            toml_module.parse_document,
-            "except tomlkit.exceptions.TOMLKitError:",
-            "except tomlkit.exceptions.ParseError:",
-            "TOML that tomlkit rejects with the base error aborts the run instead of leaving the file out",
-            raises="tomlkit.exceptions.TOMLKitError: Redefinition of an existing table",
-        )
+    @kills.replace(
+        toml_module.parse_document,
+        "except tomlkit.exceptions.TOMLKitError:",
+        "except tomlkit.exceptions.ParseError:",
+        "TOML that tomlkit rejects with the base error aborts the run instead of leaving the file out",
+        raises="tomlkit.exceptions.TOMLKitError: Redefinition of an existing table",
     )
     def test_a_script_whose_block_does_not_parse_leaves_the_other_files_checked(self, get: Mock):
         """Test that a script whose metadata block is not valid TOML leaves the files after it checked."""
@@ -202,13 +200,11 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         self.assert_no_warnings_logged()
         self.assert_ignored_yank_logged("package", Location(file.path, 2), "ignore[yanked]")
 
-    @kills(
-        Mutation(
-            delegated_module.pin_resolver,
-            "yank=get_yank(pin.dependency, pin.current_version))",
-            "yank=get_yank(pin.dependency, pin.current_version)), marker=next(iter(pins)).marker",
-            "one pin's marker steers every pin the file declares, rather than the one carrying it",
-        )
+    @kills.append(
+        delegated_module.pin_resolver,
+        "yank=get_yank(pin.dependency, pin.current_version))",
+        ", marker=next(iter(pins)).marker",
+        "one pin's marker steers every pin the file declares, rather than the one carrying it",
     )
     def test_a_marker_silences_the_pin_it_steers_and_no_other(self, get: Mock):
         """Test that a marker on one pin's line leaves the pin declared below it warned about."""

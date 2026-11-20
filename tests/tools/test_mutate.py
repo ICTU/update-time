@@ -8,7 +8,7 @@ from unittest.mock import Mock, call, patch
 
 from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, main, snippets
 
-from mutation_time.mutation import CHECKS_OFF, Mutation, kills
+from mutation_time.mutation import CHECKS_OFF, kills
 
 from tests.helpers import mock_path
 
@@ -77,13 +77,11 @@ class MainTest(unittest.TestCase):
         self.probe(mock_path(_ORIGINAL))
         self.assertEqual(self.run_command.call_args.kwargs.get("env", {}).get(CHECKS_OFF), "1")
 
-    @kills(
-        Mutation(
-            main,
-            "file_name, _, anchor = sys.argv[1].partition(_ANCHOR)",
-            'file_name, anchor = sys.argv[1], ""',
-            "the whole argument is read as a file name, so the probe looks for the snippet in the whole file",
-        )
+    @kills.replace(
+        main,
+        "file_name, _, anchor = sys.argv[1].partition(_ANCHOR)",
+        'file_name, anchor = sys.argv[1], ""',
+        "the whole argument is read as a file name, so the probe looks for the snippet in the whole file",
     )
     def test_an_anchor_named_after_the_file(self):
         """Test that a snippet the file holds twice is replaced inside the definition the anchor names."""
@@ -149,13 +147,11 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=("FAILED (failures=1)\n",)), 0)
         self.assertNotIn("errors", self.reported.getvalue())
 
-    @kills(
-        Mutation(
-            main,
-            "if killed and result.returncode != _TESTS_FAILED:",
-            "if killed and False:",
-            "the probe reports a gate failure as a kill, crediting a guard that never fired",
-        )
+    @kills.replace(
+        main,
+        "if killed and result.returncode != _TESTS_FAILED:",
+        "if killed and False:",
+        "the probe reports a gate failure as a kill, crediting a guard that never fired",
     )
     def test_a_run_that_only_the_coverage_gate_failed(self):
         """Test that a gate failing beyond the tests is reported as unguarded rather than as a kill."""
@@ -178,14 +174,12 @@ class MainTest(unittest.TestCase):
         """Test that a command that passes means nothing guards the mutated code."""
         self.assertEqual(self.probe(mock_path(_ORIGINAL), returncode=0), 1)
 
-    @kills(
-        Mutation(
-            main,
-            "except (OSError, StaleError) as reason:",
-            "except StaleError as reason:",
-            "the run ends with a traceback where the probe cannot read the file, which its scale reads as survival",
-            raises="FileNotFoundError: [Errno 2] No such file or directory",
-        )
+    @kills.replace(
+        main,
+        "except (OSError, StaleError) as reason:",
+        "except StaleError as reason:",
+        "the run ends with a traceback where the probe cannot read the file, which its scale reads as survival",
+        raises="FileNotFoundError: [Errno 2] No such file or directory",
     )
     def test_a_file_that_cannot_be_read(self):
         """Test that a file the probe cannot read is reported, rather than ending the run with a traceback."""

@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import file_type
 from update_time.domain.dependency import DependencyVersion, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
@@ -88,13 +88,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 self.assert_new_version_logged("python", docker_hub_version("3.14.7"), Location(mock_dockerfile, 1))
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            dockerfile_manifest,
-            'rf"{_FROM_INSTRUCTION}{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
-            'rf"{_FROM_INSTRUCTION}\\$?\\{{?{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
-            "a variable's name is read as an image, so its own name is queried as a registry host",
-        )
+    @kills.prepend(
+        dockerfile_manifest,
+        '{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+        "\\$?\\{{?",
+        "a variable's name is read as an image, so its own name is queried as a registry host",
     )
     def test_image_name_from_a_variable_is_left_alone_and_reported(self):
         """Test that a `FROM` taking its image name from a variable is reported and not looked up.
@@ -127,26 +125,22 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 dockerfile = f"ARG VERSION={quote}{{}}{quote}\nFROM python:$VERSION\n"
                 self.assert_update_written("3.15", dockerfile.format("3.14"), dockerfile.format("3.15"))
 
-    @kills(
-        Mutation(
-            dockerfile_manifest.Dockerfile._build_arguments,
-            "in enumerate(lines[:first_from])",
-            "in [*enumerate(lines[:first_from])][::-1]",
-            "the first declaration of a build argument holds, so the new version is written onto one Docker ignores",
-        )
+    @kills.replace(
+        dockerfile_manifest.Dockerfile._build_arguments,
+        "in enumerate(lines[:first_from])",
+        "in [*enumerate(lines[:first_from])][::-1]",
+        "the first declaration of a build argument holds, so the new version is written onto one Docker ignores",
     )
     def test_last_declaration_of_a_build_argument_gets_the_new_version(self):
         """Test that the last of two global `ARG` declarations of a name holds, so it gets the new version."""
         dockerfile = "ARG V=3.12\nARG V={}\nFROM python:$V\n"
         self.assert_update_written("3.15", dockerfile.format("3.13"), dockerfile.format("3.15"), line=3)
 
-    @kills(
-        Mutation(
-            dockerfile_manifest,
-            r"(?(1)\})",
-            r"(?(1)[^}]*\})",
-            "a variable with a fallback is read as the variable alone, so its `ARG` is rewritten",
-        )
+    @kills.append(
+        dockerfile_manifest,
+        r"(?(1)",
+        r"[^}]*",
+        "a variable with a fallback is read as the variable alone, so its `ARG` is rewritten",
     )
     def test_variable_with_a_fallback_is_left_alone_and_reported(self):
         """Test that a `FROM` naming a build argument with a fallback, as in `${V:-3.14}`, is left alone."""
@@ -164,13 +158,10 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.run_updater(mock_dockerfile)
         self.assert_left_alone_unqueried(mock_dockerfile, "$IMAGE", "$TAG", 2, ImageNotLookedUp.THROUGH_A_VARIABLE)
 
-    @kills(
-        Mutation(
-            dockerfile_manifest,
-            r"(?P=quote)(?=\s|$)",
-            r"(?P=quote)",
-            "a default is read up to where its characters stop, so `3.14:x` is taken as the tag `3.14`",
-        )
+    @kills.delete(
+        dockerfile_manifest,
+        r"(?=\s|$)",
+        "a default is read up to where its characters stop, so `3.14:x` is taken as the tag `3.14`",
     )
     def test_build_argument_whose_default_runs_on_past_a_reference_is_left_alone_and_reported(self):
         """Test that a default holding more than an image name or tag, such as `3.14:x`, is not read as one."""
@@ -195,13 +186,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_left_alone_unqueried(mock_dockerfile, "python", "3.14", 3, reason)
         self.assert_image_not_looked_up_logged("python", "3.14-slim", Location(mock_dockerfile, 2), reason)
 
-    @kills(
-        Mutation(
-            update_dockerfile_base_image._refusal_reason,
-            "if any(part.index in shared_lines",
-            "if all(part.index in shared_lines",
-            "a `FROM` sharing one build argument but not another is looked up, so it moves the shared one",
-        )
+    @kills.replace(
+        update_dockerfile_base_image._refusal_reason,
+        "if any(",
+        "if all(",
+        "a `FROM` sharing one build argument but not another is looked up, so it moves the shared one",
     )
     def test_reference_writing_one_shared_and_one_unshared_build_argument_is_left_alone_and_reported(self):
         """Test that a `FROM` is left alone when one of its build arguments is shared, though another is not."""
@@ -215,13 +204,10 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_left_alone_unqueried(mock_dockerfile, "python", "3.14", 4, reason)
         self.assert_image_not_looked_up_logged("python", "3.14-alpine3.20", Location(mock_dockerfile, 3), reason)
 
-    @kills(
-        Mutation(
-            update_dockerfile_base_image._shared_lines,
-            "(substituted.substituted_reference, parse_marker(substituted))",
-            "(substituted.substituted_reference, None)",
-            "`FROM` lines sharing an `ARG` are compared without their markers, so one overwrites the other's update",
-        )
+    @kills.force_none(
+        update_dockerfile_base_image._shared_lines,
+        "parse_marker(substituted)",
+        "`FROM` lines sharing an `ARG` are compared without their markers, so one overwrites the other's update",
     )
     def test_build_argument_written_under_different_markers_is_left_alone_and_reported(self):
         """Test that an `ARG` two `FROM` lines with different markers write into is left alone, whatever is served."""
@@ -238,13 +224,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_no_warnings_logged()
         self.assert_no_new_version_logged()
 
-    @kills(
-        Mutation(
-            update_dockerfile_base_image._shared_lines,
-            "(substituted.substituted_reference, parse_marker",
-            "(substituted.text, parse_marker",
-            "two `FROM` lines are compared by their text, so spelling the same reference differently refuses it",
-        )
+    @kills.replace(
+        update_dockerfile_base_image._shared_lines,
+        "substituted.substituted_reference",
+        "substituted.text",
+        "two `FROM` lines are compared by their text, so spelling the same reference differently refuses it",
     )
     def test_build_argument_written_into_the_same_reference_twice_is_updated_once(self):
         """Test that an `ARG` two `FROM` lines write into the same reference is updated once, however they spell it.
@@ -358,25 +342,22 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_kept_floating_logged("python", "", resolved, Location(mock_dockerfile, 2))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            dockerfile_manifest,
-            "re.IGNORECASE | re.MULTILINE",
-            "re.MULTILINE",
-            "a stage introduced with a lower-case `as` is not recognised as a stage",
-        ),
-        Mutation(
-            dockerfile_manifest,
-            r"(?i:FROM)",
-            r"FROM",
-            "a lower-case `from` introduces no base image, so its line is left as it is",
-        ),
-        Mutation(
-            dockerfile_manifest,
-            r"(?i:ARG)",
-            r"ARG",
-            "a lower-case `arg` does not declare a build argument, so a `FROM` naming it is left as it is",
-        ),
+    @kills.delete(
+        dockerfile_manifest,
+        "re.IGNORECASE | ",
+        "a stage introduced with a lower-case `as` is not recognised as a stage",
+    )
+    @kills.replace(
+        dockerfile_manifest,
+        r"(?i:FROM)",
+        r"FROM",
+        "a lower-case `from` introduces no base image, so its line is left as it is",
+    )
+    @kills.replace(
+        dockerfile_manifest,
+        r"(?i:ARG)",
+        r"ARG",
+        "a lower-case `arg` does not declare a build argument, so a `FROM` naming it is left as it is",
     )
     def test_lower_case_keyword_is_read_as_the_upper_case_one(self):
         """Test that a lower-case `from`, `as`, and `arg` are read as Dockerfile keywords, which are case-insensitive.
@@ -403,13 +384,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_dockerfile, line))
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            dockerfile_manifest,
-            r"^\s*(?i:FROM)",
-            r"(?i:FROM)",
-            "a `FROM` anywhere on a line introduces a base image, so prose mentioning one is rewritten",
-        )
+    @kills.replace(
+        dockerfile_manifest,
+        r"^\s*(?i:FROM)",
+        r"(?i:FROM)",
+        "a `FROM` anywhere on a line introduces a base image, so prose mentioning one is rewritten",
     )
     def test_from_inside_a_comment_is_left_alone(self):
         """Test that a `FROM` that does not open its line introduces no base image, so prose is left as it is."""
@@ -420,13 +399,10 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.requests.assert_not_called()
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            dockerfile_manifest.Dockerfile._stage_names,
-            'match.group("stage").lower() for match in',
-            'match.group("stage") for match in',
-            "a stage whose name is written in another case than the `FROM` naming it is not matched",
-        )
+    @kills.delete(
+        dockerfile_manifest.Dockerfile._stage_names,
+        ".lower()",
+        "a stage whose name is written in another case than the `FROM` naming it is not matched",
     )
     def test_a_stage_is_matched_whatever_the_case_of_its_name(self):
         """Test that a `FROM` naming a stage in another case names that stage, so it is left alone."""
@@ -436,14 +412,12 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} AS Deps\nFROM deps\n")
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            dockerfile_manifest.Dockerfile._stage_names,
-            'text = "".join(line.text for line in self.lines)\n'
-            '        return frozenset(match.group("stage").lower() for match in _STAGE_NAME_RE.finditer(text))\n',
-            'return frozenset(m["stage"].lower() for line in self.lines for m in _STAGE_NAME_RE.finditer(line.text))\n',
-            "a stage is read per line, so one whose `AS` sits on a continuation line is looked up as an image",
-        )
+    @kills.replace(
+        dockerfile_manifest.Dockerfile._stage_names,
+        'text = "".join(line.text for line in self.lines)\n'
+        '        return frozenset(match.group("stage").lower() for match in _STAGE_NAME_RE.finditer(text))\n',
+        'return frozenset(m["stage"].lower() for line in self.lines for m in _STAGE_NAME_RE.finditer(line.text))\n',
+        "a stage is read per line, so one whose `AS` sits on a continuation line is looked up as an image",
     )
     def test_a_stage_named_on_a_continuation_line_is_matched(self):
         """Test that a `FROM` naming a stage whose `AS` sits on the continuation line names that stage."""
@@ -462,13 +436,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_new_version_logged("ruby", docker_hub_version("3.4"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            dockerfile_manifest.pins_a_digest_beside_a_variable,
-            '_ARGUMENT_VARIABLE_RE.search(line, reference.start("dependency")',
-            "_ARGUMENT_VARIABLE_RE.search(line, 0",
-            "a digest is read as overruling the `--platform` flag's variable, so the image is left alone",
-        )
+    @kills.replace(
+        dockerfile_manifest.pins_a_digest_beside_a_variable,
+        'reference.start("dependency")',
+        "0",
+        "a digest is read as overruling the `--platform` flag's variable, so the image is left alone",
     )
     def test_platform_flag_with_build_arg_is_preserved(self):
         """Test that a `FROM --platform=$BUILDPLATFORM image:tag@digest` line is updated, the flag left untouched."""
@@ -479,13 +451,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            dockerfile_manifest._substituted_line,
-            "_ARGUMENT_VARIABLE_RE.finditer(line.text, start, end)",
-            "_ARGUMENT_VARIABLE_RE.finditer(line.text, 0, end)",
-            "the `--platform` flag's variable is substituted too, so the reference is reported as through a variable",
-        )
+    @kills.replace(
+        dockerfile_manifest._substituted_line,
+        "_ARGUMENT_VARIABLE_RE.finditer(line.text, start, end)",
+        "_ARGUMENT_VARIABLE_RE.finditer(line.text, 0, end)",
+        "the `--platform` flag's variable is substituted too, so the reference is reported as through a variable",
     )
     def test_platform_flag_beside_a_reference_through_a_build_argument_is_preserved(self):
         """Test that a `FROM --platform=$BUILDPLATFORM` naming a build argument gets its `ARG` line updated."""
@@ -649,13 +619,11 @@ class ScannedDockerfilesTest(unittest.TestCase):
         tree = ".gitpod.dockerfile", "pkg/.web.Dockerfile", ".gitpod.containerfile"
         self.assertCountEqual(scanned_files(file_type.DOCKERFILES, *tree), tree)
 
-    @kills(
-        Mutation(
-            file_type,
-            'Dockerfile" for folder in _DEVCONTAINER_FOLDERS',
-            'Dockerfile" for folder in (".*", ".*/*")',
-            "the Dockerfiles in every hidden folder are scanned, such as the ones under `.git`",
-        )
+    @kills.replace(
+        file_type,
+        'Dockerfile" for folder in _DEVCONTAINER_FOLDERS',
+        'Dockerfile" for folder in (".*", ".*/*")',
+        "the Dockerfiles in every hidden folder are scanned, such as the ones under `.git`",
     )
     def test_a_dockerfile_in_another_hidden_folder_is_skipped(self):
         """Test that a `Dockerfile` in a hidden folder other than `.devcontainer` is skipped."""
