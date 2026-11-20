@@ -211,7 +211,7 @@ Stopping a run, for example with Ctrl-C, can leave some updates partly done. Rev
 To raise API rate limits while updating, set the following environment variables before running Update-time:
 
 - `GITHUB_TOKEN` — increases the GitHub API rate limit when updating GitHub Actions and pre-commit hooks, and when checking whether a repository is archived. The token only needs to read public data about a repository, its releases, and its commits, so it does not need a specific scope. A classic token with no scopes selected works. So does a fine-grained token with default read-only access to public repositories.
-- `DOCKER_HUB_USERNAME` and `DOCKER_HUB_TOKEN` — authenticate to the Docker Hub API (both must be set) to increase its rate limit when updating Docker images.
+- `DOCKER_HUB_USERNAME` and `DOCKER_HUB_TOKEN` — authenticate to the Docker Hub API (both must be set) to increase its rate limit when updating Docker images and when checking whether their repository is archived.
 
 Once GitHub's rate limit is used up, Update-time reports it, saying when the limit resets.
 
@@ -445,7 +445,7 @@ WARNING Archived dependency aioredis in docs/requirements.txt:12: the project wa
 WARNING Archived dependency actions/setup-ruby in .github/workflows/ci.yml:17: the repository was archived (archived-dependency)
 ```
 
-The clause after the colon names what the source archived: PyPI archives a project, GitHub a repository. The warning quotes a reason if the source publishes one.
+The clause after the colon names what the source archived: PyPI archives a project, GitHub and Docker Hub a repository. The warning quotes a reason if the source publishes one.
 
 An archived dependency is still updated to its newest release, if one is available. To silence the warning for a dependency you decided to keep using, mark it `# update-time: ignore[archived]` (see [Silencing a warning](#silencing-a-warning)).
 
@@ -456,9 +456,9 @@ Which dependencies are checked follows from where an archival declaration can be
 | [Python dependencies](#python-dependencies) | the project status PyPI publishes for the package a Python file declares |
 | [npm, pnpm, yarn, and bun dependencies](#npm-pnpm-yarn-and-bun-dependencies) | none: the npm registry does not publish an archival signal |
 | [Maven dependencies](#maven-dependencies) | whether GitHub reports the source repository of each `pom.xml` dependency and plugin as archived |
-| [Node engine version](#node-engine-version-and-python-version) | none: Docker Hub does not publish an archival signal |
-| [Python version](#node-engine-version-and-python-version) | none: Docker Hub does not publish an archival signal |
-| [Docker images](#docker-images) | none: no OCI registry publishes an archival signal |
+| [Node engine version](#node-engine-version-and-python-version) | whether Docker Hub reports the `library/node` repository as archived |
+| [Python version](#node-engine-version-and-python-version) | whether Docker Hub reports the `library/python` repository as archived |
+| [Docker images](#docker-images) | whether Docker Hub reports the image's repository as archived, for an image on Docker Hub |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | whether GitHub reports the action's repository as archived |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | whether GitHub reports the hook's repository as archived |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | none: the npm registry does not publish an archival signal |
@@ -776,7 +776,7 @@ Update-time also leaves these references unchecked, although it checks other ref
 - a dependency that its source does not serve a release for, such as a `pyproject.toml` dependency pointing at a git repository or a `package.json` dependency given as a git URL
 - a `package.json` dependency that takes its version from a catalog, since Update-time checks that version at the catalog's entry, if it finds one (see [npm, pnpm, yarn, and bun dependencies](#markers-1))
 - an image that the file does not pull, such as a CircleCI machine-executor image or an image a Docker Compose file builds, or a reference that goes through a variable or a template Update-time cannot substitute, such as `redis:7.2-${VARIANT}`, since Update-time does not ask a registry about either
-- for the `stale` scope, an image on a registry other than Docker Hub, since such a registry does not report a publication date
+- for the `stale` and `archived` scopes, an image on a registry other than Docker Hub, since Update-time reads an image's publication dates and archival from Docker Hub alone
 - a `pom.xml` declaration that leaves its version to the declaration managing it (see [Maven dependencies](#markers-2))
 - for the `yanked` and `vulnerable` scopes, which judge a version, a reference that does not name one, such as a `pom.xml` declaration whose version Maven leaves unresolved, or a GitHub Action that names a full commit SHA without a comment
 - for the same two scopes, a `requirements.txt` requirement that does not pin an exact version, outside the source of a compiled file
@@ -1508,7 +1508,7 @@ Update-time checks neither. Both name a version of a runtime rather than a relea
 
 #### Archived dependencies
 
-Update-time checks neither. Both take their version from Docker Hub, which does not publish an archival signal.
+Update-time checks both against the status Docker Hub publishes for the `library/node` and `library/python` repositories. Docker Hub does not publish a reason beside the status, so the warning does not give one.
 
 #### Markers
 
@@ -1612,7 +1612,7 @@ Update-time does not check an image, because OSV has no ecosystem for container 
 
 #### Archived dependencies
 
-Update-time does not check an image, because no OCI registry publishes an archival signal.
+Update-time checks an image on Docker Hub against the status Docker Hub publishes for the image's repository. Archival is a fact about the repository rather than about one of its tags, so Update-time reads the status whatever tag the reference names. Docker Hub does not publish a reason beside the status, so the warning does not give one. Update-time does not check an image on another registry.
 
 #### Markers
 

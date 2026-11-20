@@ -6,11 +6,12 @@ from unittest.mock import Mock, patch
 import requests
 
 from mutation_time.mutation import Mutation, kills
+from update_time.domain.dependency import Archival, ArchivedSubject
 from update_time.primitives.lookup import LookedUp
 from update_time.sources import docker_hub
 from update_time.sources.docker_hub import api_headers
 
-from tests.helpers import mock_response, patch_environ, unparsable_response
+from tests.helpers import mock_response, patch_environ, requested_urls, unparsable_response
 from tests.update_time.helpers import LoggingTestCase
 
 _CREDENTIALS = {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"}  # nosec
@@ -91,6 +92,12 @@ class DockerHubHeadersTest(LoggingTestCase):
             "statuses_meaning_absent",
             "a listing request spends Docker Hub's anonymous rate limit although credentials are set",
         ),
+        Mutation(
+            docker_hub.archival,
+            "headers=api_headers(), statuses_meaning_absent",
+            "statuses_meaning_absent",
+            "an archival request spends Docker Hub's anonymous rate limit although credentials are set",
+        ),
     )
     @patch("requests.Session.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
     @patch("requests.Session.get")
@@ -99,6 +106,7 @@ class DockerHubHeadersTest(LoggingTestCase):
         requests_made = {
             "push date": lambda: docker_hub.last_pushed("library/python", "3.14"),
             "listing": lambda: docker_hub.tag_listing("library/python", "latest"),
+            "archival": lambda: docker_hub.archival("library/python"),
         }
         for request, make_request in requests_made.items():
             with self.subTest(request=request):
@@ -128,6 +136,66 @@ class LastPushedTest(LoggingTestCase):
         """Test that an answer that lacks a push date returns a reason, so the cooldown holds the tag back."""
         no_push_date = LookedUp(None, "Docker Hub did not report a push date")
         self.assertEqual(docker_hub.last_pushed("library/python", "3.14"), no_push_date)
+
+
+# What Docker Hub's repository endpoint answers about an archived repository, and the archival read from it.
+_ARCHIVED_REPOSITORY_JSON = {"status": 6, "status_description": "archived"}
+_ARCHIVED = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
+
+
+class ArchivalTest(LoggingTestCase):
+    """Unit tests for the archival state Docker Hub declares for a repository."""
+
+    @kills(
+        Mutation(
+            docker_hub.archival,
+            "statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)",
+            "statuses_meaning_absent=()",
+            "a repository Docker Hub does not serve is warned about as a failed request",
+        ),
+        Mutation(
+            docker_hub.archival,
+            "statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)",
+            "statuses_meaning_absent=tuple(HTTPStatus)",
+            "a request Docker Hub fails reads as a repository it does not serve, without a warning",
+        ),
+    )
+    @patch("requests.Session.get")
+    def test_a_repository_docker_hub_does_not_answer_for_leaves_the_archival_unknown(self, mock_get: Mock):
+        """Test that a repository Docker Hub does not serve, or fails to answer for, leaves the archival unknown.
+
+        The repository Docker Hub does not serve is not warned about, and the request Docker Hub fails is.
+        """
+        cases = {  # The response, and whether it warns
+            "unserved": (mock_response({}, ok=False, status_code=HTTPStatus.NOT_FOUND), False),
+            "unreachable": (mock_response(None, ok=False, status_code=HTTPStatus.SERVICE_UNAVAILABLE), True),
+        }
+        for repository, (response, warns) in cases.items():
+            with self.subTest(repository=repository):
+                mock_get.return_value = response
+                self.assertIsNone(docker_hub.archival(f"nginxinc/{repository}"))
+                if warns:
+                    self.assert_could_not_fetch_logged()
+                else:
+                    self.assert_no_warnings_logged()
+        repository_url = "https://registry.hub.docker.com/v2/namespaces/nginxinc/repositories/{}"
+        self.assertEqual(requested_urls(mock_get), [repository_url.format(name) for name in cases])
+
+    @kills(
+        Mutation(
+            docker_hub,
+            "@cache\ndef archival(",
+            "def archival(",
+            "every reference to a repository asks Docker Hub about its archival again",
+        )
+    )
+    @patch("requests.Session.get")
+    def test_a_repository_asked_about_twice_costs_one_request(self, mock_get: Mock):
+        """Test that the second question about a repository's archival is answered without asking Docker Hub again."""
+        mock_get.return_value = mock_response(_ARCHIVED_REPOSITORY_JSON)
+        answers = [docker_hub.archival("nginxinc/nginx-unprivileged") for _ in range(2)]
+        self.assertEqual(answers, [_ARCHIVED, _ARCHIVED])
+        self.assertEqual(len(requested_urls(mock_get)), 1)
 
 
 class TagListingTest(LoggingTestCase):

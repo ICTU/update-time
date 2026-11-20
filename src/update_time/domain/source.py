@@ -60,17 +60,21 @@ class Source:
         """Return whether the source reports the dependency's yanks, which it does where it has a yank getter."""
         return self.yank is not None
 
-    def reports_archival(self, _pinned: PinnedDependency) -> bool:
-        """Return whether the source declares the dependency's archival, which it does where its project getter does."""
-        return self.project is not None and self.project.declares_archival
+    def reports_archival(self, pinned: PinnedDependency) -> bool:
+        """Return whether the source declares the dependency's archival, where it looks the dependency's image up."""
+        return (
+            self.project is not None
+            and self.project.declares_archival(pinned.name)
+            and self.why_image_not_looked_up(pinned) is None
+        )
 
     def reports_vulnerabilities(self, _pinned: PinnedDependency) -> bool:
         """Return whether OSV holds advisories for the dependency, which it does where the source has an ecosystem."""
         return self.ecosystem is not None
 
     def reports_publication_dates(self, pinned: PinnedDependency) -> bool:
-        """Return whether the source dates the dependency's versions, so a cooldown and a staleness check can apply."""
-        return self.dates_versions_of(pinned)
+        """Return whether the source dates the dependency's versions, where it looks the dependency's image up."""
+        return self.dates_versions_of(pinned) and self.why_image_not_looked_up(pinned) is None
 
     def why_never_updated(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
         """Return why the source never updates the dependency's image whatever its marker says, or None where it may.

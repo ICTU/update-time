@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, NoReturn
 from unittest.mock import ANY, DEFAULT, Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion, Project, ProjectGetter
+from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion, Project, ProjectGetter, every_project
 from update_time.io.filesystem import glob_for
 
 from tests.helpers import FakeFiles, mock_response
@@ -220,7 +220,7 @@ class GitHubProjectMixin(unittest.TestCase):
         super().setUp()
         self.get_project = Mock(return_value=Project())
         patcher = patch(
-            "update_time.references.github.project", ProjectGetter(self.get_project, declares_archival=True)
+            "update_time.references.github.project", ProjectGetter(self.get_project, declares_archival=every_project)
         )
         self.addCleanup(patcher.stop)
         patcher.start()

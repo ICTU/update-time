@@ -117,6 +117,7 @@ class Consequence(StrEnum):
     TAG_NEVER_PINNED = "its tag is never pinned"
     DIGEST_NEVER_CHECKED = "its digest is never checked for drift"
     STALENESS_NEVER_CHECKED = "its staleness is never checked"
+    ARCHIVAL_NEVER_CHECKED = "its archival is never checked"
     NEVER_UPDATED = "it is never updated"
 
 
@@ -184,6 +185,7 @@ DIRECTIVES = (
         Scope.ARCHIVED,
         Source.reports_archival,
         Reason.NO_ARCHIVAL_SIGNAL,
+        consequence=Consequence.ARCHIVAL_NEVER_CHECKED,
     ),
     _Directive(
         Scope.COOLDOWN,

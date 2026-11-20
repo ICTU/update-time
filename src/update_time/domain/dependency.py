@@ -202,12 +202,22 @@ class Project:
 NO_PROJECT = Project()
 
 
+def every_project(_dependency: DependencyName) -> bool:
+    """Return whether the source declares the archival of the dependency's project, which it does for every one."""
+    return True
+
+
+def _no_project(_dependency: DependencyName) -> bool:
+    """Return whether the source declares the archival of the dependency's project, which it does for none."""
+    return False
+
+
 @dataclass(frozen=True)
 class ProjectGetter:
-    """How a source gets the project behind a dependency, and whether what it gets declares the project's archival."""
+    """How a source gets the project behind a dependency, and for which dependencies the source declares archival."""
 
     get: Callable[[DependencyName], Project]
-    declares_archival: bool = False
+    declares_archival: Callable[[DependencyName], bool] = _no_project
 
     def __call__(self, dependency: DependencyName, /) -> Project:
         """Return what the source reports about the dependency's project."""

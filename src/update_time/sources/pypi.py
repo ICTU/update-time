@@ -21,6 +21,7 @@ from update_time.domain.dependency import (
     ProjectGetter,
     Release,
     Yank,
+    every_project,
     is_valid,
     normalized_python_name,
 )
@@ -185,7 +186,7 @@ def _newest_release(package: DependencyName) -> Release | None:
 _ARCHIVED_STATUS = "archived"
 
 
-@partial(ProjectGetter, declares_archival=True)
+@partial(ProjectGetter, declares_archival=every_project)
 def project(package: DependencyName) -> Project:
     """Return what PyPI reports about the project: its newest release, and whether it declares it archived."""
     return Project(newest=_newest_release(package), archival=_archival(package))

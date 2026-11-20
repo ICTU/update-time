@@ -1,11 +1,12 @@
-"""Docker Hub specifics: credentials and the proprietary push-date API the cooldown and staleness check rely on.
+"""Docker Hub specifics: credentials, the proprietary push dates the cooldown and staleness check rely on, and archival.
 
 The OCI protocol exposes no publish date. Its optional `org.opencontainers.image.created` annotation dates the
 image's *build*, not the push of its tag. Reproducible builds commonly zero that annotation (`SOURCE_DATE_EPOCH`),
 so it is no substitute. Docker Hub's proprietary tags API is the only source of a real push date, so the
 cooldown can only be enforced for Docker Hub images, and only there can an image be dated for the staleness check.
 This module isolates everything Docker-Hub-specific. The generic OCI client in `oci` uses this module for those
-push dates, for the digests Docker Hub's listing gives, and for credentials, which raise the rate limit.
+push dates, for the digests Docker Hub's listing gives, for a repository's archival, and for credentials, which raise
+the rate limit.
 """
 
 import os
@@ -14,6 +15,7 @@ from functools import cache
 from http import HTTPStatus
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
+from update_time.domain.dependency import Archival, ArchivedSubject
 from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import LookedUp
@@ -24,7 +26,8 @@ if TYPE_CHECKING:
 
 _LOG = get_logger("docker hub")
 
-# Docker Hub's proprietary tags API; the only source of a tag's real push date (the OCI protocol exposes none).
+# The host of Docker Hub's proprietary API, which dates a tag's push (the OCI protocol exposes no push date) and says
+# whether a repository is archived.
 _REGISTRY = "https://registry.hub.docker.com"
 
 # The token endpoint the credentials are exchanged at; note that it lives on the user-facing hub.docker.com host,
@@ -143,12 +146,17 @@ def _listing_url(repository: str) -> str:
 
 
 def _tags_url(repository: str) -> str:
-    """Return the URL of a Docker Hub repository's tags, which the listing and each tag's metadata hang off.
+    """Return the URL of a Docker Hub repository's tags, which the listing and each tag's metadata hang off."""
+    return f"{_repository_url(repository)}/tags"
+
+
+def _repository_url(repository: str) -> str:
+    """Return the URL of a Docker Hub repository.
 
     `repository` is the `namespace/repository` path (e.g. `library/redis`), which the API splits into two segments.
     """
     namespace, repo = repository.split("/", maxsplit=1)
-    return f"{_REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags"
+    return f"{_REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}"
 
 
 @dataclass(frozen=True)
@@ -184,6 +192,24 @@ def _lists_every_alias(digests: dict[str, str], page: dict[str, str], tag: str) 
     """
     digest = digests.get(tag)
     return bool(digest) and digest not in page.values()
+
+
+# The status Docker Hub's repository endpoint gives an archived repository.
+_ARCHIVED_STATUS = "archived"
+
+
+@cache
+def archival(repository: str) -> Archival | None:
+    """Return what Docker Hub declares about the repository: whether it is archived, or None where it can't be read.
+
+    `repository` is the `namespace/repository` path (e.g. `nginxinc/nginx-unprivileged`).
+    """
+    url = _repository_url(repository)
+    found = fetch_json(url, _LOG, headers=api_headers(), statuses_meaning_absent=(HTTPStatus.NOT_FOUND,))
+    if (metadata := found.value) is None:
+        return None
+    archived = metadata.get("status_description") == _ARCHIVED_STATUS
+    return Archival(archived=archived, subject=ArchivedSubject.REPOSITORY)
 
 
 def last_pushed(repository: str, tag: str) -> LookedUp[datetime]:

@@ -11,16 +11,15 @@ A reference the run resolves no update for takes `report_project_checks` instead
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
-from update_time.domain.dependency import NO_PROJECT, NO_RELEASE, DependencyVersion, Unserved
+from update_time.domain.dependency import NO_PROJECT, NO_RELEASE, DependencyVersion, Project, Unserved
 from update_time.domain.directive import DIRECTIVES, Consequence, ImageNotLookedUpReason, Reason
 from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER, release_judged_alike, stale_release, staleness_is_checked
 
 if TYPE_CHECKING:
-    from update_time.domain.dependency import ImageNotLookedUp, Project, ProjectGetter
+    from update_time.domain.dependency import DependencyName, ImageNotLookedUp, ProjectGetter
     from update_time.domain.directive import RedundancyReason
-    from update_time.domain.marker import Marker
     from update_time.domain.source import Source
     from update_time.io.log import Logger
 
@@ -70,14 +69,26 @@ def _why_drift_is_never_adopted(reference: Reference, source: Source) -> Redunda
 def _reported_project(latest: DependencyVersion, reference: Reference, source: Source) -> Project:
     """Return what the source reports about the reference's project, where the source has a say and a check needs it.
 
-    The source may not serve the repository or the version a reference names. The project's newest release then
-    does not date the reference, so the reference does not get a project.
+    Where the source does not serve the reference's repository, the reference does not get a project.
     """
-    if source.project is None or latest.unserved in (Unserved.REPOSITORY, Unserved.VERSION):
+    if source.project is None or latest.unserved is Unserved.REPOSITORY:
         return NO_PROJECT
-    if not _project_is_checked(source.project, reference.marker):
+    if latest.unserved is Unserved.VERSION:
+        return _archival_alone(source.project, reference.dependency)
+    if not _project_is_checked(source.project, reference):
         return NO_PROJECT
     return source.project(reference.dependency)
+
+
+def _archival_alone(get_project: ProjectGetter, dependency: DependencyName) -> Project:
+    """Return the project of a dependency whose version the source does not serve, without its newest release.
+
+    The newest release does not date such a dependency, so the source is asked about the project only where the
+    source declares the dependency's archival.
+    """
+    if not get_project.declares_archival(dependency):
+        return NO_PROJECT
+    return Project(archival=get_project(dependency).archival)
 
 
 def latest_version(reference: Reference, source: Source, log: Logger) -> DependencyVersion | None:
@@ -107,14 +118,14 @@ def latest_version(reference: Reference, source: Source, log: Logger) -> Depende
     return None if held_back else latest
 
 
-def _project_is_checked(get_project: ProjectGetter, marker: Marker) -> bool:
+def _project_is_checked(get_project: ProjectGetter, reference: Reference) -> bool:
     """Return whether a project check runs: the run's staleness check, the archival check, or the marker's threshold.
 
     The marker's threshold is judged for redundancy against the newest release, a threshold of 0 days included.
     """
-    if marker.stale.value is not None or staleness_is_checked(STALE_AFTER.get()):
+    if reference.marker.stale.value is not None or staleness_is_checked(STALE_AFTER.get()):
         return True
-    return get_project.declares_archival
+    return get_project.declares_archival(reference.dependency)
 
 
 def _report_project(resolved: ResolvedReference, log: Logger) -> None:
@@ -145,7 +156,7 @@ def _warn_if_the_staleness_threshold_is_redundant(resolved: ResolvedReference, l
 
 def report_project_checks(reference: Reference, log: Logger, get_project: ProjectGetter) -> None:
     """Ask the source about the reference's project, where a check needs it, and report what it answers."""
-    if not _project_is_checked(get_project, reference.marker):
+    if not _project_is_checked(get_project, reference):
         return
     resolved = ResolvedReference.from_reference(
         reference, release=NO_RELEASE, project=get_project(reference.dependency)

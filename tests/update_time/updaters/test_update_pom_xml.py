@@ -1330,8 +1330,8 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     @kills(
         Mutation(
             maven_central_module,
-            "declares_archival=True",
-            "declares_archival=False",
+            "declares_archival=every_project",
+            "",
             "the repository reports no archival, so a switched-off staleness check skips the pom it reads",
         ),
     )

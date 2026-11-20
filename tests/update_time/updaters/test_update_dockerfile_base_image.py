@@ -522,19 +522,15 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 self.assert_no_redundant_suppression_logged()
                 self.assert_no_warnings_logged()
 
-    def test_the_yanked_and_archived_scopes_are_reported_as_redundant(self):
-        """Test that the `yanked` and `archived` scopes hold nothing back for an image, which still updates."""
-        for directive, reason in (
-            ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
-            ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
-        ):
-            with self.subTest(directive=directive):
-                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
-                marker = self.marker_line(directive)
-                mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
-                self.run_updater(mock_dockerfile)
-                mock_dockerfile.write_text.assert_called_once_with(marker + self.reference(f"python:3.15@{DIGEST}"))
-                self.assert_redundant_directive_logged(reason, "python", Location(mock_dockerfile, 2), directive)
+    def test_the_yanked_scope_is_reported_as_redundant(self):
+        """Test that the `yanked` scope holds nothing back for an image, which still updates."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
+        marker = self.marker_line("ignore[yanked]")
+        mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_called_once_with(marker + self.reference(f"python:3.15@{DIGEST}"))
+        location = Location(mock_dockerfile, 2)
+        self.assert_redundant_directive_logged(Reason.NO_YANK_CONCEPT, "python", location, "ignore[yanked]")
 
     def test_hash_drift_scope_on_a_reference_through_a_build_argument_is_reported_as_redundant(self):
         """Test that `allow[hash-drift]` is redundant on a reference naming a build argument: it never gets a digest."""

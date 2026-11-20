@@ -580,7 +580,7 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_archived_repository_logged(self, dependency: str, location: Location) -> None:
-        """Assert that a repository GitHub declares archived was warned about, GitHub publishing no reason."""
+        """Assert that a repository GitHub or Docker Hub declares archived was warned about, neither giving a reason."""
         self.assert_archived_dependency_logged(dependency, location, reason="", subject=ArchivedSubject.REPOSITORY)
 
     def assert_vulnerable_dependency_logged(
@@ -798,6 +798,16 @@ class LoggingTestCase(CacheClearingTestCase):
             dependency=dependency,
             location=location,
             directive=directive,
+        )
+
+    def assert_redundant_ignore_archived_logged(self, dependency: str, location: Location) -> None:
+        """Assert that an `ignore[archived]` on a repository that is not archived was warned about as redundant."""
+        self.assert_logged(
+            message_of(Logger.report_archival, "directive", "subject"),
+            dependency=dependency,
+            location=location,
+            directive="ignore[archived]",
+            subject=ArchivedSubject.REPOSITORY,
         )
 
     def assert_unsupported_package_manager_logged(self, path: Path, manager: str, supported: str) -> None:
