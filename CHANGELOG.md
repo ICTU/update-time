@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.63 - 2026-11-20
+
 ### Added
 
 - Warn about a Docker image, a Node engine version, or a Python version whose repository Docker Hub reports as archived. Closes [#577](https://github.com/ICTU/update-time/issues/577).
