@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from unittest.mock import ANY, Mock, call, patch
 from urllib.parse import urlparse
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
@@ -414,13 +414,11 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         update_package_jsons()
         self.assert_npm_called(mock_run)
 
-    @kills(
-        Mutation(
-            npm_module,
-            '("package-lock.json", "npm-shrinkwrap.json")',
-            '("package-lock.json",)',
-            "a project that an npm-shrinkwrap.json locks is left as it is, as if it did not have a lock file",
-        )
+    @kills.replace(
+        npm_module,
+        '("package-lock.json", "npm-shrinkwrap.json")',
+        '("package-lock.json",)',
+        "a project that an npm-shrinkwrap.json locks is left as it is, as if it did not have a lock file",
     )
     def test_npm_runs_for_a_project_locked_by_a_shrinkwrap_file(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm runs for a project whose workspace root holds an npm-shrinkwrap.json as its lock file."""
@@ -492,17 +490,15 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     error=str(error),
                 )
 
-    @kills(
-        Mutation(
-            update_package_jsons,
-            "_LOG.path(package_json)\n"
-            "        if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
-            "            continue",
-            "if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
-            "            continue\n"
-            "        _LOG.path(package_json)",
-            "a package.json that does not parse is warned about without being logged as checked first",
-        )
+    @kills.replace(
+        update_package_jsons,
+        "_LOG.path(package_json)\n"
+        "        if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
+        "            continue",
+        "if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
+        "            continue\n"
+        "        _LOG.path(package_json)",
+        "a package.json that does not parse is warned about without being logged as checked first",
     )
     def test_package_json_that_does_not_parse_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json that does not parse is logged as checked and warned about, and the others update."""
@@ -539,13 +535,11 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         )
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            project_update_module.ProjectUpdate.log_moved_versions,
-            "npmjs.SOURCE.release(name, new_version)",
-            "npmjs.SOURCE.release(package, new_version)",
-            "Update-time looks up an alias's changelog and date under the alias, which the registry does not serve",
-        )
+    @kills.replace(
+        project_update_module.ProjectUpdate.log_moved_versions,
+        "npmjs.SOURCE.release(name, new_version)",
+        "npmjs.SOURCE.release(package, new_version)",
+        "Update-time looks up an alias's changelog and date under the alias, which the registry does not serve",
     )
     def test_an_alias_is_reported_at_its_line_as_the_package_it_aliases(self, mock_run: Mock, mock_glob: Mock):
         """Test that an alias's moved version is logged at its line for the package it aliases, looked up as that."""
@@ -573,13 +567,11 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
         )
 
-    @kills(
-        Mutation(
-            project_update_module.ProjectUpdate.log_moved_versions,
-            "_LOG.version_moved_back(manager, reference, new_version)",
-            "_LOG.version_moved_back(manager, moved[0], new_version)",
-            "a version moved back is reported at the first line declaring it alone",
-        )
+    @kills.replace(
+        project_update_module.ProjectUpdate.log_moved_versions,
+        "_LOG.version_moved_back(manager, reference, new_version)",
+        "_LOG.version_moved_back(manager, moved[0], new_version)",
+        "a version moved back is reported at the first line declaring it alone",
     )
     @patch("requests.Session.get", side_effect=_package_lookup_responses().side_effect)
     def test_version_moved_back_is_logged_as_moved_back_at_each_line_declaring_the_dependency(
@@ -679,13 +671,11 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_logged_among_others(message, location=Location(package_json, 3), **fields)
         self.assert_logged_among_others(message, location=Location(package_json, 6), **fields)
 
-    @kills(
-        Mutation(
-            project_update_module._log_range_rewrites,
-            "range_before.current_version == range_after.current_version",
-            "range_before == range_after",
-            "a range npm only moved to another line by sorting the keys is logged as rewritten",
-        )
+    @kills.replace(
+        project_update_module._log_range_rewrites,
+        "range_before.current_version == range_after.current_version",
+        "range_before == range_after",
+        "a range npm only moved to another line by sorting the keys is logged as rewritten",
     )
     def test_range_npm_only_moved_by_sorting_the_keys_is_not_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a range npm moved to another line by sorting the keys is not logged, beside one it rewrote."""
@@ -799,13 +789,11 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_command_stderr_logged(stderr="npm error network")
 
-    @kills(
-        Mutation(
-            package_manager_module.ConfiguredCooldown.setting,
-            "return key",
-            "return self.keys[0]",
-            "a project whose npm config sets before is said to set min-release-age",
-        ),
+    @kills.replace(
+        package_manager_module.ConfiguredCooldown.setting,
+        "return key",
+        "return self.keys[0]",
+        "a project whose npm config sets before is said to set min-release-age",
     )
     def test_project_cooldown_respected_and_named(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added where the project's npm config sets one, and the setting is named."""
@@ -1039,14 +1027,6 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         )
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            package_manager_module.PackageManager.roots_a_workspace,
-            "(package_json.path.parent / self.workspace_file).exists()",
-            "False",
-            "pnpm runs at a workspace root only where its package.json declares a dependency",
-        )
-    )
     @patch("requests.Session.get", _package_lookup_responses())
     def test_a_workspace_root_without_dependencies_updates_its_members(self, mock_run: Mock, mock_glob: Mock):
         """Test that pnpm runs at a root holding a pnpm-workspace.yaml, though its package.json declares nothing."""
@@ -1059,13 +1039,10 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         version = published_version("1.1", _PUBLICATION_TIME)
         self.assert_new_version_logged("package", version, Location(member, 3), changes="Changelog")
 
-    @kills(
-        Mutation(
-            pnpm_workspace_module.update_pnpm_workspace,
-            "workspace.update(None)",
-            "None",
-            "the members of a workspace whose root lacks a package.json are left as they are",
-        )
+    @kills.force_none(
+        pnpm_workspace_module.update_pnpm_workspace,
+        "workspace.update(None)",
+        "the members of a workspace whose root lacks a package.json are left as they are",
     )
     @patch("requests.Session.get", _package_lookup_responses())
     def test_a_workspace_root_without_a_package_json_updates_its_members(self, mock_run: Mock, mock_glob: Mock):
@@ -1085,13 +1062,10 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
             root=Location(SCAN_ROOT / "pnpm-workspace.yaml"),
         )
 
-    @kills(
-        Mutation(
-            pnpm_workspace_module.update_pnpm_workspace,
-            "is_installed(PNPM.update.executable)",
-            "True",
-            "a missing pnpm is run anyway at a workspace root without a package.json, failing once per command",
-        )
+    @kills.force_true(
+        pnpm_workspace_module.update_pnpm_workspace,
+        "is_installed(PNPM.update.executable)",
+        "a missing pnpm is run anyway at a workspace root without a package.json, failing once per command",
     )
     def test_a_missing_pnpm_is_reported_once_at_a_member_of_a_root_without_a_package_json(
         self, mock_run: Mock, mock_glob: Mock
@@ -1106,13 +1080,11 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
             message_of(Logger.package_manager_not_on_path), location=Location(member), executable="pnpm"
         )
 
-    @kills(
-        Mutation(
-            project_update_module.log_updates,
-            "update.log_moved_versions(manager, ",
-            'update.log_moved_versions("npm", ',
-            "a version pnpm moved back is reported as moved back by npm",
-        )
+    @kills.replace(
+        project_update_module.log_updates,
+        "update.log_moved_versions(manager, ",
+        'update.log_moved_versions("npm", ',
+        "a version pnpm moved back is reported as moved back by npm",
     )
     @patch("requests.Session.get", _package_lookup_responses())
     def test_version_moved_back_is_logged_naming_pnpm(self, mock_run: Mock, mock_glob: Mock):
@@ -1184,13 +1156,11 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
                     member, message_of(Logger.no_lock_file), manager="pnpm", lock=Location(lock_root / "pnpm-lock.yaml")
                 )
 
-    @kills(
-        Mutation(
-            catalogs_yaml_module.CatalogsYaml.catalogs,
-            "CatalogEntry(name, entry.key)",
-            'CatalogEntry("", entry.key)',
-            "the version pnpm moved for a `catalog:testing` dependency is reported at the member",
-        ),
+    @kills.replace(
+        catalogs_yaml_module.CatalogsYaml.catalogs,
+        "CatalogEntry(name, entry.key)",
+        'CatalogEntry("", entry.key)',
+        "the version pnpm moved for a `catalog:testing` dependency is reported at the member",
     )
     @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_of_a_catalog_dependency_is_logged_at_the_catalog(self, mock_run: Mock, mock_glob: Mock):
@@ -1329,13 +1299,10 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [root, *paths]
         return root, workspaces
 
-    @kills(
-        Mutation(
-            project_update_module.ProjectUpdate.log_moved_versions,
-            " if each.location not in reported]",
-            "]",
-            "the version bun moved for a catalog's entry is reported once for each member taking it",
-        ),
+    @kills.delete(
+        project_update_module.ProjectUpdate.log_moved_versions,
+        " if each.location not in reported",
+        "the version bun moved for a catalog's entry is reported once for each member taking it",
     )
     @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_of_a_catalog_dependency_is_logged_once_at_the_catalog(self, mock_run: Mock, mock_glob: Mock):
@@ -1392,20 +1359,18 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
         update_package_jsons()
 
-    @kills(
-        Mutation(
-            bun_module._bun_locked_versions,
-            "_LOG.unreadable_bun_lock(lock, error)",
-            "del error",
-            "Update-time passes over a bun.lock it cannot read without a warning",
-        ),
-        Mutation(
-            bun_module._bun_locked_versions,
-            "except (OSError, ValueError) as error:",
-            "except KeyError as error:",
-            "a bun.lock that Update-time cannot read stops the run",
-            raises="ValueError: it does not hold the JSON bun writes",
-        ),
+    @kills.replace(
+        bun_module._bun_locked_versions,
+        "_LOG.unreadable_bun_lock(lock, error)",
+        "del error",
+        "Update-time passes over a bun.lock it cannot read without a warning",
+    )
+    @kills.replace(
+        bun_module._bun_locked_versions,
+        "except (OSError, ValueError) as error:",
+        "except KeyError as error:",
+        "a bun.lock that Update-time cannot read stops the run",
+        raises="ValueError: it does not hold the JSON bun writes",
     )
     def test_unreadable_lock_is_warned_about_and_no_version_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bun.lock that Update-time cannot read is warned about, and the run does not log a version."""
@@ -1422,25 +1387,22 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
                 self.assert_logged(message_of(Logger.unreadable_bun_lock), location=Location(lock), error=error)
                 self.assert_no_new_version_logged()
 
-    @kills(
-        Mutation(
-            bun_module._bunfig_sets_a_cooldown,
-            "_BUNFIG_COOLDOWN in install",
-            "bool(install)",
-            "a bunfig.toml with any [install] setting is taken to set a cooldown, so the run applies none",
-        ),
-        Mutation(
-            bun_module._global_bunfig_sets_a_cooldown,
-            "xdg_config_home if xdg_config_home.is_absolute() else ",
-            "",
-            "Update-time reads the global bunfig.toml in the home directory, and bun the one in XDG_CONFIG_HOME",
-        ),
-        Mutation(
-            bun_module._global_bunfig_sets_a_cooldown,
-            "xdg_config_home.is_absolute()",
-            "xdg_config_home != Path()",
-            "Update-time reads the global bunfig.toml in a relative XDG_CONFIG_HOME, which bun ignores for the home's",
-        ),
+    @kills.replace(
+        bun_module._bunfig_sets_a_cooldown,
+        "_BUNFIG_COOLDOWN in install",
+        "bool(install)",
+        "a bunfig.toml with any [install] setting is taken to set a cooldown, so the run applies none",
+    )
+    @kills.delete(
+        bun_module._global_bunfig_sets_a_cooldown,
+        "xdg_config_home if xdg_config_home.is_absolute() else ",
+        "Update-time reads the global bunfig.toml in the home directory, and bun the one in XDG_CONFIG_HOME",
+    )
+    @kills.replace(
+        bun_module._global_bunfig_sets_a_cooldown,
+        "xdg_config_home.is_absolute()",
+        "xdg_config_home != Path()",
+        "Update-time reads the global bunfig.toml in a relative XDG_CONFIG_HOME, which bun ignores for the home's",
     )
     def test_cooldown_a_bunfig_sets_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added where a bunfig.toml that bun reads sets one, and that it is logged."""
@@ -1476,13 +1438,9 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
                 else:
                     self.assert_project_cooldown_logged(SCAN_ROOT / "package.json", "bun minimumReleaseAge")
 
-    @kills(
-        Mutation(
-            bun_module,
-            "@cache\ndef _global_bunfig_sets_a_cooldown",
-            "def _global_bunfig_sets_a_cooldown",
-            "every bun project reads the global bunfig.toml again, and repeats the warning about it",
-        )
+    @kills.uncache(
+        bun_module._global_bunfig_sets_a_cooldown,
+        "every bun project reads the global bunfig.toml again, and repeats the warning about it",
     )
     def test_unreadable_global_bunfig_is_warned_about_once(self, mock_run: Mock, mock_glob: Mock):
         """Test that a global bunfig.toml that Update-time cannot read is warned about once, however many projects."""
@@ -1500,14 +1458,11 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         self.assertEqual(len(mock_run.call_args_list), len(projects))
         self.assert_logged(message_of(Logger.unreadable_bunfig), location=Location(global_bunfig), error=unclosed_error)
 
-    @kills(
-        Mutation(
-            bun_module._bunfig_sets_a_cooldown,
-            "if not isinstance(install, dict):",
-            "if False:",
-            "a bunfig.toml whose install is not a table stops the run",
-            raises="TypeError: argument of type 'int' is not a container or iterable",
-        )
+    @kills.force_false(
+        bun_module._bunfig_sets_a_cooldown,
+        "not isinstance(install, dict)",
+        "a bunfig.toml whose install is not a table stops the run",
+        raises="TypeError: argument of type 'int' is not a container or iterable",
     )
     def test_unreadable_bunfig_is_warned_about_and_the_cooldown_applied(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bunfig.toml that Update-time cannot read is warned about, and the run applies the cooldown."""
@@ -1541,31 +1496,11 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
 
     lock_file_name = "yarn.lock"
 
-    @kills(
-        Mutation(
-            package_manager_module._Workspace.update,
-            "manager.run_command(update, directory, cooldown.environment)",
-            "manager.run_command(update, directory, {})",
-            "yarn updates without Update-time's cooldown, which it takes from its environment alone",
-        ),
-        Mutation(
-            yarn_module,
-            "str(days * MINUTES_PER_DAY)",
-            "str(days)",
-            "yarn reads the cooldown's days as minutes, and holds back the releases of 7 minutes rather than 7 days",
-        ),
-        Mutation(
-            package_manager_module._Workspace.update,
-            "Command(*manager.update, *cooldown.options, *packages)",
-            "Command(*manager.update, *cooldown.options)",
-            "yarn is asked to update without naming a package, and updates nothing",
-        ),
-        Mutation(
-            yarn_module,
-            '"up", "-R",',
-            '"up",',
-            "yarn moves each package to its latest version, across the range its package.json declares",
-        ),
+    @kills.replace(
+        yarn_module,
+        '"up", "-R",',
+        '"up",',
+        "yarn moves each package to its latest version, across the range its package.json declares",
     )
     @patch("requests.Session.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
@@ -1583,25 +1518,22 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         )
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_locked_versions,
-            '_declared_name(each["descriptor"])',
-            '_declared_name(each["locator"])',
-            "an alias is updated under the name of the package it aliases, which leaves the alias where it is",
-        ),
-        Mutation(
-            yarn_module,
-            're.compile(r"[@#]npm:',
-            're.compile(r"@npm:',
-            "a dependency with peer dependencies, which yarn resolves to a virtual locator, is never updated",
-        ),
-        Mutation(
-            yarn_module._registry_version,
-            " or _BUILTIN_PATCH_VERSION.search(locator)",
-            "",
-            "a package yarn patches itself, such as typescript, is never updated",
-        ),
+    @kills.replace(
+        yarn_module._yarn_locked_versions,
+        '_declared_name(each["descriptor"])',
+        '_declared_name(each["locator"])',
+        "an alias is updated under the name of the package it aliases, which leaves the alias where it is",
+    )
+    @kills.replace(
+        yarn_module,
+        're.compile(r"[@#]npm:',
+        're.compile(r"@npm:',
+        "a dependency with peer dependencies, which yarn resolves to a virtual locator, is never updated",
+    )
+    @kills.delete(
+        yarn_module._registry_version,
+        " or _BUILTIN_PATCH_VERSION.search(locator)",
+        "a package yarn patches itself, such as typescript, is never updated",
     )
     @_publishing_version_1_1
     def test_an_alias_a_dependency_with_peers_and_a_patched_one_are_updated(self, mock_run: Mock, mock_glob: Mock):
@@ -1634,13 +1566,10 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_new_version_logged_among_others("react-dom", version, Location(package_json, 4))
         self.assert_new_version_logged_among_others("typescript", version, Location(package_json, 5))
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_locked_versions,
-            " if version is not None}",
-            "}",
-            "yarn is asked to update a workspace, a file, or a project's own patch, which the registry does not serve",
-        )
+    @kills.delete(
+        yarn_module._yarn_locked_versions,
+        " if version is not None",
+        "yarn is asked to update a workspace, a file, or a project's own patch, which the registry does not serve",
     )
     def test_only_the_packages_the_registry_serves_are_updated(self, mock_run: Mock, mock_glob: Mock):
         """Test that the update names the registry packages alone, not a workspace, a patch, or a file dependency."""
@@ -1663,20 +1592,11 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         self.assertEqual(commands, [_YARN_VERSION, _YARN_CONFIG, _YARN_INFO, update, _YARN_INFO])
         self.assert_no_new_version_logged()
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_locked_versions,
-            'package["children"].get("Dependencies", [])',
-            'package["children"]["Dependencies"]',
-            "a workspace that does not declare a dependency stops the run",
-            raises="KeyError: 'Dependencies'",
-        ),
-        Mutation(
-            yarn_module._yarn_locked_versions,
-            "projects[Path(path)]",
-            "projects[Path()]",
-            "the versions yarn locks for a member are taken for the root's, and logged at the root",
-        ),
+    @kills.replace(
+        yarn_module._yarn_locked_versions,
+        "projects[Path(path)]",
+        "projects[Path()]",
+        "the versions yarn locks for a member are taken for the root's, and logged at the root",
     )
     @patch("requests.Session.get", _package_lookup_responses())
     def test_root_run_logs_the_new_version_of_a_member_at_the_member(self, mock_run: Mock, mock_glob: Mock):
@@ -1701,21 +1621,6 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
             root=Location(root),
         )
 
-    @kills(
-        Mutation(
-            yarn_module._run_yarn,
-            "_LOG.command_failed(command, result.stdout)",
-            "pass",
-            "a yarn command that fails is not reported, since yarn reports its errors on stdout",
-        ),
-        Mutation(
-            yarn_module._yarn_locked_versions,
-            "if not listing.succeeded:",
-            "if False:",
-            "a yarn info that fails stops the run, which reads the error yarn printed as JSON",
-            raises="json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
-        ),
-    )
     def test_a_failed_yarn_command_is_reported_with_what_yarn_printed(self, mock_run: Mock, mock_glob: Mock):
         """Test that a yarn command that fails is reported with the output yarn printed, and the run goes on."""
         mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
@@ -1734,13 +1639,11 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
                 self.assert_error_logged(message_of(Logger.command_failed), command=command, output=error)
                 self.assert_no_new_version_logged()
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_version_policy,
-            ">= _FIRST_YARN_WITH_A_COOLDOWN",
-            "> _FIRST_YARN_WITH_A_COOLDOWN",
-            "yarn 4.10, the first yarn that applies a cooldown, is taken for one that cannot",
-        )
+    @kills.replace(
+        yarn_module._yarn_version_policy,
+        ">= _FIRST_YARN_WITH_A_COOLDOWN",
+        "> _FIRST_YARN_WITH_A_COOLDOWN",
+        "yarn 4.10, the first yarn that applies a cooldown, is taken for one that cannot",
     )
     def test_yarn_runs_from_the_first_version_that_applies_a_cooldown(self, mock_run: Mock, mock_glob: Mock):
         """Test that yarn 4.10, the first yarn that applies a cooldown, updates the project."""
@@ -1751,13 +1654,10 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         update = _YARN_UP
         self.assertIn(_yarn_call(update, _YARN_GATE), mock_run.call_args_list)
 
-    @kills(
-        Mutation(
-            yarn_module._run_yarn,
-            "if not result.succeeded and result.stdout:",
-            "if not result.succeeded:",
-            "a yarn command that fails without printing to stdout is reported as failed, with nothing to show",
-        )
+    @kills.delete(
+        yarn_module._run_yarn,
+        " and result.stdout",
+        "a yarn command that fails without printing to stdout is reported as failed, with nothing to show",
     )
     def test_a_yarn_command_failing_without_output_is_reported_by_its_stderr_alone(
         self, mock_run: Mock, mock_glob: Mock
@@ -1772,19 +1672,16 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_command_stderr_logged(update, "Segmentation fault")
         self.assert_none_logged(message_of(Logger.command_failed), "failed command")
 
-    @kills(
-        Mutation(
-            package_manager_module._Workspace.update,
-            "is None:\n            return package_json",
-            "is None:\n            packages = ()",
-            "yarn runs an update and lists again where it has no package to name, repeating a failed listing's error",
-        ),
-        Mutation(
-            yarn_module._every_locked_package,
-            "for package in versions})) or None",
-            "for package in versions}))",
-            "yarn's empty list of packages is taken to mean every package, and an update that names none runs",
-        ),
+    @kills.replace(
+        package_manager_module._Workspace.update,
+        "is None:\n            return package_json",
+        "is None:\n            packages = ()",
+        "yarn runs an update and lists again where it has no package to name, repeating a failed listing's error",
+    )
+    @kills.delete(
+        yarn_module._every_locked_package,
+        " or None",
+        "yarn's empty list of packages is taken to mean every package, and an update that names none runs",
     )
     def test_yarn_neither_updates_nor_lists_again_without_a_package_to_name(self, mock_run: Mock, mock_glob: Mock):
         """Test that yarn stops after its listing where that failed, or where it does not hold a registry package."""
@@ -1820,13 +1717,10 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         (update,) = [each for each in mock_run.call_args_list if each.args[0][:2] == ("yarn", "up")]
         return update.kwargs["env"]
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_cooldown_setting,
-            "return None if sources.get(_YARN_COOLDOWN, _UNSET) == _UNSET else _YARN_COOLDOWN",
-            "return None",
-            "Update-time's cooldown overrides the one a .yarnrc.yml or the environment sets for yarn",
-        )
+    @kills.delete(
+        yarn_module._yarn_cooldown_setting,
+        " if sources.get(_YARN_COOLDOWN, _UNSET) == _UNSET else _YARN_COOLDOWN",
+        "Update-time's cooldown overrides the one a .yarnrc.yml or the environment sets for yarn",
     )
     def test_cooldown_the_project_sets_is_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that the update leaves yarn's cooldown to a file or the environment that sets it, and logs that."""
@@ -1837,20 +1731,17 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
                 self.assertEqual(environment, os.environ | _YARN_ENVIRONMENT)
                 self.assert_project_cooldown_logged(SCAN_ROOT / "package.json", "yarn npmMinimalAgeGate")
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_cooldown_setting,
-            '_LOG.settings_unreadable(directory / "package.json", "yarn", _YARN_COOLDOWN, str(error))',
-            "del error",
-            "Update-time applies its cooldown over yarn's settings without saying it could not read them",
-        ),
-        Mutation(
-            yarn_module._yarn_cooldown_setting,
-            "except ValueError as error:",
-            "except KeyError as error:",
-            "yarn settings that Update-time cannot read stop the run",
-            raises="ValueError: Usage Error: Parse error when loading /.yarnrc.yml; please check it's proper Yaml",
-        ),
+    @kills.delete(
+        yarn_module._yarn_cooldown_setting,
+        '_LOG.settings_unreadable(directory / "package.json", "yarn", _YARN_COOLDOWN, str(error))',
+        "Update-time applies its cooldown over yarn's settings without saying it could not read them",
+    )
+    @kills.replace(
+        yarn_module._yarn_cooldown_setting,
+        "except ValueError as error:",
+        "except KeyError as error:",
+        "yarn settings that Update-time cannot read stop the run",
+        raises="ValueError: Usage Error: Parse error when loading /.yarnrc.yml; please check it's proper Yaml",
     )
     def test_unreadable_settings_are_warned_about_and_the_cooldown_applied(self, mock_run: Mock, mock_glob: Mock):
         """Test that settings yarn does not report are warned about, and that the update takes the run's cooldown."""
@@ -1900,19 +1791,11 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
 class SkipPackageJsonWithoutDependenciesTest(ExecutablesOnPathTestCase):
     """Unit tests for a package.json that declares nothing for its package manager to update."""
 
-    @kills(
-        Mutation(
-            update_package_jsons,
-            "manager.roots_a_workspace(file)",
-            "file.declares_workspaces()",
-            "pnpm runs for a package.json declaring workspaces, and creates a pnpm-workspace.yaml from them",
-        ),
-        Mutation(
-            package_json_module.PackageJson.declares_workspaces,
-            "bool(self.workspace_patterns())",
-            '"workspaces" in self.contents',
-            "npm runs for a package.json whose workspaces do not name a member, and writes a lock beside it",
-        ),
+    @kills.replace(
+        package_json_module.PackageJson.declares_workspaces,
+        "bool(self.workspace_patterns())",
+        '"workspaces" in self.contents',
+        "npm runs for a package.json whose workspaces do not name a member, and writes a lock beside it",
     )
     def test_package_manager_not_run(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm and pnpm, both off the path, skip a package.json declaring nothing they install, saying why."""
@@ -2007,13 +1890,11 @@ class VulnerableDependencyTest(NoUpdateTestCase):
             "left-pad", "1.2.0", VULNERABILITY, Location(package_json, 6), among_others=True
         )
 
-    @kills(
-        Mutation(
-            update_package_json_module._checked_workspace_files,
-            "_LOG.path(path)",
-            "str(path)",
-            "the log at DEBUG does not show that Update-time checked a pnpm-workspace.yaml",
-        ),
+    @kills.replace(
+        update_package_json_module._checked_workspace_files,
+        "_LOG.path(path)",
+        "str(path)",
+        "the log at DEBUG does not show that Update-time checked a pnpm-workspace.yaml",
     )
     def test_vulnerable_pin_in_a_pnpm_catalog_warned(self, _mock_run: Mock, glob: Mock):
         """Test that a pnpm-workspace.yaml is logged as checked, and its vulnerable catalog entry warned about."""
@@ -2024,13 +1905,10 @@ class VulnerableDependencyTest(NoUpdateTestCase):
         self.assert_path_logged_first(workspace)
         self.assert_vulnerable_dependency_logged("left-pad", "1.3.0", VULNERABILITY, Location(workspace, 2))
 
-    @kills(
-        Mutation(
-            update_package_json_module._checked_workspace_files,
-            "CatalogsYaml.readable(path, _LOG.unreadable_catalogs)",
-            "CatalogsYaml.readable(path)",
-            "Update-time passes over a pnpm-workspace.yaml it cannot read without a warning",
-        ),
+    @kills.delete(
+        update_package_json_module._checked_workspace_files,
+        ", _LOG.unreadable_catalogs",
+        "Update-time passes over a pnpm-workspace.yaml it cannot read without a warning",
     )
     def test_a_pnpm_workspace_file_that_cannot_be_read_is_warned_about_and_passed_over(
         self, _mock_run: Mock, glob: Mock
@@ -2050,13 +1928,10 @@ class VulnerableDependencyTest(NoUpdateTestCase):
         location = Location(workspace, 2)
         self.assert_vulnerable_dependency_logged("left-pad", "1.3.0", VULNERABILITY, location, among_others=True)
 
-    @kills(
-        Mutation(
-            npm_declaration_module.declaration,
-            'aliased["range"] or ""',
-            '""',
-            "an alias pinned to a version is checked for neither a yank nor a vulnerability",
-        )
+    @kills.delete(
+        npm_declaration_module.declaration,
+        'aliased["range"] or ',
+        "an alias pinned to a version is checked for neither a yank nor a vulnerability",
     )
     def test_osv_is_asked_about_the_exact_pins_alone(self, mock_run: Mock, glob: Mock):
         """Test that OSV is asked about each exact pin, an alias's as the package it aliases, and not about a range."""
@@ -2188,20 +2063,12 @@ class MissingPackageManagerTest(NoUpdateTestCase):
     """Unit tests for a package.json whose package manager is not on the path."""
 
     @patch("requests.Session.get")
-    @kills(
-        Mutation(
-            package_manager_module.PackageManager.update_package_json,
-            "_LOG.package_manager_not_on_path(path, executable)\n"
-            "            return CheckedPackageJson(package_json, MARKER_POLICY)",
-            "_LOG.package_manager_not_on_path(path, executable)",
-            "a missing package manager is reported, and then run anyway, failing once per command",
-        ),
-        Mutation(
-            package_manager_module.PackageManager.update_package_json,
-            "executable := self.update.executable",
-            'executable := "npm"',
-            "a pnpm-managed package.json is checked for npm rather than for pnpm",
-        ),
+    @kills.replace(
+        package_manager_module.PackageManager.update_package_json,
+        "_LOG.package_manager_not_on_path(path, executable)\n"
+        "            return CheckedPackageJson(package_json, MARKER_POLICY)",
+        "_LOG.package_manager_not_on_path(path, executable)",
+        "a missing package manager is reported, and then run anyway, failing once per command",
     )
     def test_a_missing_manager_is_reported_once_and_the_checks_still_run(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a missing npm or pnpm is reported in one line naming the file, and that the checks still run."""
@@ -2284,21 +2151,18 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
                     lock=Location(workspace_root / "package-lock.json"),
                 )
 
-    @kills(
-        Mutation(
-            package_manager_module._declares_member,
-            "return not excluded and",
-            "return True or",
-            "a directory below a workspace root that does not declare it a member is updated against the root's lock",
-            raises="StopIteration",
-        ),
-        Mutation(
-            package_manager_module._declares_member,
-            "return not excluded and",
-            "return",
-            "Update-time ignores a negated pattern of the root's workspaces, and runs bun against the root's lock",
-            raises="StopIteration",
-        ),
+    @kills.replace(
+        package_manager_module._declares_member,
+        "return not excluded and",
+        "return True or",
+        "a directory below a workspace root that does not declare it a member is updated against the root's lock",
+        raises="StopIteration",
+    )
+    @kills.delete(
+        package_manager_module._declares_member,
+        "not excluded and ",
+        "Update-time ignores a negated pattern of the root's workspaces, and runs bun against the root's lock",
+        raises="StopIteration",
     )
     def test_bun_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that bun does not update a project whose workspace root does not hold a lock, and the checks run."""
@@ -2331,25 +2195,21 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
                     lock=Location(workspace_root / "bun.lock"),
                 )
 
-    @kills(
-        Mutation(
-            package_manager_module._binary_lock_policy,
-            "_LOG.binary_lock(workspace.root_file(), binary_lock, workspace.root / workspace.manager.lock_files[0])",
-            "del binary_lock",
-            "Update-time passes over a project locked in a binary bun.lockb without saying how to convert the lock",
-        ),
-        Mutation(
-            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
-            "(binary_lock := self.root / manager.binary_lock)",
-            "(binary_lock := path.parent / manager.binary_lock)",
-            "a member whose workspace root holds a binary bun.lockb is said to lack a lock",
-        ),
-        Mutation(
-            package_manager_module,
-            "@cache\ndef _binary_lock_policy(",
-            "def _binary_lock_policy(",
-            "a workspace locked in a binary bun.lockb is warned about again for each package.json it holds",
-        ),
+    @kills.replace(
+        package_manager_module._binary_lock_policy,
+        "_LOG.binary_lock(workspace.root_file(), binary_lock, workspace.root / workspace.manager.lock_files[0])",
+        "del binary_lock",
+        "Update-time passes over a project locked in a binary bun.lockb without saying how to convert the lock",
+    )
+    @kills.replace(
+        package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
+        "(binary_lock := self.root / manager.binary_lock)",
+        "(binary_lock := path.parent / manager.binary_lock)",
+        "a member whose workspace root holds a binary bun.lockb is said to lack a lock",
+    )
+    @kills.uncache(
+        package_manager_module._binary_lock_policy,
+        "a workspace locked in a binary bun.lockb is warned about again for each package.json it holds",
     )
     def test_bun_not_run_for_a_binary_lock(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that bun does not update a project locked in a binary bun.lockb, warned about once, and checks run."""
@@ -2411,13 +2271,10 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
 class FilesOfMoreThanOneManagerTest(_ProjectLeftAsItIsTestCase):
     """Unit tests for a package.json whose directory holds the files of more than one package manager."""
 
-    @kills(
-        Mutation(
-            update_package_jsons,
-            "elif choice.names_more_than_one_manager():",
-            "elif False:",
-            "the manager whose file comes first runs, and may update a lock the project no longer uses",
-        )
+    @kills.force_false(
+        update_package_jsons,
+        "choice.names_more_than_one_manager()",
+        "the manager whose file comes first runs, and may update a lock the project no longer uses",
     )
     def test_no_manager_runs(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that no manager runs where the files of the package.json's project name two, which are warned about."""
@@ -2507,13 +2364,11 @@ class WorkspaceRootOutsideTheScanTest(_ProjectLeftAsItIsTestCase):
             root=Location(_MEMBER.parent / "package.json"),
         )
 
-    @kills(
-        Mutation(
-            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
-            "return WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY",
-            "return MARKER_POLICY",
-            "a marker in a member whose workspace root lies outside the scan is reported as one npm decides",
-        )
+    @kills.replace(
+        package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
+        "return WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY",
+        "return MARKER_POLICY",
+        "a marker in a member whose workspace root lies outside the scan is reported as one npm decides",
     )
     def test_a_directive_steering_the_update_is_reported_as_deciding_nothing(
         self, get: Mock, mock_run: Mock, mock_glob: Mock
@@ -2535,13 +2390,10 @@ class WorkspaceRootOutsideTheScanTest(_ProjectLeftAsItIsTestCase):
                 update_package_jsons()
                 self.assert_redundant_directive_logged(reason, "clipboard", Location(package_json, 4), directive)
 
-    @kills(
-        Mutation(
-            package_manager_module.PackageManager.checked_catalogs,
-            " if is_scanned(workspace.root) else Catalogs()",
-            "",
-            "a dependency of a catalog outside the scan is said to be checked at the catalog",
-        )
+    @kills.delete(
+        package_manager_module.PackageManager.checked_catalogs,
+        " if is_scanned(workspace.root) else Catalogs()",
+        "a dependency of a catalog outside the scan is said to be checked at the catalog",
     )
     def test_a_warning_scope_on_a_catalog_dependency_is_reported_where_the_catalog_lies_outside_the_scan(
         self, _get: Mock, _mock_run: Mock, mock_glob: Mock
@@ -2607,20 +2459,12 @@ class YarnVersionTest(_ProjectLeftAsItIsTestCase):
         self.assertEqual(mock_run.call_args_list, [_yarn_call(_YARN_VERSION)])
         return package_json
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_version_policy,
-            "_LOG.yarn_without_a_cooldown(path, root, version)",
-            "pass",
-            "Update-time passes over a project whose yarn cannot apply a cooldown without saying why, or how to switch",
-        ),
-        Mutation(
-            yarn_module,
-            "_FIRST_YARN_WITH_A_COOLDOWN = (4, 10)",
-            "_FIRST_YARN_WITH_A_COOLDOWN = (2,)",
-            "a yarn before 4.10 is run with a cooldown variable it refuses, and fails",
-            raises="StopIteration",
-        ),
+    @kills.replace(
+        yarn_module,
+        "_FIRST_YARN_WITH_A_COOLDOWN = (4, 10)",
+        "_FIRST_YARN_WITH_A_COOLDOWN = (2,)",
+        "a yarn before 4.10 is run with a cooldown variable it refuses, and fails",
+        raises="StopIteration",
     )
     def test_yarn_not_run(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that a yarn without a cooldown does not update the project, which is warned about, and checks run."""
@@ -2637,13 +2481,10 @@ class YarnVersionTest(_ProjectLeftAsItIsTestCase):
                 )
                 self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4), among_others=True)
 
-    @kills(
-        Mutation(
-            process_module.tool_version,
-            '_report_unrunnable(Command(executable, "--version"), outcome)',
-            "pass",
-            "Update-time passes over a yarn that the system cannot run without a word, and does not update it",
-        ),
+    @kills.delete(
+        process_module.tool_version,
+        '_report_unrunnable(Command(executable, "--version"), outcome)',
+        "Update-time passes over a yarn that the system cannot run without a word, and does not update it",
     )
     def test_a_yarn_the_system_cannot_run_is_reported_once(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that a yarn whose interpreter is missing is reported once for the root and member it would run for."""
@@ -2681,27 +2522,17 @@ class YarnVersionTest(_ProjectLeftAsItIsTestCase):
             root=Location(root),
         )
 
-    @kills(
-        Mutation(
-            yarn_module._yarn_version_policy,
-            "is None:\n        return MARKER_POLICY",
-            "is None:\n        return None",
-            "yarn runs although it does not report its version, and fails on every command",
-            raises="StopIteration",
-        ),
-        Mutation(
-            yarn_module._yarn_version_policy,
-            "all(number.isdigit() for number in numbers)",
-            "numbers",
-            "a yarn that prints what is not a version stops the run",
-            raises="ValueError: invalid literal for int() with base 10: 'yarn'",
-        ),
-        Mutation(
-            yarn_module._yarn_version_policy,
-            '_LOG.tool_version_unknown("yarn", root, f"it printed {version}, which is not a version")',
-            "pass",
-            "Update-time passes over a project whose yarn prints what is not a version without saying why",
-        ),
+    @kills.replace(
+        yarn_module._yarn_version_policy,
+        "all(number.isdigit() for number in numbers)",
+        "numbers",
+        "a yarn that prints what is not a version stops the run",
+        raises="ValueError: invalid literal for int() with base 10: 'yarn'",
+    )
+    @kills.delete(
+        yarn_module._yarn_version_policy,
+        '_LOG.tool_version_unknown("yarn", root, f"it printed {version}, which is not a version")',
+        "Update-time passes over a project whose yarn prints what is not a version without saying why",
     )
     def test_yarn_not_run_where_its_version_is_unknown(self, get: Mock, mock_run: Mock, mock_glob: Mock):
         """Test that yarn does not run where it does not report its version, which is warned about, saying why."""
@@ -2731,13 +2562,11 @@ class YarnVersionTest(_ProjectLeftAsItIsTestCase):
                 )
                 self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4), among_others=True)
 
-    @kills(
-        Mutation(
-            marker_policy_module,
-            "Reason.YARN_WITHOUT_A_COOLDOWN_LEFT, Reason.YARN_WITHOUT_A_COOLDOWN_KEPT",
-            "Reason.BINARY_LOCK_LEFT, Reason.BINARY_LOCK_KEPT",
-            "a marker in a project whose yarn cannot apply a cooldown is reported as redundant for another reason",
-        )
+    @kills.replace(
+        marker_policy_module,
+        "Reason.YARN_WITHOUT_A_COOLDOWN_LEFT, Reason.YARN_WITHOUT_A_COOLDOWN_KEPT",
+        "Reason.BINARY_LOCK_LEFT, Reason.BINARY_LOCK_KEPT",
+        "a marker in a project whose yarn cannot apply a cooldown is reported as redundant for another reason",
     )
     def test_a_directive_steering_the_update_is_reported_as_deciding_nothing(
         self, get: Mock, mock_run: Mock, mock_glob: Mock
@@ -2764,14 +2593,6 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
 
     lock_file_name = "package-lock.json"
 
-    @kills(
-        Mutation(
-            package_manager_module._Workspace.policy_for_a_project_left_as_it_is,
-            "return NO_LOCK_FILE_POLICY",
-            "return MARKER_POLICY",
-            "a marker in a project without a lock file is reported as redundant, since npm resolves the version",
-        )
-    )
     def test_a_directive_steering_the_update_is_reported_as_deciding_nothing(
         self, get: Mock, mock_run: Mock, mock_glob: Mock
     ):
@@ -2796,25 +2617,17 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 update_package_jsons()
                 self.assert_redundant_directive_logged(reason, "clipboard", Location(package_json, 4), directive)
 
-    @kills(
-        Mutation(
-            pnpm_workspace_module._catalog_policy,
-            "return MARKER_POLICY\n",
-            "return MORE_THAN_ONE_MANAGER_POLICY\n",
-            "a marker in a pnpm catalog is judged as if the workspace's files named more than one manager",
-        ),
-        Mutation(
-            pnpm_workspace_module._catalog_policy,
-            "return NO_LOCK_FILE_POLICY",
-            "return MARKER_POLICY",
-            "a marker in the catalog of a pnpm workspace without a lock file is judged as if pnpm ran for it",
-        ),
-        Mutation(
-            pnpm_workspace_module._catalog_policy,
-            "if choice is not None and choice.names_more_than_one_manager():",
-            "if choice is None:",
-            "a marker in a pnpm catalog beside the files of another manager is judged as if pnpm ran for it",
-        ),
+    @kills.replace(
+        pnpm_workspace_module._catalog_policy,
+        "return NO_LOCK_FILE_POLICY",
+        "return MARKER_POLICY",
+        "a marker in the catalog of a pnpm workspace without a lock file is judged as if pnpm ran for it",
+    )
+    @kills.replace(
+        pnpm_workspace_module._catalog_policy,
+        "if choice is not None and choice.names_more_than_one_manager():",
+        "if choice is None:",
+        "a marker in a pnpm catalog beside the files of another manager is judged as if pnpm ran for it",
     )
     def test_a_directive_steering_the_update_of_a_pnpm_catalog_entry_is_reported_as_deciding_nothing(
         self, get: Mock, mock_run: Mock, mock_glob: Mock
@@ -2842,13 +2655,11 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 location = Location(workspace_file, 2)
                 self.assert_redundant_directive_logged(reason, "clipboard", location, "ignore[update]")
 
-    @kills(
-        Mutation(
-            update_package_json_module._yarn_catalog_policies,
-            "policies.get(path.parent, MARKER_POLICY)",
-            "MARKER_POLICY",
-            "a marker in a .yarnrc.yml is judged as if yarn ran, where it does not",
-        )
+    @kills.replace(
+        update_package_json_module._yarn_catalog_policies,
+        "policies.get(path.parent, MARKER_POLICY)",
+        "MARKER_POLICY",
+        "a marker in a .yarnrc.yml is judged as if yarn ran, where it does not",
     )
     def test_a_directive_steering_the_update_of_a_yarn_catalog_entry_is_reported_as_deciding_nothing(
         self, get: Mock, mock_run: Mock, mock_glob: Mock
@@ -2901,19 +2712,16 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
         update_package_jsons()
         return package_json
 
-    @kills(
-        Mutation(
-            marker_policy_module._unchecked_scopes,
-            "if declaration.catalog is not None:",
-            "if declaration.catalog:",
-            "the warning on a dependency of the unnamed catalog says the npm registry does not serve a release for it",
-        ),
-        Mutation(
-            yarn_module,
-            "catalogs=lambda root: catalogs_of(CatalogsYaml.readable(root / _YARNRC)),",
-            "catalogs=None,",
-            "Update-time does not read a yarn workspace's catalogs, and says it does not find a dependency's entry",
-        ),
+    @kills.replace(
+        marker_policy_module._unchecked_scopes,
+        "if declaration.catalog is not None:",
+        "if declaration.catalog:",
+        "the warning on a dependency of the unnamed catalog says the npm registry does not serve a release for it",
+    )
+    @kills.force_none(
+        yarn_module,
+        "lambda root: catalogs_of(CatalogsYaml.readable(root / _YARNRC))",
+        "Update-time does not read a yarn workspace's catalogs, and says it does not find a dependency's entry",
     )
     def test_a_warning_scope_on_a_dependency_of_a_scanned_catalog_is_reported_as_checked_at_the_catalog(
         self, _get: Mock, _mock_run: Mock, mock_glob: Mock
@@ -2929,13 +2737,11 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 reason = Reason.CHECKED_AT_THE_CATALOG
                 self.assert_redundant_directive_logged(reason, "clipboard", location, "ignore[yanked]")
 
-    @kills(
-        Mutation(
-            marker_policy_module.CheckedPackageJson.judged_by,
-            "catalogs.location_of(declaration) is None",
-            "not catalogs.entries",
-            "Update-time says it checks a `catalog:typo` dependency at a catalog that the workspace does not hold",
-        )
+    @kills.replace(
+        marker_policy_module.CheckedPackageJson.judged_by,
+        "catalogs.location_of(declaration) is None",
+        "not catalogs.entries",
+        "Update-time says it checks a `catalog:typo` dependency at a catalog that the workspace does not hold",
     )
     def test_a_warning_scope_on_a_dependency_of_a_catalog_the_workspace_does_not_hold_is_reported(
         self, _get: Mock, _mock_run: Mock, mock_glob: Mock
@@ -2944,13 +2750,11 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
         location = Location(self.run_on_catalog_dependency(mock_glob, "catalog:typo"), 4)
         self.assert_redundant_directive_logged(Reason.CATALOG_ENTRY_NOT_FOUND, "clipboard", location, "ignore[yanked]")
 
-    @kills(
-        Mutation(
-            package_manager_module._binary_lock_policy,
-            "return BINARY_LOCK_POLICY",
-            "return NO_LOCK_FILE_POLICY",
-            "a marker in a project locked in a binary bun.lockb is reported as one in a project without a lock",
-        )
+    @kills.replace(
+        package_manager_module._binary_lock_policy,
+        "return BINARY_LOCK_POLICY",
+        "return NO_LOCK_FILE_POLICY",
+        "a marker in a project locked in a binary bun.lockb is reported as one in a project without a lock",
     )
     def test_a_directive_steering_the_update_beside_a_binary_lock_is_reported_as_deciding_nothing(
         self, get: Mock, mock_run: Mock, mock_glob: Mock
@@ -2968,13 +2772,11 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 location = Location(package_json, 4)
                 self.assert_redundant_directive_logged(reason, "clipboard", location, directive, among_others=True)
 
-    @kills(
-        Mutation(
-            marker_policy_module,
-            "Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT",
-            "Reason.NO_LOCK_FILE_LEFT, Reason.NO_LOCK_FILE_KEPT",
-            "a marker in a project holding two managers' locks is reported as one in a project without a lock",
-        )
+    @kills.replace(
+        marker_policy_module,
+        "Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT",
+        "Reason.NO_LOCK_FILE_LEFT, Reason.NO_LOCK_FILE_KEPT",
+        "a marker in a project holding two managers' locks is reported as one in a project without a lock",
     )
     def test_a_directive_steering_the_update_beside_two_managers_files_is_reported_as_deciding_nothing(
         self, get: Mock, mock_run: Mock, mock_glob: Mock
@@ -3047,13 +2849,11 @@ class MarkerTest(NoUpdateTestCase):
                     Reason.NO_NPM_RELEASE, "clipboard", Location(package_json, 4), directive
                 )
 
-    @kills(
-        Mutation(
-            update_package_json_module._report_undeclared_reference,
-            "steers_the_update=False",
-            "steers_the_update=True",
-            "an `ignore[update]` on an undeclared dependency is said to hold the update back",
-        )
+    @kills.replace(
+        update_package_json_module._report_undeclared_reference,
+        "steers_the_update=False",
+        "steers_the_update=True",
+        "an `ignore[update]` on an undeclared dependency is said to hold the update back",
     )
     def test_a_marker_naming_an_entry_its_section_does_not_declare_is_reported(
         self, get: Mock, mock_run: Mock, glob: Mock
@@ -3073,19 +2873,16 @@ class MarkerTest(NoUpdateTestCase):
                 self.assert_recognised_marker_spelled(f'{{"dependencies": {{"{name}": "{directive}"}}}}')
                 self.assert_no_ignored_logged()
 
-    @kills(
-        Mutation(
-            package_json_module.PackageJson._catalogs,
-            "for name in declared | marked)",
-            "for name in declared)",
-            "a marker under a named catalog the file does not declare goes unreported",
-        ),
-        Mutation(
-            package_json_module.PackageJson.undeclared_references,
-            "self._entry_location(_MARKER_FIELD, *section, name)",
-            "self._entry_location(_MARKER_FIELD, section[0], name)",
-            "an undeclared catalog entry's marker is reported at the file rather than at its line",
-        ),
+    @kills.delete(
+        package_json_module.PackageJson._catalogs,
+        " | marked",
+        "a marker under a named catalog the file does not declare goes unreported",
+    )
+    @kills.replace(
+        package_json_module.PackageJson.undeclared_references,
+        "*section",
+        "section[0]",
+        "an undeclared catalog entry's marker is reported at the file rather than at its line",
     )
     def test_a_marker_naming_a_catalog_the_file_does_not_declare_is_reported(
         self, get: Mock, mock_run: Mock, glob: Mock
@@ -3110,13 +2907,10 @@ class MarkerTest(NoUpdateTestCase):
         location = Location(package_json, 4)
         self.assert_redundant_directive_logged(Reason.UNDECLARED_DEPENDENCY, "lodash", location, "set[stale-after=0]")
 
-    @kills(
-        Mutation(
-            update_package_json_module._report_undeclared_reference,
-            "if marker.invalid_item is None and marker.raw:",
-            "if marker.raw:",
-            "an unreadable item on an undeclared dependency is reported as redundant as well as invalid",
-        ),
+    @kills.delete(
+        update_package_json_module._report_undeclared_reference,
+        "marker.invalid_item is None and ",
+        "an unreadable item on an undeclared dependency is reported as redundant as well as invalid",
     )
     def test_an_undeclared_marker_that_cannot_be_read_is_reported_as_invalid(
         self, get: Mock, mock_run: Mock, glob: Mock
@@ -3130,13 +2924,11 @@ class MarkerTest(NoUpdateTestCase):
                 package_json = self.run_on_undeclared_markers(get, mock_run, glob, f'"lodash": {value}')
                 self.assert_invalid_bracket_item_logged("lodash", Location(package_json, 5), item)
 
-    @kills(
-        Mutation(
-            package_json_module._marker,
-            "if marker.raw else marker",
-            "if directives else marker",
-            "the Recognised line names a reference whose value in the field does not hold a directive",
-        )
+    @kills.replace(
+        package_json_module._marker,
+        "if marker.raw else marker",
+        "if directives else marker",
+        "the Recognised line names a reference whose value in the field does not hold a directive",
     )
     def test_an_undeclared_marker_without_a_directive_is_not_reported(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that an undeclared dependency's marker without a directive is left unreported."""

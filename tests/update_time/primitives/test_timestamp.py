@@ -3,7 +3,7 @@
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.primitives import timestamp as timestamp_module
 from update_time.primitives.timestamp import days_since, newest_timestamp, parse_timestamp, utc_date_and_time
 
@@ -69,13 +69,10 @@ class NewestTimestampTest(unittest.TestCase):
 class UTCDateAndTimeTest(unittest.TestCase):
     """Unit tests for the utc_date_and_time helper."""
 
-    @kills(
-        Mutation(
-            timestamp_module.utc_date_and_time,
-            "timestamp.astimezone(UTC)",
-            "timestamp",
-            "a timestamp in another timezone is logged at its own clock time, labelled UTC",
-        )
+    @kills.delete(
+        timestamp_module.utc_date_and_time,
+        ".astimezone(UTC)",
+        "a timestamp in another timezone is logged at its own clock time, labelled UTC",
     )
     def test_utc_date_and_time_converts_to_utc_and_says_so(self):
         """Test that a timestamp in another timezone renders as its date and time in UTC, labelled UTC."""

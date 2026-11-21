@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import directive as directive_module
 from update_time.domain import file_type
 from update_time.domain.directive import Reason
@@ -215,14 +215,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 requirements_txt.write_text.assert_not_called()
                 self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
-    @kills(
-        Mutation(
-            requirements_txt_manifest,
-            r'_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])(?!\s*,)"',
-            r'_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])"',
-            "a version a space and a comma follow still ends its specifier, so a requirement combining two of them "
-            "is rewritten into one no version satisfies",
-        )
+    @kills.delete(
+        requirements_txt_manifest,
+        r"(?!\s*,)",
+        "a version a space and a comma follow still ends its specifier, so a requirement combining two of them "
+        "is rewritten into one no version satisfies",
     )
     def test_a_requirement_combining_specifiers_is_not_updated(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement combining `==` with another specifier is checked but never rewritten.
@@ -464,14 +461,12 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.assert_no_warnings_logged()
                 self.assert_ignored_staleness_logged("humanize", Location(requirements_txt, 1), directive)
 
-    @kills(
-        Mutation(
-            directive_module,
-            "Reason.NO_ARCHIVAL_SIGNAL,",
-            "Reason.NO_ARCHIVAL_SIGNAL,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
-            "ignore[archived] on a loose requirement is reported as redundant, though archival needs the package's "
-            "name alone",
-        )
+    @kills.append(
+        directive_module,
+        "Reason.NO_ARCHIVAL_SIGNAL,",
+        "\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
+        "ignore[archived] on a loose requirement is reported as redundant, though archival needs the package's "
+        "name alone",
     )
     def test_ignore_archived_marker_silences_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
         """Test that an `ignore[archived]` marker on a loose requirement's line silences its archival warning."""
@@ -887,13 +882,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "django", location, DJANGO_VULNERABILITY.advisory, DJANGO_VULNERABILITY.advisory
         )
 
-    @kills(
-        Mutation(
-            vulnerability_module._report,
-            "logger.globally_ignored_vulnerability(reference, vulnerability, silenced_by)",
-            "logger.globally_ignored_vulnerability(reference, vulnerability, frozenset({vulnerability.advisory}))",
-            "the option's line names the identifier OSV answered under rather than the one the reader passed",
-        )
+    @kills.replace(
+        vulnerability_module._report,
+        "logger.globally_ignored_vulnerability(reference, vulnerability, silenced_by)",
+        "logger.globally_ignored_vulnerability(reference, vulnerability, frozenset({vulnerability.advisory}))",
+        "the option's line names the identifier OSV answered under rather than the one the reader passed",
     )
     def test_the_option_line_names_the_advisory_and_what_was_passed(self, mock_rglob: Mock, mock_get: Mock):
         """Test that the option's line names the advisory OSV answered under, and quotes the identifier passed."""
@@ -1096,13 +1089,10 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                     self.assert_recognised_marker_logged("flask", Location(_SOURCE, 1), parse_directives(directive))
                     self.assert_no_redundant_directive_logged()
 
-    @kills(
-        Mutation(
-            update_requirements_txt._warn_about_items_that_decide_nothing,
-            "_LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)",
-            "pass",
-            "Update-time stays silent about a cooldown that pip-compile cannot apply to one package",
-        )
+    @kills.delete_statement(
+        update_requirements_txt._warn_about_items_that_decide_nothing,
+        "_LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)",
+        "Update-time stays silent about a cooldown that pip-compile cannot apply to one package",
     )
     def test_a_cooldown_is_redundant_on_a_requirement_without_an_exact_pin_where_pip_compile_recompiles_the_file(
         self, mock_rglob: Mock, mock_get: Mock
@@ -1135,14 +1125,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         location = Location(_SOURCE, 1)
         self.assert_ignored_vulnerability_logged("django", location, DJANGO_VULNERABILITY.advisory, directive)
 
-    @kills(
-        Mutation(
-            pypi_module.yank_state,
-            "if not is_valid(version) or (metadata := _project_metadata(package)) is None:",
-            "if (metadata := _project_metadata(package)) is None:",
-            "a compiled pin that is not PEP 440 aborts the run",
-            raises="packaging.version.InvalidVersion: Invalid version: '3.2.0-weird.x'",
-        )
+    @kills.delete(
+        pypi_module.yank_state,
+        "not is_valid(version) or ",
+        "a compiled pin that is not PEP 440 aborts the run",
+        raises="packaging.version.InvalidVersion: Invalid version: '3.2.0-weird.x'",
     )
     def test_a_compiled_pin_that_is_not_pep_440_is_checked_without_a_yank(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pinned version outside PEP 440 is checked for vulnerabilities alone."""
@@ -1176,13 +1163,10 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             self.update_a_source(mock_rglob, mock_get, "flask==1.0", "flask>=1", self.pypi("1.0"), compiled=compiled)
         self.assert_vulnerable_dependency_logged("flask", "1.0", DJANGO_VULNERABILITY, Location(_SOURCE, 1))
 
-    @kills(
-        Mutation(
-            update_requirements_txt._check_pinned_versions,
-            "report_project_checks(pin, _LOG, pypi.project)",
-            "pass",
-            "the project of a missing source's pin is never checked for staleness or archival",
-        )
+    @kills.delete_statement(
+        update_requirements_txt._check_pinned_versions,
+        "report_project_checks(pin, _LOG, pypi.project)",
+        "the project of a missing source's pin is never checked for staleness or archival",
     )
     def test_a_pin_from_a_missing_source_is_checked_for_staleness_at_its_line(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a stale pin the annotations attribute to a missing source is warned about at its line."""
@@ -1190,19 +1174,15 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.run_update(mock_rglob, mock_get, {_COMPILED: compiled}, responses=self.stale_pypi("4.15.0"))
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(_COMPILED, 3), among_others=True)
 
-    @kills(
-        Mutation(
-            update_requirements_txt._check_pinned_versions,
-            "batches.append(pins_from_missing_sources)",
-            "pass",
-            "the pins of a missing source go unchecked",
-        ),
-        Mutation(
-            compiled_requirements_txt.CompiledRequirementsTxt.pins_from,
-            "if sources & names]",
-            "if names]",
-            "Update-time checks the transitive pins of a compiled file whose source is missing",
-        ),
+    @kills.delete(
+        update_requirements_txt._check_pinned_versions,
+        "batches.append(pins_from_missing_sources)",
+        "the pins of a missing source go unchecked",
+    )
+    @kills.delete(
+        compiled_requirements_txt.CompiledRequirementsTxt.pins_from,
+        "sources & ",
+        "Update-time checks the transitive pins of a compiled file whose source is missing",
     )
     def test_a_pin_from_a_missing_source_is_checked_for_vulnerabilities_at_its_line(
         self, mock_rglob: Mock, mock_get: Mock
@@ -1217,13 +1197,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, location, among_others=True)
         self.assertEqual(len(self.records_of(message_of(Logger.vulnerable_dependency))), 1)
 
-    @kills(
-        Mutation(
-            update_requirements_txt.update_requirements_txts,
-            "_check_pinned_versions(plain_files, compiled_files,",
-            "_check_pinned_versions(plain_files, recompilable,",
-            "Update-time checks the versions only of the compiled files it recompiles",
-        )
+    @kills.replace(
+        update_requirements_txt.update_requirements_txts,
+        "_check_pinned_versions(plain_files, compiled_files,",
+        "_check_pinned_versions(plain_files, recompilable,",
+        "Update-time checks the versions only of the compiled files it recompiles",
     )
     def test_a_requirement_in_a_source_is_checked_for_vulnerabilities_at_the_version_the_compiled_file_pins(
         self, mock_rglob: Mock, mock_get: Mock
@@ -1244,13 +1222,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 location = Location(_SOURCE, 1)
                 self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, location)
 
-    @kills(
-        Mutation(
-            update_requirements_txt._pins_by_source,
-            "CompiledRequirementsTxt.read(compiled.path).pins",
-            "compiled.pins",
-            "Update-time checks the old pins of a recompiled file",
-        )
+    @kills.replace(
+        update_requirements_txt._pins_by_source,
+        "CompiledRequirementsTxt.read(compiled.path).pins",
+        "compiled.pins",
+        "Update-time checks the old pins of a recompiled file",
     )
     def test_a_recompiled_file_is_checked_at_the_version_the_recompile_leaves(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement in a source is checked at the version the recompiled file pins, not the old one."""
@@ -1285,13 +1261,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.update_a_source(mock_rglob, mock_get, "flask==1.0", requirement, [pypi_index("4.15.0")])
                 self.assertNotEqual(self.records_of(redundant, reason=lacking_a_version), [])
 
-    @kills(
-        Mutation(
-            update_requirements_txt._check_loose_requirements,
-            "steers_the_update=compiler is not None",
-            "steers_the_update=False",
-            "an `ignore[update]` in a source Update-time recompiles is not said to hold the update back",
-        )
+    @kills.replace(
+        update_requirements_txt._check_loose_requirements,
+        "steers_the_update=compiler is not None",
+        "steers_the_update=False",
+        "an `ignore[update]` in a source Update-time recompiles is not said to hold the update back",
     )
     def test_an_ignore_update_in_a_source_uv_recompiles_from_is_logged_as_holding_the_update_back(
         self, mock_rglob: Mock, mock_get: Mock
@@ -1469,21 +1443,14 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 class ScannedRequirementsFilesTest(unittest.TestCase):
     """Unit tests for which requirements files are scanned."""
 
-    @kills(
-        Mutation(
-            file_type,
-            '"requirements.txt",\n        "requirements-*.txt",',
-            '"requirements-*.txt",',
-            "a plain `requirements.txt` is never scanned",
-        ),
-        Mutation(file_type, '"requirements-*.txt",', "", "a `requirements-<purpose>.txt` is never scanned"),
-        Mutation(file_type, '"*-requirements.txt",', "", "a `<purpose>-requirements.txt` is never scanned"),
-        Mutation(file_type, '"requirements_*.txt",', "", "a `requirements_<purpose>.txt` is never scanned"),
-        Mutation(file_type, '"*_requirements.txt",', "", "a `<purpose>_requirements.txt` is never scanned"),
-        Mutation(file_type, '"requirements.*.txt",', "", "a `requirements.<purpose>.txt` is never scanned"),
-        Mutation(file_type, '"*.requirements.txt",', "", "a `<purpose>.requirements.txt` is never scanned"),
-        Mutation(file_type, '"requirements/*.txt",', "", "a file in a `requirements/` directory is never scanned"),
-    )
+    @kills.delete(file_type, '"requirements.txt",\n        ', "a plain `requirements.txt` is never scanned")
+    @kills.delete(file_type, '"requirements-*.txt",', "a `requirements-<purpose>.txt` is never scanned")
+    @kills.delete(file_type, '"*-requirements.txt",', "a `<purpose>-requirements.txt` is never scanned")
+    @kills.delete(file_type, '"requirements_*.txt",', "a `requirements_<purpose>.txt` is never scanned")
+    @kills.delete(file_type, '"*_requirements.txt",', "a `<purpose>_requirements.txt` is never scanned")
+    @kills.delete(file_type, '"requirements.*.txt",', "a `requirements.<purpose>.txt` is never scanned")
+    @kills.delete(file_type, '"*.requirements.txt",', "a `<purpose>.requirements.txt` is never scanned")
+    @kills.delete(file_type, '"requirements/*.txt",', "a file in a `requirements/` directory is never scanned")
     def test_the_conventional_names_are_scanned(self):
         """Test that `requirements.txt`, a name adding a purpose, and a `.txt` file in `requirements/` are scanned."""
         tree = (
@@ -1498,10 +1465,8 @@ class ScannedRequirementsFilesTest(unittest.TestCase):
         )
         self.assertCountEqual(scanned_files(file_type.REQUIREMENTS_TXT, *tree), tree)
 
-    @kills(
-        Mutation(file_type, '"requirements/*.txt",', '"requirements/*",', "every file in `requirements/` is scanned"),
-        Mutation(file_type, "case_sensitive=True", "case_sensitive=False", "a name in another case is scanned"),
-    )
+    @kills.replace(file_type, '"requirements/*.txt",', '"requirements/*",', "every file in `requirements/` is scanned")
+    @kills.replace(file_type, "case_sensitive=True", "case_sensitive=False", "a name in another case is scanned")
     def test_a_file_outside_the_naming_rule_is_skipped(self):
         """Test that a `.in` file in `requirements/` and a name in another case are skipped."""
         tree = ("requirements.txt", "requirements/base.in", "Requirements.txt")

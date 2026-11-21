@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import directive as directive_module
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp
@@ -325,13 +325,11 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
                 self.assert_held_back_by_cooldown_logged("python", "3.15", location, days=days, directive=directive)
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            oci,
-            "declares_archival=is_docker_hub_image",
-            "declares_archival=bool",
-            "an `ignore[archived]` on an image off Docker Hub decides nothing without being reported",
-        )
+    @kills.replace(
+        oci,
+        "declares_archival=is_docker_hub_image",
+        "declares_archival=bool",
+        "an `ignore[archived]` on an image off Docker Hub decides nothing without being reported",
     )
     def test_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
         """Test that a cooldown, staleness threshold, or `ignore[archived]` on an image off Docker Hub is redundant."""
@@ -372,13 +370,11 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged("python", "3.15", Location(mock_file, 2))
 
-    @kills(
-        Mutation(
-            resolve._project_is_checked,
-            "declares_archival(reference.dependency)",
-            'declares_archival("ghcr.io/")',
-            "with the staleness check switched off, the archival of an image is never checked",
-        )
+    @kills.replace(
+        resolve._project_is_checked,
+        "declares_archival(reference.dependency)",
+        'declares_archival("ghcr.io/")',
+        "with the staleness check switched off, the archival of an image is never checked",
     )
     @staleness_disabled
     def test_archived_image_warned_with_the_staleness_check_switched_off(self) -> None:
@@ -390,13 +386,11 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file.write_text.assert_called_once_with(self.reference(f"{image}:1.31@{DIGEST2}"))
         self.assert_archived_repository_logged(image, Location(mock_file, 1))
 
-    @kills(
-        Mutation(
-            oci,
-            "@partial(ProjectGetter, declares_archival=is_docker_hub_image)",
-            "@ProjectGetter",
-            "an `ignore[archived]` on an active image is also reported as lacking an archival signal",
-        )
+    @kills.replace(
+        oci,
+        "@partial(ProjectGetter, declares_archival=is_docker_hub_image)",
+        "@ProjectGetter",
+        "an `ignore[archived]` on an active image is also reported as lacking an archival signal",
     )
     def test_ignore_archived_on_an_active_repository_is_reported_as_redundant(self) -> None:
         """Test that an `ignore[archived]` on an image whose repository is active is reported as redundant."""
@@ -441,13 +435,10 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_drift_logged(Logger.DIGEST_DRIFT, self.drifted(mock_file, "python", "3.14"))
         self.assert_no_new_version_logged()
 
-    @kills(
-        Mutation(
-            oci._resolved_tag,
-            "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed)",
-            "return DependencyVersion(version=current.name, sha=tag.digest)",
-            "a tag naming neither a version nor a channel adopts a digest re-pushed inside the cooldown",
-        )
+    @kills.delete(
+        oci._resolved_tag,
+        ", publication=tag.pushed",
+        "a tag naming neither a version nor a channel adopts a digest re-pushed inside the cooldown",
     )
     def test_drift_inside_the_cooldown_is_held_back_silently(self) -> None:
         """Test that a tag re-pushed or re-pointed inside the cooldown is left as it is, unreported, though opted in."""
@@ -619,31 +610,26 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_unpinned_floating_tag_logged("acme/api", "dev", Location(mock_file, 1), reason)
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            docker_hub._listing_page,
-            "statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)",
-            "statuses_meaning_absent=()",
-            "a repository Docker Hub does not serve is warned about, and its floating tag reported as not listed",
-        ),
-        Mutation(
-            oci._walked_floating_tag,
-            "if names.absent:",
-            "if False:",
-            "a floating tag of a repository another registry does not serve is warned about as missing a manifest",
-        ),
-        Mutation(
-            rewrite._Rewriter._report_why_the_source_left_it,
-            "if latest.unserved is Unserved.REPOSITORY:",
-            "if False:",
-            "leaves a version tag of a repository the registry does not serve as it is without saying why",
-        ),
-        Mutation(
-            oci._resolved_tag,
-            "if names.absent:",
-            "if names.absent and current.version is not None:",
-            "warns about the manifest of a dev-2024 tag of a repository the registry does not serve",
-        ),
+    @kills.delete(
+        docker_hub._listing_page,
+        "HTTPStatus.NOT_FOUND,",
+        "a repository Docker Hub does not serve is warned about, and its floating tag reported as not listed",
+    )
+    @kills.force_false(
+        oci._walked_floating_tag,
+        "names.absent",
+        "a floating tag of a repository another registry does not serve is warned about as missing a manifest",
+    )
+    @kills.force_false(
+        rewrite._Rewriter._report_why_the_source_left_it,
+        "latest.unserved is Unserved.REPOSITORY",
+        "leaves a version tag of a repository the registry does not serve as it is without saying why",
+    )
+    @kills.append(
+        oci._resolved_tag,
+        "if names.absent",
+        " and current.version is not None",
+        "warns about the manifest of a dev-2024 tag of a repository the registry does not serve",
     )
     def test_tag_whose_repository_the_registry_does_not_serve(self) -> None:
         """Test that a floating, versioned, or other tag of a repository not served is reported at DEBUG alone."""
@@ -788,31 +774,26 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         }
         self.assert_left_alone_as_through_a_variable(cases, self.run_updater)
 
-    @kills(
-        Mutation(
-            resolve._warn_about_redundant_update_directives,
-            "(marker.scope_directive(Scope.UPDATE), marker.version_bound_directive)",
-            "(marker.version_bound_directive,)",
-            "an `ignore[update]` on an image never looked up is not reported, though it holds nothing back",
-        ),
-        Mutation(
-            resolve.latest_version,
-            "held_back = marker.ignores(Scope.UPDATE) and never_updated is None",
-            "held_back = marker.ignores(Scope.UPDATE)",
-            "an `ignore[update]` on an image never looked up hides why the image is left as it is",
-        ),
-        Mutation(
-            directive_module,
-            "consequence=Consequence.ARCHIVAL_NEVER_CHECKED,",
-            "",
-            "an `ignore[archived]` on an image never looked up is blamed on its source rather than on the variable",
-        ),
-        Mutation(
-            Source.reports_archival,
-            "and self.why_image_not_looked_up(pinned) is None",
-            "",
-            "an `ignore[archived]` on an image never looked up decides nothing without being reported",
-        ),
+    @kills.replace(
+        resolve._warn_about_redundant_update_directives,
+        "(marker.scope_directive(Scope.UPDATE), marker.version_bound_directive)",
+        "(marker.version_bound_directive,)",
+        "an `ignore[update]` on an image never looked up is not reported, though it holds nothing back",
+    )
+    @kills.delete(
+        resolve.latest_version,
+        " and never_updated is None",
+        "an `ignore[update]` on an image never looked up hides why the image is left as it is",
+    )
+    @kills.delete(
+        directive_module,
+        "consequence=Consequence.ARCHIVAL_NEVER_CHECKED,",
+        "an `ignore[archived]` on an image never looked up is blamed on its source rather than on the variable",
+    )
+    @kills.delete(
+        Source.reports_archival,
+        "and self.why_image_not_looked_up(pinned) is None",
+        "an `ignore[archived]` on an image never looked up decides nothing without being reported",
     )
     def test_markers_on_a_reference_through_a_variable_are_redundant_because_of_it(self) -> None:
         """Test that a staleness threshold, `ignore[archived]`, cooldown, bound, or `ignore[update]` is redundant.

@@ -60,7 +60,6 @@ A request to a host name is refused at the lookup, before it reaches the resolve
 A rule every module has to remember is duplication too, so state it once, where nobody can forget it.
 A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous.
 A score below the `low` band means the advisory reports no risk at all, which is no level to name.
-A second decorator on the same test fails it, as does one given no mutation at all.
 A section whose version is named in prose sits under no heading, so any heading ends it.
 A severity an advisory reports, as a CVSS vector string of the named version.
 A source the rename reaches, since it imports the name from the module the old name qualifies it with, and one it leaves alone, since a definition is resolved against the module it sits in rather than against that one.
@@ -240,7 +239,6 @@ Test that a floating tag the registry does not list is left as it is, and dated 
 Test that a floating tag the registry serves no manifest for is left as it is, its digest unknown.
 Test that a floating tag whose digest no concrete tag serves is left as it is.
 Test that a heading above or below the levels asked for gets no entry.
-Test that a kills decorator given no mutation fails the test, rather than leaving it checking nothing.
 Test that a machine-executor image naming no tag is left unchanged and looked up nowhere.
 Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace.
 Test that a network error probing the registry yields no token (anonymous) instead of crashing.
@@ -469,7 +467,6 @@ a TOML escape: the spec parses as `pkg>=1.0`.
 a `<5` bound on a v4 pin is live, so no redundancy warning.
 a changelog underlining its headings with backticks or tildes reports no changes at all, its file read as one fenced code block.
 a cooldown steers an update, and no update is resolved for such a reference.
-a decorated test carries no registration, so a second one on it goes undetected.
 a decorated test reports under the wrapper's name, so a failing run names no test.
 a decorated test the checked test reaches stands aside too, so its mutations go unchecked.
 a dependency type that declares no file goes unnoticed, and the help stops naming its files.
@@ -493,10 +490,7 @@ a pin nothing updates costs no request for its changelog.
 a pin's name carries the extra its declaration spells, so it names no package the source knows.
 a reading of another length than its own pairs up all the same, taking the whole run down with it.
 a reference naming no repository is read as one, ending the run over that single line.
-a registration naming no mutation is accepted, so the test it decorates checks nothing.
 a release tagged with something that is no version ends the run with a traceback.
-a repository naming its changelog file `history`, `news`, or `releases` reports no changes.
-a root whose first changelog file names no version reports no changes, though another file names it.
 a section declaring no such name.
 a section of the details chapter that documents no dependency type goes unreported.
 a service declared with no body is read as a mapping, ending the run.

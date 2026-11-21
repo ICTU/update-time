@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.lock_files import compiled_requirements_txt
 from update_time.primitives.command import Command
 
@@ -38,13 +38,10 @@ class IsCompiledTest(unittest.TestCase):
 class SourceNamesTest(unittest.TestCase):
     """Unit tests for reading the sources a compiled requirements file names."""
 
-    @kills(
-        Mutation(
-            compiled_requirements_txt.CompiledRequirementsTxt.read,
-            "if not names and command:",
-            "if False:",
-            "Update-time misses the source that the command of an old pip-compile file names",
-        )
+    @kills.force_false(
+        compiled_requirements_txt.CompiledRequirementsTxt.read,
+        "not names and command",
+        "Update-time misses the source that the command of an old pip-compile file names",
     )
     def test_the_sources_the_file_names(self):
         """Test that the sources are what the annotations name, each once, or else the `.in` files the command names."""
@@ -86,13 +83,10 @@ class SourceNamesTest(unittest.TestCase):
 class OutputNameTest(unittest.TestCase):
     """Unit tests for reading the output path the header of a compiled requirements file records."""
 
-    @kills(
-        Mutation(
-            compiled_requirements_txt.CompiledRequirementsTxt._output_name,
-            'return None if output[1] == "-" else output[1]',
-            "return output[1]",
-            "Update-time reads the standard output pip-compile wrote to as a file named -",
-        )
+    @kills.delete(
+        compiled_requirements_txt.CompiledRequirementsTxt._output_name,
+        'None if output[1] == "-" else ',
+        "Update-time reads the standard output pip-compile wrote to as a file named -",
     )
     def test_the_output_the_header_records(self):
         """Test that the output is where the header's command writes, and None where Update-time cannot name a file."""
@@ -146,13 +140,11 @@ class CommandTest(unittest.TestCase):
 class FirstSourceTest(unittest.TestCase):
     """Unit tests for the source of a compiled requirements file that Update-time writes the managed-by comment into."""
 
-    @kills(
-        Mutation(
-            compiled_requirements_txt.CompiledRequirementsTxt.first_source,
-            "if named else 0]",
-            "if named else -1]",
-            "the managed-by comment goes into another source than the one annotated first",
-        )
+    @kills.replace(
+        compiled_requirements_txt.CompiledRequirementsTxt.first_source,
+        "if named else 0]",
+        "if named else -1]",
+        "the managed-by comment goes into another source than the one annotated first",
     )
     def test_the_source_annotated_first_where_the_command_names_none_of_the_annotated_sources(self):
         """Test that the first source is the one annotated first, where the command names only a source holding `-r`."""

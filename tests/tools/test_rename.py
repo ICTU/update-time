@@ -11,7 +11,7 @@ import libcst
 from tools import rename as rename_module
 from tools.rename import _PROSE_ROOTS, _prose_files, _renamed, main, stale_mentions, surviving_occurrences
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 
 from tests.helpers import mock_path
 
@@ -77,14 +77,12 @@ class StaleMentionsTest(unittest.TestCase):
         """Test that each file is searched, not only the first."""
         self.assertEqual(len(self.mentions("old", "`old`\n", "nothing\n", "line\n`old`\n")), 2)
 
-    @kills(
-        Mutation(
-            rename_module._prose,
-            "except FileNotFoundError:",
-            "except ValueError:",
-            "a file removed but not yet committed ends a rename that landed with a traceback",
-            raises="FileNotFoundError: [Errno 2] No such file or directory: 'gone.py'",
-        )
+    @kills.replace(
+        rename_module._prose,
+        "except FileNotFoundError:",
+        "except ValueError:",
+        "a file removed but not yet committed ends a rename that landed with a traceback",
+        raises="FileNotFoundError: [Errno 2] No such file or directory: 'gone.py'",
     )
     def test_a_file_the_working_tree_no_longer_holds(self):
         """Test that a file git lists but the working tree no longer holds is skipped, and the others searched."""
@@ -123,27 +121,22 @@ class RenamedTest(unittest.TestCase):
                 source = f"{imports}\n\n{name}.old()\n"
                 self.assertEqual(_renamed("pkg.m.old", "pkg.m.new", source), source.replace(".old()", ".new()"))
 
-    @kills(
-        Mutation(
-            rename_module._InPlaceRenameCommand.leave_ImportFrom,
-            "if not any(matches):",
-            "if matches != [True]:",
-            "an import of several names loses its trailing comma, since LibCST rebuilds it",
-        )
+    @kills.replace(
+        rename_module._InPlaceRenameCommand.leave_ImportFrom,
+        "if not any(matches):",
+        "if matches != [True]:",
+        "an import of several names loses its trailing comma, since LibCST rebuilds it",
     )
     def test_an_import_of_several_names_keeps_its_layout(self):
         """Test that an import of the name among others is renamed in place, its lines and trailing comma kept."""
         source = "from m import (\n    alpha,\n    {0},\n)\n\nalpha()\n{0}()\n"
         self.assertEqual(_renamed("m.old", "m.new", source.format("old")), source.format("new"))
 
-    @kills(
-        Mutation(
-            rename_module._InPlaceRenameCommand.leave_ImportFrom,
-            " or isinstance(names, libcst.ImportStar)",
-            "",
-            "a star import of the name's module ends the rename with a traceback",
-            raises="TypeError: 'ImportStar' object is not iterable",
-        )
+    @kills.delete(
+        rename_module._InPlaceRenameCommand.leave_ImportFrom,
+        " or isinstance(names, libcst.ImportStar)",
+        "a star import of the name's module ends the rename with a traceback",
+        raises="TypeError: 'ImportStar' object is not iterable",
     )
     def test_a_star_import_of_the_module_is_left_as_it_is(self):
         """Test that a source importing every name of the name's module, naming none of them, is left as it is."""
@@ -222,13 +215,10 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename(_DEFINES, old="file0.old", new="new"), 0)
         self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("def new():\n    pass\n")])
 
-    @kills(
-        Mutation(
-            rename_module._is_module,
-            '.removesuffix("/__init__")',
-            "",
-            "the rename reports that none of the files given defines a name from a package's `__init__.py`",
-        )
+    @kills.delete(
+        rename_module._is_module,
+        '.removesuffix("/__init__")',
+        "the rename reports that none of the files given defines a name from a package's `__init__.py`",
     )
     def test_a_name_the_init_of_a_package_defines_is_renamed_there(self):
         """Test that a method the `__init__.py` of a package defines is renamed there."""
@@ -240,25 +230,23 @@ class MainTest(unittest.TestCase):
         )
         self.assertEqual(self.paths[module_file].write_text.call_args_list, [call(defines.format("new"))])
 
-    @kills(
-        Mutation(
-            rename_module._ReferenceFinder._bound_locally,
-            "return True",
-            "return False",
-            "a parameter or a local of the renamed name reads as the module-level name left behind",
-        ),
-        Mutation(
-            rename_module._ReferenceFinder._bound_locally,
-            "scope = scope.parent",
-            "break",
-            "the rename stops where a nested function reads a local of the function around it",
-        ),
-        Mutation(
-            rename_module.main,
-            "for line in _surviving_references(name, source)]",
-            "for line in surviving_occurrences(name, source)]",
-            "a rename stops wherever a file spells the renamed name, whatever that name refers to there",
-        ),
+    @kills.replace(
+        rename_module._ReferenceFinder._bound_locally,
+        "return True",
+        "return False",
+        "a parameter or a local of the renamed name reads as the module-level name left behind",
+    )
+    @kills.replace(
+        rename_module._ReferenceFinder._bound_locally,
+        "scope = scope.parent",
+        "break",
+        "the rename stops where a nested function reads a local of the function around it",
+    )
+    @kills.replace(
+        rename_module.main,
+        "for line in _surviving_references(name, source)]",
+        "for line in surviving_occurrences(name, source)]",
+        "a rename stops wherever a file spells the renamed name, whatever that name refers to there",
     )
     def test_a_parameter_and_a_local_of_the_name_do_not_stop_the_rename(self):
         """Test that a module-level name is renamed where a function's parameter and local share its name."""
@@ -269,19 +257,17 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename(defines.format("old"), old="file0.old", new="new"), 0)
         self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(defines.format("new"))])
 
-    @kills(
-        Mutation(
-            rename_module._ReferenceFinder.visit_Name,
-            "refers = self._read_through_an_import(parent)",
-            "refers = True",
-            "a method of the renamed name on another object reads as the module-level name left behind",
-        ),
-        Mutation(
-            rename_module._ReferenceFinder._read_through_an_import,
-            "return False",
-            "return True",
-            "a method of the renamed name on what a call returns reads as the module-level name left behind",
-        ),
+    @kills.replace(
+        rename_module._ReferenceFinder.visit_Name,
+        "refers = self._read_through_an_import(parent)",
+        "refers = True",
+        "a method of the renamed name on another object reads as the module-level name left behind",
+    )
+    @kills.replace(
+        rename_module._ReferenceFinder._read_through_an_import,
+        "return False",
+        "return True",
+        "a method of the renamed name on what a call returns reads as the module-level name left behind",
     )
     def test_a_method_of_the_name_on_another_object_does_not_stop_the_rename(self):
         """Test that a module-level name is renamed where a call on another object reads a method of that name."""
@@ -291,19 +277,16 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(self.rename(uses.format("old")), 0)
                 self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(uses.format("new"))])
 
-    @kills(
-        Mutation(
-            rename_module._ReferenceFinder._read_through_an_import,
-            "return any(isinstance(assignment, ImportAssignment) for assignment in scope[root.value])",
-            "return False",
-            "a reference read through an imported module goes unnoticed, so a rename that missed it is written",
-        ),
-        Mutation(
-            rename_module._ReferenceFinder._read_through_an_import,
-            "root = root.value",
-            "break",
-            "a reference read through an imported package goes unnoticed, so a rename that missed it is written",
-        ),
+    @kills.force_false(
+        rename_module._ReferenceFinder._read_through_an_import,
+        "any(isinstance(assignment, ImportAssignment) for assignment in scope[root.value])",
+        "a reference read through an imported module goes unnoticed, so a rename that missed it is written",
+    )
+    @kills.replace(
+        rename_module._ReferenceFinder._read_through_an_import,
+        "root = root.value",
+        "break",
+        "a reference read through an imported package goes unnoticed, so a rename that missed it is written",
     )
     def test_a_reference_through_a_package_the_rename_cannot_reach_stops_the_rename(self):
         """Test that a reference reading the old name through an imported package stops the rename."""
@@ -380,29 +363,23 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("from m import new\n\nnew()\n")])
         self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [])
 
-    @kills(
-        Mutation(
-            rename_module.main,
-            "return _FAILED\n    for path, source in changed.items():",
-            "for path, source in changed.items():\n            Path(path).write_text(source)\n"
-            "        return _FAILED\n    for path, source in changed.items():",
-            "a rename that left the old name behind still writes the files it changed to disk",
-        )
+    @kills.prepend(
+        rename_module.main,
+        "return _FAILED\n    for path, source in changed.items():",
+        "for path, source in changed.items():\n            Path(path).write_text(source)\n        ",
+        "a rename that left the old name behind still writes the files it changed to disk",
     )
     def test_a_rename_that_left_the_name_behind_writes_nothing(self):
         """Test that a file left holding the name leaves every file unwritten, the ones the rename changed too."""
         self.assertEqual(self.rename(_IMPORTS_AND_CALLS, _DEFINES), 1)
         self.assertEqual([path.write_text.call_args_list for path in self.paths.values()], [[], [], []])
 
-    @kills(
-        Mutation(
-            rename_module._renamed_sources,
-            '_report(f"{path} could not be renamed: {described}")',
-            '_report(f"{path} could not be renamed: {described}")\n'
-            "            for written, renamed_source in renamed.items():\n"
-            "                Path(written).write_text(renamed_source)",
-            "a file the codemod cannot parse still writes the renames already made to the other files",
-        )
+    @kills.append(
+        rename_module._renamed_sources,
+        '_report(f"{path} could not be renamed: {described}")\n',
+        "            for written, renamed_source in renamed.items():\n"
+        "                Path(written).write_text(renamed_source)\n",
+        "a file the codemod cannot parse still writes the renames already made to the other files",
     )
     def test_a_file_the_codemod_cannot_parse(self):
         """Test that a source the codemod cannot parse is reported by name, and writes none of the files."""
@@ -428,13 +405,11 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename("print(1)\n", module="print(2)\n"), 1)
         self.assertIn("nothing was renamed", self.reported.getvalue())
 
-    @kills(
-        Mutation(
-            rename_module._survivors_message,
-            "', '.join(left)",
-            "' '.join(left)",
-            "the surviving occurrences are run together without the comma between them",
-        )
+    @kills.replace(
+        rename_module._survivors_message,
+        "', '.join(left)",
+        "' '.join(left)",
+        "the surviving occurrences are run together without the comma between them",
     )
     def test_a_bare_name_that_reached_the_definition_alone(self):
         """Test that a bare name renames the definition alone, so the references importing it survive."""

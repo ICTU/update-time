@@ -2,7 +2,7 @@
 
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import file_type as file_type_module
 from update_time.domain.file_type import FileType
 
@@ -10,13 +10,11 @@ from update_time.domain.file_type import FileType
 class FileTypesTest(unittest.TestCase):
     """Unit tests for the declared file types."""
 
-    @kills(
-        Mutation(
-            file_type_module,
-            'GITLAB_CI_CONFIG = FileType(".gitlab-ci.yml", (".gitlab-ci.yml",), recursive=False)',
-            'GITLAB_CI_CONFIG = FileType(".gitlab-ci.yml", (), recursive=False)',
-            "a file type that names no glob pattern goes unnoticed, and none of its files is ever scanned",
-        )
+    @kills.replace(
+        file_type_module,
+        'GITLAB_CI_CONFIG = FileType(".gitlab-ci.yml", (".gitlab-ci.yml",), recursive=False)',
+        'GITLAB_CI_CONFIG = FileType(".gitlab-ci.yml", (), recursive=False)',
+        "a file type that names no glob pattern goes unnoticed, and none of its files is ever scanned",
     )
     def test_every_file_type_names_a_pattern(self):
         """Test that every declared file type names at least one glob pattern."""

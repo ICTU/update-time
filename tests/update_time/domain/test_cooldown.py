@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import cooldown
 from update_time.domain.cooldown import (
     COOLDOWN,
@@ -107,13 +107,10 @@ class FirstEligibleTest(unittest.TestCase):
         """Test that the current version is returned unchanged when no candidate is eligible."""
         self.assertEqual(DependencyVersion(version="1.0"), self.walked_without_cooldown(["3.0", "2.0"], lambda _: None))
 
-    @kills(
-        Mutation(
-            cooldown.CooldownWalk._remember,
-            "if self.fresh_release is None:",
-            "if True:",
-            "the line names the oldest version the cooldown holds back rather than the newest",
-        )
+    @kills.force_true(
+        cooldown.CooldownWalk._remember,
+        "self.fresh_release is None",
+        "the line names the oldest version the cooldown holds back rather than the newest",
     )
     def test_the_newest_candidate_inside_the_cooldown_is_carried(self):
         """Test that of several candidates inside the cooldown, the version carries the newest one alone."""

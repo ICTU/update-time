@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import ANY, Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
 from update_time.manifests import devcontainer_json as devcontainer_json_manifest
@@ -77,14 +77,12 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(devcontainer, 1))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            devcontainer_json_manifest,
-            r"""FEATURE_REFERENCE = re.compile(rf'"{IMAGE_REFERENCE}":\s*{{')""",
-            r"""FEATURE_REFERENCE = re.compile(r'"(?P<dependency>[\w./-]+)(?::(?=[\w.-]))?(?P<version>[\w.-]*)"""
-            r"""(?:@(?P<sha>sha256:[0-9a-f]{64}))?":\s*{')""",
-            "a JSON key naming no version is read as a feature reference without a tag",
-        )
+    @kills.replace(
+        devcontainer_json_manifest,
+        r"""FEATURE_REFERENCE = re.compile(rf'"{IMAGE_REFERENCE}":\s*{{')""",
+        r"""FEATURE_REFERENCE = re.compile(r'"(?P<dependency>[\w./-]+)(?::(?=[\w.-]))?(?P<version>[\w.-]*)"""
+        r"""(?:@(?P<sha>sha256:[0-9a-f]{64}))?":\s*{')""",
+        "a JSON key naming no version is read as a feature reference without a tag",
     )
     def test_json_key_naming_no_version_is_not_read_as_a_feature(self):
         """Test that a JSON key naming no version is left alone, a feature reference always naming one."""

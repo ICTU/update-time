@@ -2,7 +2,7 @@
 
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.formats import toml
 from update_time.manifests.pyproject_toml import PyprojectToml
 
@@ -62,13 +62,10 @@ class SetToolKeyTest(unittest.TestCase):
         written = self.written(f"[tool.uv]\n{other_key}\n{_NEXT_TABLE}")
         self.assertEqual(written, f'[tool.uv]\n{other_key}exclude-newer = "7 days"\n\n{_NEXT_TABLE}')
 
-    @kills(
-        Mutation(
-            toml._add_table,
-            "table.add(tomlkit.nl())",
-            "pass",
-            "an inserted table runs into a next table the file wrote without a blank line",
-        )
+    @kills.delete_statement(
+        toml._add_table,
+        "table.add(tomlkit.nl())",
+        "an inserted table runs into a next table the file wrote without a blank line",
     )
     def test_separates_an_inserted_table_from_a_next_table_written_without_blank_line(self):
         """Test that a blank line separates the inserted `[tool.uv]` from a next table the file wrote without one."""
@@ -80,33 +77,28 @@ class SetToolKeyTest(unittest.TestCase):
         written = self.written(f"tool.ruff.x = 1\n\n{_NEXT_TABLE}")
         self.assertEqual(written, f"tool.ruff.x = 1\n\n{_UV_TABLE}\n{_NEXT_TABLE}")
 
-    @kills(
-        Mutation(
-            toml._add_table,
-            'cast("tomlkit.items.Table", document.body[index][1])',
-            "document[super_table]",
-            "a table inserted between split tool tables goes through tomlkit's proxy, which does not have a body",
-            raises="AttributeError: 'dict' object has no attribute 'body'",
-        )
+    @kills.replace(
+        toml._add_table,
+        'cast("tomlkit.items.Table", document.body[index][1])',
+        "document[super_table]",
+        "a table inserted between split tool tables goes through tomlkit's proxy, which does not have a body",
+        raises="AttributeError: 'dict' object has no attribute 'body'",
     )
     def test_separates_a_table_inserted_between_out_of_order_tool_tables_from_the_next_table(self):
         """Test that a blank line separates a `[tool.uv]` added to the first of split tool tables from what follows."""
         written = self.written(f"[tool.ruff]\nx = 1\n\n{_NEXT_TABLE}\n[tool.black]\ny = 2\n")
         self.assertEqual(written, f"[tool.ruff]\nx = 1\n\n{_UV_TABLE}\n{_NEXT_TABLE}\n[tool.black]\ny = 2\n")
 
-    @kills(
-        Mutation(
-            toml._last_table,
-            "table = last",
-            "return last",
-            "a comment above the next table ends up above a table inserted after a nested tool table",
-        ),
-        Mutation(
-            toml._last_table,
-            "last = last.body[-1]",
-            "pass",
-            "a comment above the next table ends up above a table inserted after an array of tool tables",
-        ),
+    @kills.replace(
+        toml._last_table,
+        "table = last",
+        "return last",
+        "a comment above the next table ends up above a table inserted after a nested tool table",
+    )
+    @kills.delete_statement(
+        toml._last_table,
+        "last = last.body[-1]",
+        "a comment above the next table ends up above a table inserted after an array of tool tables",
     )
     def test_keeps_a_comment_above_the_next_table(self):
         """Test that a comment above the table after the tool tables stays above that table."""
@@ -115,25 +107,19 @@ class SetToolKeyTest(unittest.TestCase):
                 written = self.written(f"{header}\nx = 1\n\n# groups\n{_NEXT_TABLE}")
                 self.assertEqual(written, f"{header}\nx = 1\n\n{_UV_TABLE}\n# groups\n{_NEXT_TABLE}")
 
-    @kills(
-        Mutation(
-            toml._remove_root_key,
-            "return",
-            "pass",
-            "removing an inline tool table drops the blank line between the root keys before it and the first table",
-        ),
-        Mutation(
-            toml._expand_inline_tables,
-            "_table_from(parent, expanding=table)",
-            "_table_from(parent)",
-            "an inline uv table inside an inline tool table stays inline",
-        ),
-        Mutation(
-            toml._expand_inline_tables,
-            "del parent[table]\n        _add_table(document, super_table, table, _table_from(child))",
-            "parent[table] = _table_from(child)",
-            "an inline uv table turned into a table runs into the table after it",
-        ),
+    @kills.delete_statement(
+        toml._remove_root_key,
+        "return",
+        "removing an inline tool table drops the blank line between the root keys before it and the first table",
+    )
+    @kills.delete(
+        toml._expand_inline_tables, ", expanding=table", "an inline uv table inside an inline tool table stays inline"
+    )
+    @kills.replace(
+        toml._expand_inline_tables,
+        "del parent[table]\n        _add_table(document, super_table, table, _table_from(child))",
+        "parent[table] = _table_from(child)",
+        "an inline uv table turned into a table runs into the table after it",
     )
     def test_turns_inline_tool_tables_into_tables(self):
         """Test that an inline `[tool]` or `[tool.uv]` becomes a table, leaving the other tools as they were."""

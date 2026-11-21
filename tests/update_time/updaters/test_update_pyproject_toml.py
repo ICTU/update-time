@@ -9,7 +9,7 @@ from unittest.mock import ANY, Mock, call, patch
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.io.log import Logger
@@ -60,20 +60,20 @@ if TYPE_CHECKING:
 # What the log renders for version 1.1, whose changelog PyPI does not name in `files_after_update`.
 _NEW_VERSION = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
 
-# Some of the tables the pyproject.toml updater checks. Each entry names the table's row, the case of the test below
-# that pins it, and the error a run stops with once the row is gone. The `project` table is left out, since another
-# test guards its row too.
-_CHECKED_TABLES = (
-    (
-        '("project", "optional-dependencies")',
-        "project.optional-dependencies",
-        "AttributeError: 'str' object has no attribute 'items'",
-    ),
-    ('("dependency-groups",)', "dependency-groups", "AttributeError: 'str' object has no attribute 'items'"),
-    ('("tool",)', "tool", "AttributeError: 'str' object has no attribute 'get'"),
-    ('("tool", "uv")', "tool.uv", "AttributeError: 'str' object has no attribute 'get'"),
-    ('("build-system",)', "build-system", "AttributeError: 'str' object has no attribute 'get'"),
-)
+# A run stops with one of these errors once the pyproject.toml updater stops checking that a table is a table.
+_ARRAYS_NOT_IN_A_TABLE = "AttributeError: 'str' object has no attribute 'items'"
+_KEYS_NOT_IN_A_TABLE = "AttributeError: 'str' object has no attribute 'get'"
+
+
+def _kills_table_check(row: str, table: str, error: str) -> Callable[[Callable[..., object]], Callable[..., object]]:
+    """Return a decorator registering the mutation that deletes the row checking that the table is a table."""
+    return kills.delete(
+        pyproject_config,
+        f"    ({row}, _is_table),\n",
+        f"a pyproject.toml whose {table} is not a table stops the run",
+        raises=error,
+    )
+
 
 # A pyproject.toml that declares build requirements alone, which uv neither resolves nor locks.
 _BUILD_REQUIREMENTS_ALONE = '[build-system]\nrequires = ["hatchling==1.20.0"]\n'
@@ -302,20 +302,17 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(files_at_the_first_lock[PYPROJECT_TOML], pyproject("package==1.0"))
         self.assertEqual(files_at_the_last_lock[PYPROJECT_TOML], pyproject("package==1.1"))
 
-    @kills(
-        Mutation(
-            lock._MemberSnapshot.steered_member,
-            "member.warn_about_redundant_bounds(log)",
-            "pass",
-            "a bound that decides nothing in a pyproject.toml is not warned about",
-        ),
-        Mutation(
-            lock._Member.warn_about_redundant_bounds,
-            "current_version=current_version",
-            "current_version=declaration.current_version",
-            "a bound on a dependency without an exact pin is not judged at the version locked before, so it goes "
-            "unreported",
-        ),
+    @kills.delete(
+        lock._MemberSnapshot.steered_member,
+        "member.warn_about_redundant_bounds(log)",
+        "a bound that decides nothing in a pyproject.toml is not warned about",
+    )
+    @kills.append(
+        lock._Member.warn_about_redundant_bounds,
+        "current_version=",
+        "declaration.",
+        "a bound on a dependency without an exact pin is not judged at the version locked before, so it goes "
+        "unreported",
     )
     def test_a_bound_that_decides_nothing_at_the_current_version_is_redundant(self, run: Mock, get: Mock, glob: Mock):
         """Test that a bound that never has an effect or blocks every update at the current version is warned about."""
@@ -336,13 +333,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                     redundancy=ANY,
                 )
 
-    @kills(
-        Mutation(
-            marker_policy._versions_locked_for,
-            "by_name.get(normalized_python_name(declaration.dependency), [])",
-            "by_name.get(declaration.dependency, [])",
-            "a declaration that spells its name its own way misses the version the uv.lock recorded",
-        ),
+    @kills.replace(
+        marker_policy._versions_locked_for,
+        "by_name.get(normalized_python_name(declaration.dependency), [])",
+        "by_name.get(declaration.dependency, [])",
+        "a declaration that spells its name its own way misses the version the uv.lock recorded",
     )
     def test_a_bound_narrows_the_requirement_uv_locks(self, run: Mock, get: Mock, glob: Mock):
         """Test that a bound joins the requirement uv locks, after which an exact pin takes the locked version.
@@ -396,19 +391,16 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(left[PYPROJECT_TOML], contents.replace("==1.0", "==1.1", 1))
         self.assert_new_version_logged("package", _NEW_VERSION, Location(PYPROJECT_TOML, 2))
 
-    @kills(
-        Mutation(
-            lock._LockUpdate._report_new_pins,
-            "served = pypi_served(moved_pins)",
-            "served = list(moved_pins)",
-            "a pin uv resolves from elsewhere than PyPI is reported, and its changelog asked of PyPI",
-        ),
-        Mutation(
-            lock._LockUpdate._report_new_pins,
-            'log.new_version(Reference(pin.name, "", declaration.location), DependencyVersion(pin.version))',
-            "pass",
-            "a pin uv resolves from elsewhere than PyPI moves without a word",
-        ),
+    @kills.replace(
+        lock._LockUpdate._report_new_pins,
+        "served = pypi_served(moved_pins)",
+        "served = list(moved_pins)",
+        "a pin uv resolves from elsewhere than PyPI is reported, and its changelog asked of PyPI",
+    )
+    @kills.delete_statement(
+        lock._LockUpdate._report_new_pins,
+        'log.new_version(Reference(pin.name, "", declaration.location), DependencyVersion(pin.version))',
+        "a pin uv resolves from elsewhere than PyPI moves without a word",
     )
     def test_a_pin_uv_sources_from_elsewhere_than_pypi_moves_and_is_reported_without_asking_pypi(
         self, run: Mock, get: Mock, glob: Mock
@@ -425,13 +417,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         get.assert_not_called()
         self.assert_new_version_logged("other", "0.2", Location(_MEMBER, 2))
 
-    @kills(
-        Mutation(
-            lock._Member.reportable_declarations,
-            "if not declaration.build_requirement]",
-            "]",
-            "a version uv lock moves is also reported at a build requirement of its name, which uv does not lock",
-        )
+    @kills.delete(
+        lock._Member.reportable_declarations,
+        "if not declaration.build_requirement",
+        "a version uv lock moves is also reported at a build requirement of its name, which uv does not lock",
     )
     def test_a_version_the_lock_moves_is_reported_at_the_dependency_and_not_at_a_build_requirement(
         self, run: Mock, get: Mock, glob: Mock
@@ -451,13 +440,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         message = message_of(Logger.pin_with_environment_marker_left_as_is)
         self.assert_logged(message, dependency="package", location=Location(PYPROJECT_TOML, 2))
 
-    @kills(
-        Mutation(
-            lock._LockUpdate._report_pins_with_environment_markers,
-            "and not declaration.build_requirement:",
-            ":",
-            "a build requirement with an environment marker is reported as left, though uv does not lock it",
-        )
+    @kills.delete(
+        lock._LockUpdate._report_pins_with_environment_markers,
+        "and not declaration.build_requirement",
+        "a build requirement with an environment marker is reported as left, though uv does not lock it",
     )
     def test_a_build_requirement_with_an_environment_marker_is_not_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pinned build requirement with an environment marker goes without the report."""
@@ -474,19 +460,17 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_new_version_logged_among_others("package", _NEW_VERSION, Location(PYPROJECT_TOML, 2), ANY)
         self.assert_new_version_logged_among_others("package", _NEW_VERSION, Location(PYPROJECT_TOML, 4), ANY)
 
-    @kills(
-        Mutation(
-            uv_lock._project_dependencies,
-            'entry.get("optional-dependencies", {})',
-            "{}",
-            "the versions locked for the project's extras go unreported",
-        ),
-        Mutation(
-            uv_lock._project_dependencies,
-            'entry.get("dev-dependencies", {})',
-            "{}",
-            "the versions locked for the project's dependency groups go unreported",
-        ),
+    @kills.replace(
+        uv_lock._project_dependencies,
+        'entry.get("optional-dependencies", {})',
+        "{}",
+        "the versions locked for the project's extras go unreported",
+    )
+    @kills.replace(
+        uv_lock._project_dependencies,
+        'entry.get("dev-dependencies", {})',
+        "{}",
+        "the versions locked for the project's dependency groups go unreported",
     )
     def test_the_locked_version_of_a_dependency_without_an_exact_pin_is_reported_where_it_moved_up(
         self, run: Mock, get: Mock, glob: Mock
@@ -522,13 +506,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assert_new_version_logged_among_others(reported, version, Location(PYPROJECT_TOML, 4), ANY)
                 self.assertEqual(len(self.new_version_records()), 2)
 
-    @kills(
-        Mutation(
-            uv_lock._project_dependencies,
-            'entry.get("dependency-groups", {})',
-            "{}",
-            "the run leaves the dependency groups in the manifest of a uv.lock unreported",
-        ),
+    @kills.replace(
+        uv_lock._project_dependencies,
+        'entry.get("dependency-groups", {})',
+        "{}",
+        "the run leaves the dependency groups in the manifest of a uv.lock unreported",
     )
     def test_the_locked_version_of_a_dependency_group_of_a_workspace_root_without_a_project_is_reported(
         self, run: Mock, get: Mock, glob: Mock
@@ -544,13 +526,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.files_after_update(run, get, glob, {PYPROJECT_TOML: root, _UV_LOCK: lock_before}, lock_after)
         self.assert_new_version_logged("package", _NEW_VERSION, Location(PYPROJECT_TOML, 5))
 
-    @kills(
-        Mutation(
-            uv_lock._versions_of,
-            '[dependency["version"]] if "version" in dependency else locked.get(dependency["name"], [])',
-            'locked.get(dependency["name"], [])',
-            "a dependency locked at several versions is reported at one the project may not use",
-        ),
+    @kills.delete(
+        uv_lock._versions_of,
+        '[dependency["version"]] if "version" in dependency else ',
+        "a dependency locked at several versions is reported at one the project may not use",
     )
     def test_a_dependency_locked_at_several_versions_is_pinned_and_reported_at_the_lowest_the_project_uses(
         self, run: Mock, get: Mock, glob: Mock
@@ -599,14 +578,12 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.files_after_update(run, get, glob, files, locks[1], discovered=[_MEMBER])
         self.assert_new_version_logged("package", _NEW_VERSION, Location(_MEMBER, 2))
 
-    @kills(
-        Mutation(
-            uv_lock.UvLock.recorded_versions,
-            'for package in packages if "version" in package',
-            "for package in packages",
-            "the run stops where the lock does not record a version for a dependency, such as a dynamic sibling member",
-            raises="KeyError: 'version'",
-        )
+    @kills.replace(
+        uv_lock.UvLock.recorded_versions,
+        'for package in packages if "version" in package',
+        "for package in packages",
+        "the run stops where the lock does not record a version for a dependency, such as a dynamic sibling member",
+        raises="KeyError: 'version'",
     )
     def test_a_dependency_the_lock_records_no_version_for_is_passed_over(self, run: Mock, get: Mock, glob: Mock):
         """Test that a newly locked dependency without a version, such as a dynamic sibling member, is not reported."""
@@ -636,14 +613,12 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         get.assert_not_called()
         self.assert_moved_back_logged("uv", "package", "1.1", "1.0", Location(PYPROJECT_TOML, 2))
 
-    @kills(
-        Mutation(
-            lock._LockUpdate._rewrite,
-            "except OSError as error:",
-            "except ValueError as error:",
-            "a pyproject.toml that cannot be written stops the run, leaving the other files of its workspace relaxed",
-            raises="PermissionError: [Errno 13] Permission denied: '/member/pyproject.toml'",
-        )
+    @kills.replace(
+        lock._LockUpdate._rewrite,
+        "except OSError as error:",
+        "except ValueError as error:",
+        "a pyproject.toml that cannot be written stops the run, leaving the other files of its workspace relaxed",
+        raises="PermissionError: [Errno 13] Permission denied: '/member/pyproject.toml'",
     )
     def test_a_pyproject_toml_that_cannot_be_written_gives_the_workspace_its_files_back(
         self, run: Mock, get: Mock, glob: Mock
@@ -665,14 +640,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             (message_of(Logger.file_not_written), {"location": Location(_MEMBER), "error": str(error)})
         )
 
-    @kills(
-        Mutation(
-            lock._LockTarget._read,
-            "except (OSError, UnicodeDecodeError) as error:",
-            "except OSError as error:",
-            "a uv.lock that is not UTF-8 stops the run",
-            raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
-        )
+    @kills.delete(
+        lock._LockTarget._read,
+        "UnicodeDecodeError",
+        "a uv.lock that is not UTF-8 stops the run",
+        raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
     )
     def test_a_uv_lock_that_cannot_be_read_is_reported_and_its_workspace_is_left_as_it_is(
         self, run: Mock, get: Mock, glob: Mock
@@ -750,13 +722,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             self.updated_pin(run, get, glob)
         self.assert_path_logged_first(PYPROJECT_TOML)
 
-    @kills(
-        Mutation(
-            lock._read_workspace,
-            "if target.keeps_the_lock:\n        configure_cooldown(root)",
-            "configure_cooldown(root)",
-            "the run writes the cooldown into the root of a workspace that it leaves without a lock",
-        ),
+    @kills.delete(
+        lock._read_workspace,
+        "if target.keeps_the_lock:\n        ",
+        "the run writes the cooldown into the root of a workspace that it leaves without a lock",
     )
     def test_without_an_earlier_lock_the_pin_moves_the_cooldown_goes_to_uv_alone_and_the_uv_lock_goes(
         self, run: Mock, get: Mock, glob: Mock
@@ -852,19 +821,15 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(files[_LIB], pyproject("package==1.1"))
         self.assertEqual(files[_APP], pyproject("lib", "package==1.1") + uv_path_source("lib"))
 
-    @kills(
-        Mutation(
-            lock._update_together,
-            "lock_update.relax()",
-            "pass",
-            "each workspace of a cycle upgrades while the others still pin the version they share, so none moves",
-        ),
-        Mutation(
-            lock._update_together,
-            "steps += [(lock_update, lock_update.relock) for lock_update in lock_updates[:-1]]",
-            "steps += []",
-            "an earlier workspace of a cycle keeps a lock that records the others' pins from before they moved",
-        ),
+    @kills.delete_statement(
+        lock._update_together,
+        "lock_update.relax()",
+        "each workspace of a cycle upgrades while the others still pin the version they share, so none moves",
+    )
+    @kills.delete(
+        lock._update_together,
+        "(lock_update, lock_update.relock) for lock_update in lock_updates[:-1]",
+        "an earlier workspace of a cycle keeps a lock that records the others' pins from before they moved",
     )
     def test_workspaces_whose_projects_source_each_other_by_path_move_the_pin_they_share_together(
         self, run: Mock, get: Mock, glob: Mock
@@ -892,13 +857,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             (message_of(Logger.rolled_back_with_cycle), {"location": Location(_LIB), "failed": (Location(_APP),)}),
         )
 
-    @kills(
-        Mutation(
-            lock._LockUpdate.move_pins,
-            "if not self.lock_as_written_succeeded:\n            return False",
-            "if not self.lock_as_written_succeeded:\n            return True",
-            "a workspace of a cycle whose files as written uv cannot lock keeps the requirements relaxed for the cycle",
-        )
+    @kills.replace(
+        lock._LockUpdate.move_pins,
+        "if not self.lock_as_written_succeeded:\n            return False",
+        "if not self.lock_as_written_succeeded:\n            return True",
+        "a workspace of a cycle whose files as written uv cannot lock keeps the requirements relaxed for the cycle",
     )
     def test_a_cycle_of_path_sources_whose_files_as_written_cannot_be_locked_stays_as_it_was(
         self, run: Mock, get: Mock, glob: Mock
@@ -1082,13 +1045,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         )
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            lock._LockUpdate._moved_pins,
-            "PEP_440.order(locked[name].version) != PEP_440.order(declaration.current_version)",
-            "locked[name].version != declaration.current_version",
-            "where the lock spells a pinned 1.0 as 1.0.0, the pin becomes 1.0.0 and is reported as a new version",
-        )
+    @kills.replace(
+        lock._LockUpdate._moved_pins,
+        "PEP_440.order(locked[name].version) != PEP_440.order(declaration.current_version)",
+        "locked[name].version != declaration.current_version",
+        "where the lock spells a pinned 1.0 as 1.0.0, the pin becomes 1.0.0 and is reported as a new version",
     )
     def test_a_pin_uv_lock_keeps_leaves_the_pyproject_toml_as_it_was(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pin uv lock keeps on its version leaves the file as it was, and Update-time does not log it."""
@@ -1112,13 +1073,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_command_stderr_logged(stderr=NO_SOLUTION)
         self.assert_uv_dependencies_not_updated_logged(PYPROJECT_TOML, "uv lock")
 
-    @kills(
-        Mutation(
-            uv_lock.UvLock.restore,
-            "self.path.unlink(missing_ok=True)",
-            "self.path.unlink()",
-            "giving back a uv.lock that held nothing fails where uv did not write one either",
-        )
+    @kills.delete(
+        uv_lock.UvLock.restore,
+        "missing_ok=True",
+        "giving back a uv.lock that held nothing fails where uv did not write one either",
     )
     def test_a_failed_uv_lock_writes_the_files_the_run_rewrote_back(self, run: Mock, get: Mock, glob: Mock):
         """Test that a uv lock failing on the rewritten pins gives the workspace's files back, and logs that alone."""
@@ -1140,13 +1098,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 )
                 self.assert_no_new_version_logged()
 
-    @kills(
-        Mutation(
-            uv.settings_hold_exclude_newer,
-            'return is_installed("uv") and ',
-            "return ",
-            "a missing uv is asked for its settings, for a project without a lock, and reported twice",
-        )
+    @kills.delete(
+        uv.settings_hold_exclude_newer,
+        'is_installed("uv") and ',
+        "a missing uv is asked for its settings, for a project without a lock, and reported twice",
     )
     def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
         """Test that a missing uv is reported in one line naming the file, and that Update-time does not run it."""
@@ -1179,23 +1134,16 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assert_path_logged_first(mock_pyproject_toml)
                 self.assert_no_new_version_logged()
 
-    @kills(
-        *(
-            Mutation(
-                pyproject_config,
-                f"    ({row}, _is_table),\n",
-                "",
-                f"a pyproject.toml whose {table} is not a table stops the run",
-                raises=error,
-            )
-            for row, table, error in _CHECKED_TABLES
-        ),
-        Mutation(
-            pyproject_config._is_well_formed,
-            "return all(isinstance(array, list) for _, array in [*_uv_arrays(table), *_build_requirements(table)])",
-            "return True",
-            "a pyproject.toml whose dependency array is not an array has uv run for it",
-        ),
+    # The `project` table's row is left out, since another test guards it too.
+    @_kills_table_check('("project", "optional-dependencies")', "project.optional-dependencies", _ARRAYS_NOT_IN_A_TABLE)
+    @_kills_table_check('("dependency-groups",)', "dependency-groups", _ARRAYS_NOT_IN_A_TABLE)
+    @_kills_table_check('("tool",)', "tool", _KEYS_NOT_IN_A_TABLE)
+    @_kills_table_check('("tool", "uv")', "tool.uv", _KEYS_NOT_IN_A_TABLE)
+    @_kills_table_check('("build-system",)', "build-system", _KEYS_NOT_IN_A_TABLE)
+    @kills.force_true(
+        pyproject_config._is_well_formed,
+        "all(isinstance(array, list) for _, array in [*_uv_arrays(table), *_build_requirements(table)])",
+        "a pyproject.toml whose dependency array is not an array has uv run for it",
     )
     def test_skip_pyproject_toml_whose_tables_or_arrays_hold_another_value(self, run: Mock, get: Mock, glob: Mock):
         """Test that the updater warns about and skips a pyproject.toml whose tables or arrays hold another value."""
@@ -1234,13 +1182,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                     PYPROJECT_TOML, message_of(Logger.no_dependencies), manager="uv", verb="resolve"
                 )
 
-    @kills(
-        Mutation(
-            uv.decision,
-            "_LOG.not_a_uv_project(pyproject_toml, UvLock.beside(root).path)",
-            "pass",
-            "a pyproject.toml that uv does not run for, though it declares dependencies, goes unreported",
-        ),
+    @kills.delete_statement(
+        uv.decision,
+        "_LOG.not_a_uv_project(pyproject_toml, UvLock.beside(root).path)",
+        "a pyproject.toml that uv does not run for, though it declares dependencies, goes unreported",
     )
     def test_uv_not_run_for_a_file_uv_does_not_manage(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv does not run, nor get its cooldown, for a pyproject.toml that uv does not manage."""
@@ -1294,13 +1239,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assert_path_logged_first(PYPROJECT_TOML)
                 self.assert_unsupported_package_manager_logged(PYPROJECT_TOML, manager, "uv")
 
-    @kills(
-        Mutation(
-            Logger.signals_of_more_than_one_manager,
-            'f"[tool.{table}]" for table in tables',
-            "table for table in tables",
-            "the warning about the tables of more than one manager names a table by its bare name",
-        )
+    @kills.replace(
+        Logger.signals_of_more_than_one_manager,
+        'f"[tool.{table}]" for table in tables',
+        "table for table in tables",
+        "the warning about the tables of more than one manager names a table by its bare name",
     )
     def test_uv_not_run_for_a_file_whose_signals_name_more_than_one_manager(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv does not run, nor get its cooldown, for a file whose lock files or tables name two managers."""
@@ -1325,13 +1268,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 message = message_of(Logger.signals_of_more_than_one_manager)
                 self.assert_logged(message, location=Location(PYPROJECT_TOML), signals=signals)
 
-    @kills(
-        Mutation(
-            uv._warn_about_the_managers,
-            "if pyproject_toml != root and is_scanned(root):",
-            "if False:",
-            "each member of a workspace repeats the warning about its root",
-        )
+    @kills.force_false(
+        uv._warn_about_the_managers,
+        "pyproject_toml != root and is_scanned(root)",
+        "each member of a workspace repeats the warning about its root",
     )
     def test_uv_not_run_for_a_workspace_whose_root_names_another_manager_and_the_root_alone_is_warned_about(
         self, run: Mock, get: Mock, glob: Mock
@@ -1384,13 +1324,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assertTrue(uv_locks(run))
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            uv._warn_about_the_managers,
-            "if pyproject_toml != root and is_scanned(root):",
-            "if pyproject_toml != root:",
-            "a member whose workspace root lies outside the scan points at a warning nobody gives",
-        )
+    @kills.delete(
+        uv._warn_about_the_managers,
+        " and is_scanned(root)",
+        "a member whose workspace root lies outside the scan points at a warning nobody gives",
     )
     def test_the_lock_file_beside_a_workspace_root_outside_the_scan_names_the_manager_of_a_member(
         self, run: Mock, get: Mock, glob: Mock
@@ -1411,13 +1348,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             message = message_of(Logger.workspace_root_outside_the_scan)
             self.assert_debug_logged_after_path(_MEMBER, message, manager="uv", root=Location(PYPROJECT_TOML))
 
-    @kills(
-        Mutation(
-            update_pyproject_tomls,
-            "marker_policy.report_file_markers(pyproject_toml, _LOG, policy)",
-            "pass",
-            "the markers of a pyproject.toml uv does not manage go unreported",
-        )
+    @kills.delete(
+        update_pyproject_tomls,
+        "marker_policy.report_file_markers(pyproject_toml, _LOG, policy)",
+        "the markers of a pyproject.toml uv does not manage go unreported",
     )
     def test_a_marker_in_a_file_uv_does_not_run_for_is_recognised(self, run: Mock, get: Mock, glob: Mock):
         """Test that the marker on a dependency of a pyproject.toml that uv does not run for is reported."""
@@ -1436,13 +1370,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 marker = Marker(stale=Threshold(value=0))
                 self.assert_recognised_marker_logged(dependency, Location(mock_pyproject_toml, 2), marker)
 
-    @kills(
-        Mutation(
-            pyproject_config,
-            '("dependencies", "optional-dependencies")',
-            '("dependencies",)',
-            "uv does not run for a project whose extras its build backend declares",
-        )
+    @kills.replace(
+        pyproject_config,
+        '("dependencies", "optional-dependencies")',
+        '("dependencies",)',
+        "uv does not run for a project whose extras its build backend declares",
     )
     def test_uv_runs_for_each_array_it_resolves(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv runs for a pyproject.toml whose only dependency sits in any of the arrays uv resolves."""
@@ -1460,13 +1392,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.files_after_update(run, get, glob, files, _uv_lock("1.0"))
                 self.assertTrue(uv_locks(run))
 
-    @kills(
-        Mutation(
-            uv._Signals.managers,
-            'return ("uv",) if "uv" in self.tables else self.tables',
-            "return self.tables",
-            "the tables of uv and Poetry tie in a project without a lock file",
-        )
+    @kills.delete(
+        uv._Signals.managers,
+        '("uv",) if "uv" in self.tables else ',
+        "the tables of uv and Poetry tie in a project without a lock file",
     )
     def test_uv_runs_for_a_project_it_manages_whose_build_backend_has_a_table_of_its_own(
         self, run: Mock, get: Mock, glob: Mock
@@ -1510,20 +1439,25 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                     Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
                 )
 
-    @kills(
-        *(
-            Mutation(
-                python_dependency_toml_manifest.Declaration.unnarrowable_reason,
-                f"Reason.{reason}",
-                "Reason.BOUND_DECIDES_NOTHING",
-                f"a bound Update-time does not narrow for {case} is reported as if uv resolved the version",
-            )
-            for reason, case in (
-                ("BUILD_REQUIREMENT_NOT_LOCKED", "a build requirement"),
-                ("ENVIRONMENT_MARKER_PIN_KEPT", "a pin with an environment marker"),
-                ("BOUND_ON_A_HELD_BACK_UPDATE", "a pin whose update is held back"),
-            )
-        ),
+    @kills.replace(
+        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        "Reason.BUILD_REQUIREMENT_NOT_LOCKED",
+        "Reason.BOUND_DECIDES_NOTHING",
+        "a bound Update-time does not narrow for a build requirement is reported as if uv resolved the version",
+    )
+    @kills.replace(
+        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        "Reason.ENVIRONMENT_MARKER_PIN_KEPT",
+        "Reason.BOUND_DECIDES_NOTHING",
+        "a bound Update-time does not narrow for a pin with an environment marker is reported as if uv resolved the "
+        "version",
+    )
+    @kills.replace(
+        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        "Reason.BOUND_ON_A_HELD_BACK_UPDATE",
+        "Reason.BOUND_DECIDES_NOTHING",
+        "a bound Update-time does not narrow for a pin whose update is held back is reported as if uv resolved the "
+        "version",
     )
     def test_a_bound_update_time_does_not_narrow_by_is_reported_as_deciding_nothing(
         self, run: Mock, get: Mock, glob: Mock
@@ -1564,13 +1498,11 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                     reason, dependency, Location(PYPROJECT_TOML, line), "allow[update<2]"
                 )
 
-    @kills(
-        Mutation(
-            marker_policy,
-            "Reason.UNMANAGED_FILE_LEFT, Reason.UNMANAGED_FILE_KEPT",
-            "Reason.UNMANAGED_FILE_KEPT, Reason.UNMANAGED_FILE_LEFT",
-            "a directive steering the update in a file uv does not manage is reported for the other one's reason",
-        ),
+    @kills.replace(
+        marker_policy,
+        "Reason.UNMANAGED_FILE_LEFT, Reason.UNMANAGED_FILE_KEPT",
+        "Reason.UNMANAGED_FILE_KEPT, Reason.UNMANAGED_FILE_LEFT",
+        "a directive steering the update in a file uv does not manage is reported for the other one's reason",
     )
     def test_a_directive_steering_the_update_in_a_file_uv_does_not_manage_is_reported(
         self, run: Mock, get: Mock, glob: Mock
@@ -1589,13 +1521,11 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 self.assert_redundant_directive_logged(reason, "package", Location(PYPROJECT_TOML, 2), directive)
                 self.assert_no_ignored_logged()
 
-    @kills(
-        Mutation(
-            uv.decision,
-            "else Decision.UNMANAGED",
-            "else Decision.NOTHING_TO_RESOLVE",
-            "the markers of a file pdm manages are judged as if uv ran for it",
-        )
+    @kills.replace(
+        uv.decision,
+        "else Decision.UNMANAGED",
+        "else Decision.NOTHING_TO_RESOLVE",
+        "the markers of a file pdm manages are judged as if uv ran for it",
     )
     def test_a_directive_steering_the_update_in_a_file_pdm_manages_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that an `ignore[update]` in a file pdm manages is reported, after the warning that pdm manages it."""
@@ -1611,13 +1541,11 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         )
         self.assert_no_ignored_logged()
 
-    @kills(
-        Mutation(
-            marker_policy,
-            "Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT",
-            "Reason.MORE_THAN_ONE_MANAGER_KEPT, Reason.MORE_THAN_ONE_MANAGER_LEFT",
-            "a directive steering the update beside the lock files of two managers gets the other one's reason",
-        ),
+    @kills.replace(
+        marker_policy,
+        "Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT",
+        "Reason.MORE_THAN_ONE_MANAGER_KEPT, Reason.MORE_THAN_ONE_MANAGER_LEFT",
+        "a directive steering the update beside the lock files of two managers gets the other one's reason",
     )
     def test_a_directive_steering_the_update_in_a_file_whose_lock_files_name_more_than_one_manager_is_reported(
         self, run: Mock, get: Mock, glob: Mock
@@ -1646,13 +1574,11 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 )
                 self.assert_no_ignored_logged()
 
-    @kills(
-        Mutation(
-            marker_policy,
-            "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT",
-            "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT",
-            "a directive steering the update in a member whose root lies outside the scan gets the other one's reason",
-        ),
+    @kills.replace(
+        marker_policy,
+        "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT",
+        "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT",
+        "a directive steering the update in a member whose root lies outside the scan gets the other one's reason",
     )
     def test_a_directive_steering_the_update_of_a_member_whose_workspace_root_lies_outside_the_scan_is_reported(
         self, run: Mock, get: Mock, glob: Mock
@@ -1671,13 +1597,11 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 self.assert_redundant_directive_logged(reason, "package", Location(_MEMBER, 2), directive)
                 self.assert_no_ignored_logged()
 
-    @kills(
-        Mutation(
-            uv_pins.warn_about_pins,
-            "declarations = uv.declarations_of(file)",
-            "declarations = file.declarations()",
-            "the run checks a member's dependency against PyPI where the workspace root sources it",
-        )
+    @kills.replace(
+        uv_pins.warn_about_pins,
+        "declarations = uv.declarations_of(file)",
+        "declarations = file.declarations()",
+        "the run checks a member's dependency against PyPI where the workspace root sources it",
     )
     def test_a_scope_on_a_dependency_the_workspace_root_sources_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that a warning scope on a member's dependency that the workspace root sources is reported."""
@@ -1689,13 +1613,10 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
             Reason.NO_PYPI_RELEASE, "other", Location(_MEMBER, 2), "ignore[archived]"
         )
 
-    @kills(
-        Mutation(
-            marker_policy.kept_lock_policy,
-            "if not declaration.updatable and hold_back_redundancy(declaration) is None:",
-            "if False:",
-            "a bound beside an `ignore[update]` keeping the locked version goes unreported, though it decides nothing",
-        )
+    @kills.force_false(
+        marker_policy.kept_lock_policy,
+        "not declaration.updatable and hold_back_redundancy(declaration) is None",
+        "a bound beside an `ignore[update]` keeping the locked version goes unreported, though it decides nothing",
     )
     def test_a_bound_beside_an_ignore_update_keeping_the_locked_version_is_reported_as_deciding_nothing(
         self, run: Mock, get: Mock, glob: Mock
@@ -1709,13 +1630,10 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
             Reason.BOUND_ON_A_HELD_BACK_UPDATE, "package", Location(PYPROJECT_TOML, 2), "allow[update<2]"
         )
 
-    @kills(
-        Mutation(
-            marker_policy.kept_lock_policy,
-            "if not declaration.updatable and hold_back_redundancy(declaration) is None:",
-            "if not declaration.updatable:",
-            "a bound beside an `ignore[update]` that keeps nothing is reported, and narrows the lock no longer",
-        )
+    @kills.delete(
+        marker_policy.kept_lock_policy,
+        " and hold_back_redundancy(declaration) is None",
+        "a bound beside an `ignore[update]` that keeps nothing is reported, and narrows the lock no longer",
     )
     def test_a_bound_beside_an_ignore_update_without_a_locked_version_narrows_the_lock_and_goes_unreported(
         self, run: Mock, get: Mock, glob: Mock
@@ -1729,19 +1647,15 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
             Reason.NO_LOCKED_VERSION, "package", Location(PYPROJECT_TOML, 2), "ignore[update]"
         )
 
-    @kills(
-        Mutation(
-            marker_policy.kept_lock_policy,
-            "if declaration.pins_a_version or not declaration.narrowable:",
-            "if declaration.pins_a_version:",
-            "an `ignore[update]` reads as keeping a version that uv does not lock by a specifier",
-        ),
-        Mutation(
-            marker_policy._hold_back_redundancy,
-            "if declaration.build_requirement:",
-            "if False:",
-            "an `ignore[update]` on a pinned build requirement goes unreported, though Update-time leaves that pin",
-        ),
+    @kills.delete(
+        marker_policy.kept_lock_policy,
+        " or not declaration.narrowable",
+        "an `ignore[update]` reads as keeping a version that uv does not lock by a specifier",
+    )
+    @kills.force_false(
+        marker_policy._hold_back_redundancy,
+        "declaration.build_requirement",
+        "an `ignore[update]` on a pinned build requirement goes unreported, though Update-time leaves that pin",
     )
     def test_an_ignore_update_that_uv_does_not_lock_by_keeps_nothing(self, run: Mock, get: Mock, glob: Mock):
         """Test that an `ignore[update]` on a direct URL or a build requirement is reported, and holds nothing back."""
@@ -1779,13 +1693,10 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 )
                 self.assert_no_ignored_logged()
 
-    @kills(
-        Mutation(
-            marker_policy._hold_back_redundancy,
-            "return Reason.ENVIRONMENT_MARKER_PIN_LEFT if declaration.environment_marker else None",
-            "return None",
-            "an `ignore[update]` on a pin with an environment marker goes unreported, though the pin stays anyway",
-        )
+    @kills.delete(
+        marker_policy._hold_back_redundancy,
+        "Reason.ENVIRONMENT_MARKER_PIN_LEFT if declaration.environment_marker else ",
+        "an `ignore[update]` on a pin with an environment marker goes unreported, though the pin stays anyway",
     )
     def test_an_ignore_update_on_a_pin_with_an_environment_marker_is_reported_and_the_pin_left_as_it_is(
         self, run: Mock, get: Mock, glob: Mock
@@ -1816,19 +1727,17 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                     Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
                 )
 
-    @kills(
-        Mutation(
-            marker_policy.current_version,
-            'return versions.pop() if len(versions) == 1 else ""',
-            'return versions.pop() if versions else ""',
-            "an `ignore[update]` holds a dependency on one of the versions it is locked at, and moves it off the rest",
-        ),
-        Mutation(
-            marker_policy._current_version_redundancy,
-            "return Reason.SEVERAL_LOCKED_VERSIONS if several else",
-            "return Reason.NO_LOCKED_VERSION if several else",
-            "a directive on a dependency locked at several versions is reported as if none were locked",
-        ),
+    @kills.replace(
+        marker_policy.current_version,
+        'return versions.pop() if len(versions) == 1 else ""',
+        'return versions.pop() if versions else ""',
+        "an `ignore[update]` holds a dependency on one of the versions it is locked at, and moves it off the rest",
+    )
+    @kills.replace(
+        marker_policy._current_version_redundancy,
+        "return Reason.SEVERAL_LOCKED_VERSIONS if several else",
+        "return Reason.NO_LOCKED_VERSION if several else",
+        "a directive on a dependency locked at several versions is reported as if none were locked",
     )
     def test_a_directive_on_a_dependency_locked_at_several_versions_narrows_nothing_and_is_reported(
         self, run: Mock, get: Mock, glob: Mock
@@ -1845,13 +1754,11 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                     Reason.SEVERAL_LOCKED_VERSIONS, "package", Location(PYPROJECT_TOML, 2), directive
                 )
 
-    @kills(
-        Mutation(
-            marker_policy.current_version,
-            "if declaration.current_version:",
-            "if False:",
-            "a bound on an exact pin narrows nothing where the lock records the package at several versions",
-        )
+    @kills.replace(
+        marker_policy.current_version,
+        "if declaration.current_version:",
+        "if False:",
+        "a bound on an exact pin narrows nothing where the lock records the package at several versions",
     )
     def test_a_bound_on_an_exact_pin_takes_the_pinned_version_where_the_lock_records_several(
         self, run: Mock, get: Mock, glob: Mock
@@ -1882,19 +1789,16 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
             message_of(Logger.package_manager_not_on_path), location=Location(PYPROJECT_TOML), executable="uv"
         )
 
-    @kills(
-        Mutation(
-            lock._LockSnapshot.steered_update,
-            "self.target.uv_lock.recorded_versions(member.project_directory) if locked else None",
-            "self.target.uv_lock.recorded_versions(member.project_directory)",
-            "without uv, a directive is judged by a lock uv did not write for the files as they are",
-        ),
-        Mutation(
-            marker_policy.kept_lock_policy,
-            "if (reason := MARKER_POLICY.bound_redundancy(declaration)) or locked_as_written is None:",
-            "if reason := MARKER_POLICY.bound_redundancy(declaration):",
-            "without uv, a bound beside an `ignore[update]` is reported as if the lock kept a version for it",
-        ),
+    @kills.delete(
+        lock._LockSnapshot.steered_update,
+        " if locked else None",
+        "without uv, a directive is judged by a lock uv did not write for the files as they are",
+    )
+    @kills.replace(
+        marker_policy.kept_lock_policy,
+        "if (reason := MARKER_POLICY.bound_redundancy(declaration)) or locked_as_written is None:",
+        "if reason := MARKER_POLICY.bound_redundancy(declaration):",
+        "without uv, a bound beside an `ignore[update]` is reported as if the lock kept a version for it",
     )
     def test_without_uv_a_directive_needing_a_locked_version_is_not_judged(self, run: Mock, get: Mock, glob: Mock):
         """Test that, without uv on the path, an `ignore[update]` and a bound go unjudged, as uv locks nothing."""

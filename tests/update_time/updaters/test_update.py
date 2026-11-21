@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, call, patch
 
 import update_time
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
@@ -96,13 +96,10 @@ def _registration_problems(registered: _Scripts, on_disk: set[str]) -> list[str]
 class RegistrationTest(unittest.TestCase):
     """Unit tests for the agreement between the registered updater scripts and the dependency types."""
 
-    @kills(
-        Mutation(
-            update_module,
-            '        DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script("jsdelivr"),),\n',
-            "",
-            "an updater script is left out of the registry, so it never runs",
-        )
+    @kills.delete(
+        update_module,
+        'DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script("jsdelivr"),),\n',
+        "an updater script is left out of the registry, so it never runs",
     )
     def test_the_registration_agrees_with_the_scripts_on_disk(self):
         """Test that the registry names every dependency type and every `update_*.py` script beside it."""
@@ -161,13 +158,11 @@ class ScriptsTest(unittest.TestCase):
         mock_popen.return_value.wait.return_value = 1
         self.assertEqual(_SCRIPTS.run(Processes(), Mock()), 1)
 
-    @kills(
-        Mutation(
-            update_module._Scripts.run,
-            "return 1",
-            "return exit_code",
-            "a signal ends an updater, and the run still exits as a success",
-        )
+    @kills.replace(
+        update_module._Scripts.run,
+        "return 1",
+        "return exit_code",
+        "a signal ends an updater, and the run still exits as a success",
     )
     def test_an_update_a_signal_stopped_fails_the_run_and_is_reported(self, mock_popen: Mock):
         """Test that an updater a signal stopped makes the run exit with 1, and names its dependency type and signal."""
@@ -251,19 +246,15 @@ class UpdateMainTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[_EXCLUDE_PATHS.name], "vendor,packages/legacy")
 
-    @kills(
-        Mutation(
-            update_module._pass_settings_down,
-            "STALE_AFTER.set(args.stale_after)",
-            "pass",
-            "the updaters run on the default staleness threshold, whatever --stale-after says",
-        ),
-        Mutation(
-            update_module._pass_settings_down,
-            "VULNERABILITY_LEVEL.set(args.vulnerability_level)",
-            "pass",
-            "the updaters run on the default risk level, whatever --vulnerability-level says",
-        ),
+    @kills.delete(
+        update_module._pass_settings_down,
+        "STALE_AFTER.set(args.stale_after)",
+        "the updaters run on the default staleness threshold, whatever --stale-after says",
+    )
+    @kills.delete(
+        update_module._pass_settings_down,
+        "VULNERABILITY_LEVEL.set(args.vulnerability_level)",
+        "the updaters run on the default risk level, whatever --vulnerability-level says",
     )
     def test_main_passes_every_setting_to_subprocesses(self, mock_popen: Mock):
         """Test that main exports each setting the package holds, a setting added later included."""
@@ -321,13 +312,11 @@ class UpdateMainTest(unittest.TestCase):
         mock_popen.assert_called()
         mock_logger.forced_outside_git_repository.assert_called_once_with(Path.cwd())
 
-    @kills(
-        Mutation(
-            update_module._report_context,
-            "bool(os.environ.get(name))",
-            "name in os.environ",
-            "a credential variable set to the empty string is logged as set, though the run goes without it",
-        )
+    @kills.replace(
+        update_module._report_context,
+        "bool(os.environ.get(name))",
+        "name in os.environ",
+        "a credential variable set to the empty string is logged as set, though the run goes without it",
     )
     def test_main_first_logs_the_context_of_the_run(self, mock_popen: Mock):
         """Test that main first logs the version, the OS and Python, the arguments, the credentials, and the network.
@@ -380,19 +369,16 @@ class UpdateMainTest(unittest.TestCase):
                 self.assertEqual(exit_code, 128 + signal_number)
                 mock_logger.stopped.assert_called_once_with(signal_number)
 
-    @kills(
-        Mutation(
-            update_module._Scripts.run,
-            "exit_code >= 0 or processes.stop_signal is not None:",
-            "exit_code >= 0:",
-            "the run logs a stopped update for every updater it stopped itself",
-        ),
-        Mutation(
-            process_module.Processes._start,
-            "if self.stop_signal is not None:  #",
-            "if False:  #",
-            "a signal that lands while an updater starts leaves that updater running",
-        ),
+    @kills.delete(
+        update_module._Scripts.run,
+        " or processes.stop_signal is not None",
+        "the run logs a stopped update for every updater it stopped itself",
+    )
+    @kills.replace(
+        process_module.Processes._start,
+        "if self.stop_signal is not None:  #",
+        "if False:  #",
+        "a signal that lands while an updater starts leaves that updater running",
     )
     def test_a_stopped_run_stops_the_updaters_still_running(self, mock_popen: Mock):
         """Test that the run stops every updater it started on a signal, rather than waiting for them."""
@@ -409,13 +395,10 @@ class UpdateMainTest(unittest.TestCase):
         self.assertEqual([updater for updater in updaters.started if not updater.stopped.is_set()], [])
         mock_logger.update_stopped.assert_not_called()
 
-    @kills(
-        Mutation(
-            log_module.set_log_level,
-            "_configure_root_logger()",
-            "pass",
-            "the parent logs at the level of whichever module logged first, rather than at --log-level",
-        )
+    @kills.delete(
+        log_module.set_log_level,
+        "_configure_root_logger()",
+        "the parent logs at the level of whichever module logged first, rather than at --log-level",
     )
     def test_main_logs_at_the_level_the_command_line_sets(self, mock_popen: Mock):
         """Test that main logs at the level --log-level sets, whichever module configured the log before main ran."""

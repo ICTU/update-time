@@ -2,7 +2,7 @@
 
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.marker import Marker, Threshold
 from update_time.formats import xml
 from update_time.manifests import pom_xml
@@ -124,14 +124,11 @@ class PropertiesTest(unittest.TestCase):
 class VersionedDeclarationsTest(unittest.TestCase):
     """Unit tests for the declarations of the dependencies and plugins a pom declares a version for."""
 
-    @kills(
-        Mutation(
-            pom_xml._artefact_declarations,
-            " or []",
-            "",
-            "an unparsable pom takes the reading of its artefacts down with it",
-            raises="TypeError: 'NoneType' object is not iterable",
-        )
+    @kills.delete(
+        pom_xml._artefact_declarations,
+        " or []",
+        "an unparsable pom takes the reading of its artefacts down with it",
+        raises="TypeError: 'NoneType' object is not iterable",
     )
     def test_a_pom_that_does_not_parse(self):
         """Test that an unparsable pom yields an empty list of declarations, rather than ending the run."""
@@ -141,19 +138,15 @@ class VersionedDeclarationsTest(unittest.TestCase):
 class PomNameTest(unittest.TestCase):
     """Unit tests for the name Maven's input locations give a pom."""
 
-    @kills(
-        Mutation(
-            pom_xml.pom_name,
-            'if project is None or project.child("artifactId") is None:',
-            "if project is None:",
-            "a pom without an artifact of its own is named after its parent, so its parent's versions are skipped",
-        ),
-        Mutation(
-            pom_xml.pom_name,
-            ' if all(parts) else ""',
-            "",
-            "a pom lacking both a coordinate and a parent to take it from is named anyway",
-        ),
+    @kills.delete(
+        pom_xml.pom_name,
+        ' or project.child("artifactId") is None',
+        "a pom without an artifact of its own is named after its parent, so its parent's versions are skipped",
+    )
+    @kills.delete(
+        pom_xml.pom_name,
+        ' if all(parts) else ""',
+        "a pom lacking both a coordinate and a parent to take it from is named anyway",
     )
     def test_a_pom_is_named_by_its_coordinates_as_written(self):
         """Test that a pom is named by its own coordinates, each it leaves out taken from its parent, as written."""
@@ -187,20 +180,16 @@ class PomNameTest(unittest.TestCase):
 class DeclarationsTest(unittest.TestCase):
     """Unit tests for the dependencies and plugins a pom declares."""
 
-    @kills(
-        Mutation(
-            pom_xml._declaration,
-            "    if artifact is None:\n        return None\n",
-            "",
-            "an element missing a part takes the whole pom's reading down with it",
-            raises="AttributeError: 'NoneType' object has no attribute 'text'",
-        ),
-        Mutation(
-            pom_xml._declaration,
-            "if not group_name or not artifact_name:",
-            "if not group_name:",
-            "an empty artifact is read as the artefact `groupId:`, which Maven Central is then asked about",
-        ),
+    @kills.delete(
+        pom_xml._declaration,
+        "    if artifact is None:\n        return None\n",
+        "an element missing a part takes the whole pom's reading down with it",
+        raises="AttributeError: 'NoneType' object has no attribute 'text'",
+    )
+    @kills.delete(
+        pom_xml._declaration,
+        " or not artifact_name",
+        "an empty artifact is read as the artefact `groupId:`, which Maven Central is then asked about",
     )
     def test_a_dependency_is_read_unless_it_misses_its_group_or_artifact(self):
         """Test that a dependency missing its group or artifact is left out, and one missing its version is read."""
@@ -252,19 +241,17 @@ class DeclarationsTest(unittest.TestCase):
         declared = pom_xml.declarations(path) or []
         self.assertEqual([reference.dependency for reference in declared], [GUAVA])
 
-    @kills(
-        Mutation(
-            pom_xml._declaration,
-            "artifact_name = _interpolated(artifact.text, property_elements)",
-            "artifact_name = _element_holding(artifact, property_elements).text",
-            "an artifact naming a property in part is read with its `${…}` left unresolved",
-        ),
-        Mutation(
-            pom_xml._declaration,
-            "_interpolated(group.text, property_elements)",
-            "_element_holding(group, property_elements).text",
-            "a group naming a property in part is read with its `${…}` left unresolved",
-        ),
+    @kills.replace(
+        pom_xml._declaration,
+        "_interpolated(artifact.text, property_elements)",
+        "_element_holding(artifact, property_elements).text",
+        "an artifact naming a property in part is read with its `${…}` left unresolved",
+    )
+    @kills.replace(
+        pom_xml._declaration,
+        "_interpolated(group.text, property_elements)",
+        "_element_holding(group, property_elements).text",
+        "a group naming a property in part is read with its `${…}` left unresolved",
     )
     def test_coordinates_naming_a_property_the_pom_declares_resolve(self):
         """Test that a group or artifact naming a pom property, wholly or in part, reads as that property's value."""
@@ -287,13 +274,11 @@ class DeclarationsTest(unittest.TestCase):
                 declared = pom_xml.declarations(mock_path(pom)) or []
                 self.assertEqual([reference.dependency for reference in declared], [expected])
 
-    @kills(
-        Mutation(
-            pom_xml._declaration,
-            'own_version = "" if version is None else _interpolated(version.text, property_elements)',
-            'own_version = "" if version is None else versioned_by.text',
-            "a version naming a property in part is read with its `${…}` left unresolved",
-        )
+    @kills.replace(
+        pom_xml._declaration,
+        "_interpolated(version.text, property_elements)",
+        "versioned_by.text",
+        "a version naming a property in part is read with its `${…}` left unresolved",
     )
     def test_a_version_naming_a_property_in_part_reads_as_that_propertys_value(self):
         """Test that a version naming a pom property in part reads as that property's value, at its own element."""
@@ -325,13 +310,10 @@ def _resolved(pom: str, effective_pom: str) -> list[tuple[str, str, int | None]]
 class ResolvedDependenciesTest(unittest.TestCase):
     """Unit tests for the coordinates and the versions Maven's effective pom gives the artefacts a pom declares."""
 
-    @kills(
-        Mutation(
-            pom_xml._effective_artefacts,
-            "artifact_location.pom_name != effective_pom_name or artifact is None",
-            "artifact is None",
-            "a dependency takes the version of whatever the parent declares on the same line of its own pom",
-        )
+    @kills.delete(
+        pom_xml._effective_artefacts,
+        "artifact_location.pom_name != effective_pom_name or ",
+        "a dependency takes the version of whatever the parent declares on the same line of its own pom",
     )
     def test_an_entry_the_parent_declares_lends_its_version_to_no_declaration(self):
         """Test that an effective pom entry located in the parent leaves the declaration on the same line alone."""
@@ -372,13 +354,10 @@ class ResolvedDependenciesTest(unittest.TestCase):
         expected = [("org.apache.spark:spark-core_2.13", "3.5.0", 6)]
         self.assertEqual(_resolved(pom, effective_pom_declaring(spark, properties=properties)), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._effective_artefacts,
-            " if version_location.pom_name == effective_pom_name else None",
-            "",
-            "a line of the pom lends its version to a dependency the parent versions, as their line numbers match",
-        )
+    @kills.delete(
+        pom_xml._effective_artefacts,
+        " if version_location.pom_name == effective_pom_name else None",
+        "a line of the pom lends its version to a dependency the parent versions, as their line numbers match",
     )
     def test_a_version_the_parent_manages_is_not_read_from_the_poms_line_of_that_number(self):
         """Test that a dependency without a version takes the effective pom's version where the parent manages it."""
@@ -389,19 +368,17 @@ class ResolvedDependenciesTest(unittest.TestCase):
         expected = [(GUAVA, "33.0.0-jre", 3), (GUAVA, "32.0.0-jre", 10)]
         self.assertEqual(_resolved(pom, effective_pom_declaring(guava, second_guava)), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._effective_artefacts,
-            "_own_versions(project, effective_property_elements)",
-            "_own_versions(project, property_elements)",
-            "a managed artifact naming the parent's property keeps the version Maven moved away from",
-        ),
-        Mutation(
-            pom_xml._own_versions,
-            "_interpolated(artifact.text, property_elements)",
-            "_element_holding(artifact, property_elements).text",
-            "a managed artifact holding a parent's property inside its name keeps the version Maven moved away from",
-        ),
+    @kills.replace(
+        pom_xml._effective_artefacts,
+        "_own_versions(project, effective_property_elements)",
+        "_own_versions(project, property_elements)",
+        "a managed artifact naming the parent's property keeps the version Maven moved away from",
+    )
+    @kills.replace(
+        pom_xml._own_versions,
+        "_interpolated(artifact.text, property_elements)",
+        "_element_holding(artifact, property_elements).text",
+        "a managed artifact holding a parent's property inside its name keeps the version Maven moved away from",
     )
     def test_a_version_the_pom_manages_under_a_parent_property_is_read_from_the_pom(self):
         """Test that a managed declaration whose artifact names a parent's property lends the version it holds."""
@@ -451,13 +428,11 @@ class ResolvedDependenciesTest(unittest.TestCase):
                 effective_pom = effective_pom_declaring(build=effective_build)
                 self.assertEqual(_resolved(pom, effective_pom), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._version_as_left,
-            "_interpolated(own_element.text, property_elements)",
-            "_element_holding(own_element, property_elements).text",
-            "Update-time checks the version Maven moved away from, where the managed version names a property in part",
-        ),
+    @kills.replace(
+        pom_xml._version_as_left,
+        "_interpolated(own_element.text, property_elements)",
+        "_element_holding(own_element, property_elements).text",
+        "Update-time checks the version Maven moved away from, where the managed version names a property in part",
     )
     def test_a_version_the_pom_manages_through_its_own_property_is_read_from_that_property(self):
         """Test that a dependency without a version takes the value its own pom manages it with, through a property."""
@@ -479,13 +454,11 @@ class ResolvedDependenciesTest(unittest.TestCase):
                 ]
                 self.assertEqual(_resolved(pom, effective_pom), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._effective_artefacts,
-            "own_versions.get(artifact_at_version_line) if",
-            "{key.line: element for key, element in own_versions.items()}.get(version_location.line) if",
-            "a dependency takes the version of whichever dependency its own pom manages last on the same line",
-        )
+    @kills.replace(
+        pom_xml._effective_artefacts,
+        "own_versions.get(artifact_at_version_line) if",
+        "{key.line: element for key, element in own_versions.items()}.get(version_location.line) if",
+        "a dependency takes the version of whichever dependency its own pom manages last on the same line",
     )
     def test_a_version_the_pom_manages_on_a_shared_line_is_read_from_its_own_declaration(self):
         """Test that a dependency without a version takes its own managed version, not another on the same line."""

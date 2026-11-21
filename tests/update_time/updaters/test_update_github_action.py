@@ -9,7 +9,7 @@ from unittest.mock import ANY, Mock, patch
 
 import requests
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.bound import NO_BOUND, Verb, VersionBound, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Changes, DependencyVersion, PinnedDependency, Project, Release
@@ -28,7 +28,7 @@ from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import COMMIT_SHA3 as PAST_COOLDOWN_SHA
 from tests.update_time.fixtures import (
     FRESH_DATE,
-    GITHUB_UNCACHED,
+    KILLS_GITHUB_UNCACHED,
     PAST_COOLDOWN_DATE,
     STALE_DATE,
 )
@@ -420,7 +420,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml = self.scanned_workflow(mock_glob, workflow)
         self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
 
-    @kills(GITHUB_UNCACHED)
+    @KILLS_GITHUB_UNCACHED
     @patch_github(
         releases=[github_release_json("v1.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
     )
@@ -450,13 +450,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             message_of(Logger.no_release_tagged), dependency="actions/checkout", location=Location(workflow_yml, 1)
         )
 
-    @kills(
-        Mutation(
-            references_github.PinUpdater._report_redundant_directives,
-            "if names_a_commit and (cooldown := ",
-            "if (cooldown := ",
-            "a cooldown on a branch is reported as redundant, although it holds the branch's drift back",
-        )
+    @kills.delete(
+        references_github.PinUpdater._report_redundant_directives,
+        "names_a_commit and ",
+        "a cooldown on a branch is reported as redundant, although it holds the branch's drift back",
     )
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `cooldown` marker on a version, or what this run pins as one or as a branch, is not reported."""
@@ -497,14 +494,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         self.assert_archived_repository_logged("action/action", Location(workflow_yml, 1))
 
-    @kills(
-        Mutation(
-            github_workflow_manifest,
-            r"(?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@",
-            r"(?P<dependency>[\w\d\./-]+)@",
-            "a reference naming no repository is read as one, ending the run over that single line",
-            raises="ValueError: not enough values to unpack (expected at least 2, got 1)",
-        )
+    @kills.delete(
+        github_workflow_manifest,
+        r"[\w\d\.-]+/",
+        "a reference naming no repository is read as one, ending the run over that single line",
+        raises="ValueError: not enough values to unpack (expected at least 2, got 1)",
     )
     @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
     def test_a_reference_naming_no_repository_is_passed_over(self, mock_glob: Mock):
@@ -596,19 +590,13 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         self.assert_pinned_logged("action/action", "1.0", NEW_SHA, location)
         self.assert_held_back_by_cooldown_logged("action/action", "1.1", location)
 
-    @kills(
-        Mutation(
-            references_github.PinUpdater._report_unfetched_commit,
-            "reference.current_sha and found.absent",
-            "found.absent",
-            "a reference to a branch that is not in the repository is left as it is without an error",
-        ),
-        Mutation(
-            sources_github._get_commit,
-            "(_NO_COMMIT_BY_THAT_NAME,)",
-            "()",
-            "an unknown branch is warned about as a refused request",
-        ),
+    @kills.delete(
+        references_github.PinUpdater._report_unfetched_commit,
+        "reference.current_sha and ",
+        "a reference to a branch that is not in the repository is left as it is without an error",
+    )
+    @kills.delete(
+        sources_github._get_commit, "_NO_COMMIT_BY_THAT_NAME,", "an unknown branch is warned about as a refused request"
     )
     def test_branch_whose_commit_cannot_be_fetched_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
         """Test that a branch whose commit cannot be fetched is left as it is, the reason logged as an error.
@@ -640,19 +628,14 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main{marker}\n")
         self.assertEqual(github_commit_listing_queries(), [{"sha": ["main"], "per_page": ["1"]}])
 
-    @kills(
-        Mutation(
-            sources_github.newest_commit_past_cooldown,
-            "return LookedUp(None, page.reason)",
-            "return LookedUp(None)",
-            "a branch whose commit listing is not JSON is left as it is without saying why",
-        ),
-        Mutation(
-            sources_github,
-            "@cache\ndef _github_json(",
-            "def _github_json(",
-            "a GitHub answer that is not JSON is warned about once for every caller that reads it",
-        ),
+    @kills.delete(
+        sources_github.newest_commit_past_cooldown,
+        ", page.reason",
+        "a branch whose commit listing is not JSON is left as it is without saying why",
+    )
+    @kills.uncache(
+        sources_github._github_json,
+        "a GitHub answer that is not JSON is warned about once for every caller that reads it",
     )
     def test_pinned_branch_whose_commits_cannot_be_listed_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
         """Test that a pinned branch whose commits cannot be listed is left as it is, the reason logged as an error."""
@@ -689,13 +672,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         location, reason = Location(workflow_yml, 1), GITHUB_RATE_LIMITED_REASON
         self.assert_unpinned_ref_logged("actions/checkout", "stable-2024", location, reason, ref=RefKind.REF)
 
-    @kills(
-        Mutation(
-            sources_github._looked_up_tag,
-            "return False",
-            "return True",
-            "a branch in a repository with a full page of tags is followed as a tag",
-        )
+    @kills.replace(
+        sources_github._looked_up_tag,
+        "return False",
+        "return True",
+        "a branch in a repository with a full page of tags is followed as a tag",
     )
     def test_pinned_branch_still_at_its_commit_is_left_alone(self, mock_glob: Mock):
         """Test that a branch still at its pinned commit is left alone, looked up as a tag only past a full page."""
@@ -730,14 +711,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 workflow_yml.write_text.assert_not_called()
                 self.assert_drift_logged(Logger.BRANCH_DRIFT, _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA))
 
-    @kills(
-        Mutation(
-            sources_github._newest_on_the_line,
-            'commit = listed.get(parents[0]["sha"]) if parents else None',
-            'commit = listed.get(parents[0]["sha"])',
-            "a branch whose whole history is fresh ends the run rather than being held back",
-            raises="IndexError: list index out of range",
-        )
+    @kills.delete(
+        sources_github._newest_on_the_line,
+        " if parents else None",
+        "a branch whose whole history is fresh ends the run rather than being held back",
+        raises="IndexError: list index out of range",
     )
     def test_branch_moved_only_inside_the_cooldown_is_left_alone(self, mock_glob: Mock):
         """Test that a pinned branch whose own line moved only inside the cooldown is left alone, whatever it merged."""
@@ -787,13 +765,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 compare = f"https://api.github.com/repos/actions/checkout/compare/{OLD_SHA}...{PAST_COOLDOWN_SHA}"
                 self.assertEqual(github_requests("compare"), [f"{compare}?per_page=1"])
 
-    @kills(
-        Mutation(
-            references_github.PinUpdater._branch_moved_on,
-            "self.logger.unchecked_branch_drift(reference, moved.sha, compared.reason)",
-            "pass",
-            "a branch whose drift could not be checked is left as it is without an error",
-        )
+    @kills.delete_statement(
+        references_github.PinUpdater._branch_moved_on,
+        "self.logger.unchecked_branch_drift(reference, moved.sha, compared.reason)",
+        "a branch whose drift could not be checked is left as it is without an error",
     )
     @patch_github(
         releases=[],
@@ -816,13 +791,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         )
         self.assert_could_not_fetch_logged(status=HTTPStatus.FORBIDDEN)
 
-    @kills(
-        Mutation(
-            sources_github,
-            '_MOVED_ON = frozenset({"ahead", "diverged"})',
-            '_MOVED_ON = frozenset({"ahead"})',
-            "a branch force-pushed past its pin is held there silently, its drift unreported",
-        )
+    @kills.delete(
+        sources_github,
+        ', "diverged"',
+        "a branch force-pushed past its pin is held there silently, its drift unreported",
     )
     @patch_github(
         releases=[],
@@ -1172,19 +1144,17 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 workflow_yml.write_text.assert_not_called()
                 self.assertEqual(github_refs_whose_commits_were_listed(), [branch])
 
-    @kills(
-        Mutation(
-            github_workflow_manifest,
-            r"(?!{_REF_CHARACTER})",
-            r"(?={_ALONE})",
-            "a version comment followed by more text leaves the commit SHA bare, as a branch comment does",
-        ),
-        Mutation(
-            github_workflow_manifest,
-            r"(?!{_REF_CHARACTER})",
-            r"(?=\s|$)",
-            "a version comment followed by punctuation leaves the commit SHA bare, with nothing logged",
-        ),
+    @kills.replace(
+        github_workflow_manifest,
+        r"(?!{_REF_CHARACTER})",
+        r"(?={_ALONE})",
+        "a version comment followed by more text leaves the commit SHA bare, as a branch comment does",
+    )
+    @kills.replace(
+        github_workflow_manifest,
+        r"(?!{_REF_CHARACTER})",
+        r"(?=\s|$)",
+        "a version comment followed by punctuation leaves the commit SHA bare, with nothing logged",
     )
     def test_version_comment_followed_by_text_is_read_as_the_version(self, mock_glob: Mock):
         """Test that a comment naming a version and then more text is read as that version, the text kept."""
@@ -1238,13 +1208,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, _ALLOW_HASH_DRIFT)
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            references_github.PinUpdater._comment_names_no_ref,
-            "if not reference.current_sha or reference.marker.ignores(Scope.UPDATE):",
-            "if not reference.current_sha:",
-            "a pinned branch held back by `ignore[update]` still lists its commits",
-        ),
+    @kills.delete(
+        references_github.PinUpdater._comment_names_no_ref,
+        " or reference.marker.ignores(Scope.UPDATE)",
+        "a pinned branch held back by `ignore[update]` still lists its commits",
     )
     def test_ignore_update_holds_a_branch_back(self, mock_glob: Mock):
         """Test that `ignore[update]` leaves a branch reference as it is, its commits unasked and its releases read."""
@@ -1278,13 +1245,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             Reason.DRIFT_NEVER_ADOPTED, "actions/checkout", Location(workflow_yml, 1), "allow[hash-drift]"
         )
 
-    @kills(
-        Mutation(
-            references_github.PinUpdater._report_redundant_directives,
-            "Reason.NO_DRIFT_FOR_A_COMMIT if",
-            "None if",
-            "an `allow[hash-drift]` beside a commit SHA, which cannot drift, goes unreported",
-        )
+    @kills.force_none(
+        references_github.PinUpdater._report_redundant_directives,
+        "Reason.NO_DRIFT_FOR_A_COMMIT",
+        "an `allow[hash-drift]` beside a commit SHA, which cannot drift, goes unreported",
     )
     def test_a_hash_drift_directive_on_a_bare_commit_sha_is_reported(self, mock_glob: Mock):
         """Test that a bare commit SHA is left as it is, its `allow[hash-drift]` reported as redundant.
@@ -1371,13 +1335,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                     Reason.PINS_A_COMMIT, "actions/checkout", Location(workflow_yml, 1), "allow[update<4]"
                 )
 
-    @kills(
-        Mutation(
-            update_github_actions,
-            "steers_the_update=_ACTION.steers_the_update,\n",
-            "",
-            "an `ignore[update]` on a bare commit SHA is logged as holding the update back",
-        )
+    @kills.delete(
+        update_github_actions,
+        "steers_the_update=_ACTION.steers_the_update,\n",
+        "an `ignore[update]` on a bare commit SHA is logged as holding the update back",
     )
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA), listed_commits=github_not_found())
     def test_an_ignore_update_on_a_bare_commit_sha_is_reported(self, mock_glob: Mock):
@@ -1543,14 +1504,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                     Reason.FOLLOWS_A_BRANCH, "actions/checkout", Location(workflow_yml, 1), directive
                 )
 
-    @kills(
-        Mutation(
-            sources_github._highest_version_at,
-            "tagged = _tagged_versions(repository) or ()",
-            "tagged = _tagged_versions(repository)",
-            "a branch whose repository's tags cannot be listed ends the run rather than being pinned as the branch",
-            raises="TypeError: 'NoneType' object is not iterable",
-        )
+    @kills.delete(
+        sources_github._highest_version_at,
+        " or ()",
+        "a branch whose repository's tags cannot be listed ends the run rather than being pinned as the branch",
+        raises="TypeError: 'NoneType' object is not iterable",
     )
     @patch_github(releases=None, tags=None, commit=github_commits_json(NEW_SHA))
     def test_pin_branch_as_the_branch_when_its_tags_cannot_be_listed(self, mock_glob: Mock):
@@ -1559,14 +1517,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main\n")
         self.assert_pinned_logged("actions/checkout", "main", NEW_SHA, Location(workflow_yml, 1))
 
-    @kills(
-        Mutation(
-            sources_github.version_at_tag,
-            "_tagged_versions(repository) or ()",
-            "_tagged_versions(repository)",
-            "a version tag whose repository's tags cannot be listed ends the run rather than being left as it is",
-            raises="TypeError: 'NoneType' object is not iterable",
-        )
+    @kills.delete(
+        sources_github.version_at_tag,
+        " or ()",
+        "a version tag whose repository's tags cannot be listed ends the run rather than being left as it is",
+        raises="TypeError: 'NoneType' object is not iterable",
     )
     @patch_github(releases=None, tags=None, commit=github_commits_json(NEW_SHA))
     def test_version_tag_is_left_alone_when_its_repository_cannot_be_listed(self, mock_glob: Mock):

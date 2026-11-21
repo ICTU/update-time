@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, call, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.bound import NO_BOUND, Verb, VersionBound
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
@@ -214,13 +214,11 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            pre_commit_config_manifest,
-            """(?P<quote>['\\"]?)(?P<repo>[^\\s'\\"]+)(?P=quote)")""",
-            """(?P<repo>\\S+)")""",
-            "a quoted repository URL keeps its quotes, so it does not name a GitHub repository and its hook stays",
-        )
+    @kills.replace(
+        pre_commit_config_manifest,
+        """(?P<quote>['\\"]?)(?P<repo>[^\\s'\\"]+)(?P=quote)")""",
+        """(?P<repo>\\S+)")""",
+        "a quoted repository URL keeps its quotes, so it does not name a GitHub repository and its hook stays",
     )
     def test_quoted_repo_is_updated(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a hook repository whose URL the config quotes is updated, whichever quote it uses."""
@@ -245,13 +243,11 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_stale_dependency_logged(self.HOOK, "4.5.0", Location(config_file, 3))
 
-    @kills(
-        Mutation(
-            digest,
-            'SHORT_COMMIT_SHA = rf"[0-9a-f]',
-            'SHORT_COMMIT_SHA = rf"(?=[0-9]*[a-f])[0-9a-f]',
-            "a short commit SHA of digits alone is resolved as a version and never pinned",
-        )
+    @kills.append(
+        digest,
+        'SHORT_COMMIT_SHA = rf"',
+        "(?=[0-9]*[a-f])",
+        "a short commit SHA of digits alone is resolved as a version and never pinned",
     )
     def test_branch_or_short_sha_rev_is_frozen_to_its_commit(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a branch is frozen as written, a short SHA as its full SHA, or either as the version tag there."""
@@ -294,13 +290,10 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         self.get_project.assert_called_once_with(self.HOOK)
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            update_pre_commit_config._updated_lines,
-            ", steers_the_update=_REV.steers_the_update",
-            "",
-            "an `ignore[update]` on a rev pinned to a bare commit SHA is logged as holding the update back",
-        )
+    @kills.delete(
+        update_pre_commit_config._updated_lines,
+        ", steers_the_update=_REV.steers_the_update",
+        "an `ignore[update]` on a rev pinned to a bare commit SHA is logged as holding the update back",
     )
     @patch_github(
         releases=[github_release_json("v4.5.0", published_at=FRESH_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
@@ -485,13 +478,10 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
 class UpdatePreCommitConfigsThroughTheSourceTest(LoggingTestCase):
     """Unit tests for the pre-commit config updater, resolving versions through the GitHub source itself."""
 
-    @kills(
-        Mutation(
-            references_github.PinUpdater._report_redundant_directives,
-            "self.source.reports_vulnerabilities(reference.pinned) and ",
-            "",
-            "a `set[vulnerability-level=none]` on a pre-commit hook naming a branch is reported twice",
-        )
+    @kills.delete(
+        references_github.PinUpdater._report_redundant_directives,
+        "self.source.reports_vulnerabilities(reference.pinned) and ",
+        "a `set[vulnerability-level=none]` on a pre-commit hook naming a branch is reported twice",
     )
     @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
     def test_vulnerability_level_none_marker_is_reported_as_redundant(self, mock_glob: Mock):

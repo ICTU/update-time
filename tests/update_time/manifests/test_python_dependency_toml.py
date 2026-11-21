@@ -3,7 +3,7 @@
 import unittest
 from typing import TYPE_CHECKING
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.marker import Marker, Scope
 from update_time.manifests import pyproject_config, python_dependency_toml
 from update_time.manifests.inline_script import InlineScript
@@ -40,14 +40,11 @@ class RewriteDeclarationsTest(unittest.TestCase):
         rewritten = self.rewrite('dependencies = ["pkg==1.0"]\n', {1: "1.1"})
         self.assertEqual(rewritten, 'dependencies = ["pkg==1.1"]\n')
 
-    @kills(
-        Mutation(
-            python_dependency_toml._rewritten_spec,
-            'return re.sub(rf"(==\\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)',
-            'return f"{declaration.dependency}=={new_version}"',
-            "a rewrite replaces the whole declaration, dropping the extra, environment marker, and spaces around "
-            "the pin",
-        )
+    @kills.replace(
+        python_dependency_toml._rewritten_spec,
+        'return re.sub(rf"(==\\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)',
+        'return f"{declaration.dependency}=={new_version}"',
+        "a rewrite replaces the whole declaration, dropping the extra, environment marker, and spaces around the pin",
     )
     def test_bumps_the_version_and_keeps_the_extra_marker_and_spaces(self):
         """Test that only the version is rewritten, so the extra, environment marker, and spaces are kept."""
@@ -77,13 +74,11 @@ class RewriteDeclarationsTest(unittest.TestCase):
         rewritten = self.rewrite(f'[project]\ndependencies = ["pkg==1.0"]\n{outside}', {1: "1.1"})
         self.assertEqual(rewritten, f'[project]\ndependencies = ["pkg==1.1"]\n{outside}')
 
-    @kills(
-        Mutation(
-            python_dependency_toml.PythonDependencyToml._replaced_specs,
-            "array[index] = toml.string(new_spec, quoted_as=spec)",
-            "array[index] = new_spec",
-            "a rewritten spec is quoted the way tomlkit quotes a plain string, so the file's own quoting is lost",
-        )
+    @kills.replace(
+        python_dependency_toml.PythonDependencyToml._replaced_specs,
+        "toml.string(new_spec, quoted_as=spec)",
+        "new_spec",
+        "a rewritten spec is quoted the way tomlkit quotes a plain string, so the file's own quoting is lost",
     )
     def test_preserves_the_formatting_around_a_rewritten_pin(self):
         """Test that the quoting, comment, and indentation of a rewritten declaration come back as the file had them."""
@@ -172,13 +167,11 @@ class DeclarationsTest(unittest.TestCase):
         path = mock_path(_UNCLOSED_BLOCK.format("1.0"))
         self.assertEqual(self.references(path, InlineScript), [declaration("pkg", "1.0", path, 2, 1)])
 
-    @kills(
-        Mutation(
-            python_dependency_toml._pinned_version,
-            'if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
-            'if (exact := [s for s in specifiers if s.operator == "=="]) and is_valid(exact[0].version):',
-            "a declaration combining an equals with another specifier is read as a pin on the version the equals names",
-        )
+    @kills.replace(
+        python_dependency_toml._pinned_version,
+        'if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
+        'if (exact := [s for s in specifiers if s.operator == "=="]) and is_valid(exact[0].version):',
+        "a declaration combining an equals with another specifier is read as a pin on the version the equals names",
     )
     def test_a_declaration_pinning_no_single_version_is_read_without_one(self):
         """Test that a wildcard, an arbitrary equality, and a combined specifier are read without a version."""
@@ -230,21 +223,18 @@ class DeclarationsTest(unittest.TestCase):
         path = mock_path(contents)
         self.assertEqual(self.references(path), [declaration("local", "1.0", path, 2, 1, uv_sourced=True)])
 
-    @kills(
-        Mutation(
-            python_dependency_toml.PythonDependencyToml.declarations,
-            "uv_sourced=normalized_python_name(requirement.name) in config.uv.sources,",
-            "uv_sourced=requirement.name in config.uv.sources,",
-            "a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked "
-            "about a name it has no release for",
-        ),
-        Mutation(
-            pyproject_config._UvTable.from_mapping,
-            "sources=frozenset(normalized_python_name(name) for name in sources),",
-            "sources=frozenset(sources),",
-            "a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about "
-            "a name it has no release for",
-        ),
+    @kills.replace(
+        python_dependency_toml.PythonDependencyToml.declarations,
+        "normalized_python_name(requirement.name)",
+        "requirement.name",
+        "a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked "
+        "about a name it has no release for",
+    )
+    @kills.delete(
+        pyproject_config._UvTable.from_mapping,
+        "normalized_python_name(name) for name in ",
+        "a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about "
+        "a name it has no release for",
     )
     def test_a_uv_source_spelled_another_way_is_read(self):
         """Test that a `sources` entry naming the dependency another way is matched, as uv matches it.
@@ -350,13 +340,11 @@ class PinnedDeclarationsTest(unittest.TestCase):
             ],
         )
 
-    @kills(
-        Mutation(
-            python_dependency_toml.PythonDependencyToml.declarations,
-            "requirement.name,\n",
-            'requirement.name + "".join(f"[{extra}]" for extra in requirement.extras),\n',
-            "a pin's name carries the extra its declaration spells, so it names no package the source knows",
-        )
+    @kills.replace(
+        python_dependency_toml.PythonDependencyToml.declarations,
+        "requirement.name,\n",
+        'requirement.name + "".join(f"[{extra}]" for extra in requirement.extras),\n',
+        "a pin's name carries the extra its declaration spells, so it names no package the source knows",
     )
     def test_reads_a_pin_with_an_extra_an_environment_marker_or_spaces(self):
         """Test that the version is read through whatever else a PEP 508 declaration spells around the pin."""
@@ -376,14 +364,11 @@ class PinnedDeclarationsTest(unittest.TestCase):
             ],
         )
 
-    @kills(
-        Mutation(
-            python_dependency_toml._pinned_version,
-            'if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
-            'if len(specifiers) == 1 and specifiers[0].operator == "==" '
-            'and re.fullmatch("[0-9.]+", specifiers[0].version):',
-            "a version is judged by its shape rather than by parsing it, so a local version and an epoch pin nothing",
-        )
+    @kills.replace(
+        python_dependency_toml._pinned_version,
+        "is_valid(specifiers[0].version):",
+        're.fullmatch("[0-9.]+", specifiers[0].version):',
+        "a version is judged by its shape rather than by parsing it, so a local version and an epoch pin nothing",
     )
     def test_reads_a_pin_only_when_it_names_one_version(self):
         """Test that a local version and an epoch are read as pins, where a wildcard and arbitrary equality are not."""

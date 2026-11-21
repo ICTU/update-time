@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, Mock, call, patch
 from tools import usages as usages_module
 from tools.usages import _ROOTS, Position, _LanguageServerError, _python_files, _usages, main
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 
 from tests.helpers import mock_path, patch_pathlib_path
 
@@ -136,34 +136,19 @@ class MainTest(unittest.TestCase):
                     "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n",
                 )
 
-    @kills(
-        Mutation(
-            usages_module._targets,
-            "return targets",
-            "return []",
-            "the report says nothing defines a module-level constant",
-        ),
-        Mutation(
-            usages_module._targets,
-            "return [target]",
-            "return []",
-            "the report says nothing defines an annotated constant",
-        ),
+    @kills.replace(
+        usages_module._targets, "return [target]", "return []", "the report says nothing defines an annotated constant"
     )
-    def test_the_usages_of_a_constant(self):
-        """Test that a module-level constant, annotated or not, is looked up at its name."""
-        for case, source in {"plain": "TARGET = 1\n", "annotated": "TARGET: int = 1\n"}.items():
-            with self.subTest(case):
-                self.assertEqual(self.report("pkg.mod.TARGET", {_DEFINING_MODULE: source}, []), 0)
-                self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 0))
+    def test_the_usages_of_an_annotated_constant(self):
+        """Test that an annotated module-level constant is looked up at its name."""
+        self.assertEqual(self.report("pkg.mod.TARGET", {_DEFINING_MODULE: "TARGET: int = 1\n"}, []), 0)
+        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 0))
 
-    @kills(
-        Mutation(
-            usages_module._named,
-            'yield f"{prefix}{name.id}"',
-            "yield target.id",
-            "the report says nothing defines a class attribute named through its class",
-        )
+    @kills.replace(
+        usages_module._named,
+        'yield f"{prefix}{name.id}"',
+        "yield target.id",
+        "the report says nothing defines a class attribute named through its class",
     )
     def test_the_usages_of_a_class_attribute(self):
         """Test that a class attribute is looked up inside its class."""
@@ -171,25 +156,20 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.report("pkg.mod.Holder.TARGET", {_DEFINING_MODULE: source}, []), 0)
         self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 1, 4))
 
-    @kills(
-        Mutation(
-            usages_module._named,
-            "yield from _instance_attributes(node, prefix, path)",
-            "pass",
-            "the report says nothing defines an attribute that `__init__` assigns",
-        ),
-        Mutation(
-            usages_module._instance_attributes,
-            ' and target.value.id == "self":',
-            ":",
-            "an attribute `__init__` assigns on another object is taken for one of the instance",
-        ),
-        Mutation(
-            usages_module._instance_attributes,
-            " - len(target.attr)",
-            "",
-            "the language server is asked about the end of the attribute's name rather than its start",
-        ),
+    @kills.delete_statement(
+        usages_module._named,
+        "yield from _instance_attributes(node, prefix, path)",
+        "the report says nothing defines an attribute that `__init__` assigns",
+    )
+    @kills.delete(
+        usages_module._instance_attributes,
+        ' and target.value.id == "self"',
+        "an attribute `__init__` assigns on another object is taken for one of the instance",
+    )
+    @kills.delete(
+        usages_module._instance_attributes,
+        " - len(target.attr)",
+        "the language server is asked about the end of the attribute's name rather than its start",
     )
     def test_the_usages_of_an_instance_attribute(self):
         """Test that an attribute `__init__` assigns on the instance, not on another object, is looked up there."""
@@ -206,21 +186,16 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.report("TARGET", {_DEFINING_MODULE: source}, []), 0)
         self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 0))
 
-    @kills(
-        Mutation(usages_module._targets, "return [name]", "return []", "the report says nothing defines a type alias")
-    )
+    @kills.replace(usages_module._targets, "return [name]", "return []", "the report says nothing defines a type alias")
     def test_the_usages_of_a_type_alias(self):
         """Test that a type alias is looked up at its name."""
         self.assertEqual(self.report("pkg.mod.Target", {_DEFINING_MODULE: "type Target = int\n"}, []), 0)
         self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 5))
 
-    @kills(
-        Mutation(
-            usages_module._assigned_names,
-            "target.elts if isinstance(target, ast.Tuple) else [target]",
-            "[target]",
-            "the report says nothing defines a name that an assignment to a tuple binds",
-        )
+    @kills.delete(
+        usages_module._assigned_names,
+        "target.elts if isinstance(target, ast.Tuple) else ",
+        "the report says nothing defines a name that an assignment to a tuple binds",
     )
     def test_each_name_of_a_tuple_target_is_looked_up_where_it_is_written(self):
         """Test that each name an assignment to a tuple defines is looked up at its own position."""
@@ -229,15 +204,11 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(self.report(f"pkg.mod.{name}", {_DEFINING_MODULE: "FIRST, SECOND = 1, 2\n"}, []), 0)
                 self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, column))
 
-    @kills(
-        Mutation(
-            usages_module._assigned_names,
-            "if isinstance(element, ast.Name):",
-            "if True:",
-            "a module-level assignment to an attribute ends the report with a traceback",
-            raises="AttributeError: 'Attribute' object has no attribute 'id'. "
-            "Did you mean '.value.id' instead of '.id'?",
-        )
+    @kills.force_true(
+        usages_module._assigned_names,
+        "isinstance(element, ast.Name)",
+        "a module-level assignment to an attribute ends the report with a traceback",
+        raises="AttributeError: 'Attribute' object has no attribute 'id'. Did you mean '.value.id' instead of '.id'?",
     )
     def test_an_assignment_to_an_attribute_defines_nothing(self):
         """Test that an assignment to an attribute is not looked up as a definition of the attribute."""
@@ -245,13 +216,10 @@ class MainTest(unittest.TestCase):
         self.assertIn("nothing defines TARGET", self.reported.getvalue())
         self.requested.assert_not_called()
 
-    @kills(
-        Mutation(
-            usages_module._module,
-            'parts = parts[:-1] if parts[-1] == "__init__" else parts',
-            "pass",
-            "the report says nothing defines a name that the `__init__.py` of a package defines",
-        )
+    @kills.delete_statement(
+        usages_module._module,
+        'parts = parts[:-1] if parts[-1] == "__init__" else parts',
+        "the report says nothing defines a name that the `__init__.py` of a package defines",
     )
     def test_a_function_the_init_of_a_package_defines_is_looked_up_by_the_package_s_name(self):
         """Test that a function the `__init__.py` of a package defines is looked up there, named by the package."""

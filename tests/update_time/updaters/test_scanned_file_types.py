@@ -4,7 +4,7 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import file_type
 from update_time.updaters import (
     update_circle_ci_config,
@@ -59,13 +59,11 @@ class ScannedFileTypesTest(unittest.TestCase):
     """Unit tests for which file type each updater script scans."""
 
     # Aliasing the import swaps the file type without changing its shape, so no other test can notice.
-    @kills(
-        Mutation(
-            update_pom_xml,
-            "from update_time.domain.file_type import POM_XML",
-            "from update_time.domain.file_type import PYPROJECT_TOML as POM_XML",
-            "a script walks another file type than the one whose files it updates",
-        )
+    @kills.append(
+        update_pom_xml,
+        "from update_time.domain.file_type import ",
+        "PYPROJECT_TOML as ",
+        "a script walks another file type than the one whose files it updates",
     )
     def test_each_script_scans_its_own_file_type(self):
         """Test that each updater walks the file type declared for the files it updates."""

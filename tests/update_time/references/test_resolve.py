@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, call
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
@@ -157,13 +157,11 @@ class LatestVersionTest(unittest.TestCase):
         """Test that the version the getter resolves is returned."""
         self.assertEqual(self.latest_version(), DependencyVersion(version="3.15"))
 
-    @kills(
-        Mutation(
-            resolve_module.latest_version,
-            "DependencyVersion(version=reference.current_version)",
-            'DependencyVersion(version="")',
-            "a source without a getter drops the version the reference names",
-        )
+    @kills.replace(
+        resolve_module.latest_version,
+        "DependencyVersion(version=reference.current_version)",
+        'DependencyVersion(version="")',
+        "a source without a getter drops the version the reference names",
     )
     def test_a_source_without_a_getter_offers_no_update(self):
         """Test that a source without a getter leaves the reference on the version it names."""
@@ -309,13 +307,11 @@ class LatestVersionTest(unittest.TestCase):
             self.reference(marker=marker), "allow[floating-pin]", Reason.NEVER_PINNED
         )
 
-    @kills(
-        Mutation(
-            resolve_module._reported_project,
-            "return _archival_alone(source.project, reference.dependency)",
-            "return NO_PROJECT",
-            "an image on a tag Docker Hub does not serve is not checked for archival",
-        )
+    @kills.replace(
+        resolve_module._reported_project,
+        "return _archival_alone(source.project, reference.dependency)",
+        "return NO_PROJECT",
+        "an image on a tag Docker Hub does not serve is not checked for archival",
     )
     def test_the_project_reported_depends_on_what_the_source_serves(self):
         """Test that a repository not served drops the project, and a version not served drops its newest release."""
@@ -338,13 +334,10 @@ class LatestVersionTest(unittest.TestCase):
                 latest_version(self.reference(), source, self.log)
                 self.assertEqual(self.log.report_staleness.call_args.args[0].project, expected)
 
-    @kills(
-        Mutation(
-            resolve_module._reported_project,
-            "if not _project_is_checked(source.project, reference):",
-            "if False:",
-            "a run with the check off asks the source about a project it does not check",
-        ),
+    @kills.force_false(
+        resolve_module._reported_project,
+        "not _project_is_checked(source.project, reference)",
+        "a run with the check off asks the source about a project it does not check",
     )
     def test_a_source_declaring_no_archival_is_asked_only_if_a_marker_sets_a_threshold(self):
         """Test that with the check off, the source is asked about the project only where a marker sets a threshold.

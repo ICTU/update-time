@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import RISK_LEVELS, VULNERABILITY_LEVEL
@@ -90,14 +90,11 @@ class CommandLineInterfaceTest(unittest.TestCase):
         """Test that the --help option shows the help text and exits."""
         self.assertIn("usage: update-time", self.stdout_of("--help"))
 
-    @kills(
-        Mutation(
-            cli_module._scanned_file_types,
-            "file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types",
-            "file_type.name for dependency_type in list(DEPENDENCY_TYPES)[:-1] "
-            "for file_type in dependency_type.file_types",
-            "a file type the dependency types declare goes unnamed in the help",
-        )
+    @kills.replace(
+        cli_module._scanned_file_types,
+        "file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types",
+        "file_type.name for dependency_type in list(DEPENDENCY_TYPES)[:-1] for file_type in dependency_type.file_types",
+        "a file type the dependency types declare goes unnamed in the help",
     )
     def test_help_names_the_file_types_of_every_dependency_type(self):
         """Test that the help names every file type the dependency types declare."""
@@ -105,13 +102,11 @@ class CommandLineInterfaceTest(unittest.TestCase):
         description = self.description_of_help()
         self.assertEqual([file_type for file_type in file_types if file_type not in description], [])
 
-    @kills(
-        Mutation(
-            cli_module._scanned_file_types,
-            "unique(names)",
-            "list(names)",
-            "the help names a file type twice when two dependency types declare it",
-        )
+    @kills.replace(
+        cli_module._scanned_file_types,
+        "unique(names)",
+        "list(names)",
+        "the help names a file type twice when two dependency types declare it",
     )
     def test_help_names_a_file_type_two_dependency_types_declare_once(self):
         """Test that the help names a file type more than one dependency type declares once."""
@@ -121,13 +116,11 @@ class CommandLineInterfaceTest(unittest.TestCase):
         description = self.description_of_help()
         self.assertEqual([file_type for file_type in shared if description.count(file_type) != 1], [])
 
-    @kills(
-        Mutation(
-            cli_module._scanned_file_types,
-            "unique(names)",
-            "sorted(set(names))",
-            "the help names the file types in an order of its own rather than the one they are declared in",
-        )
+    @kills.replace(
+        cli_module._scanned_file_types,
+        "unique(names)",
+        "sorted(set(names))",
+        "the help names the file types in an order of its own rather than the one they are declared in",
     )
     def test_help_names_the_file_types_in_declaration_order(self):
         """Test that the help names the file types in the order the dependency types declare them."""

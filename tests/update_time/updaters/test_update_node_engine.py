@@ -3,7 +3,7 @@
 import json
 from typing import TYPE_CHECKING
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
 from update_time.io.log import Logger
 from update_time.manifests import package_json as package_json_manifest
@@ -99,13 +99,10 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged("node", docker_hub_version("19"), Location(mock_package_json, 6))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            rewrite._reference_match,
-            "return pattern.search(line.text, declared.location.column)",
-            "return pattern.search(line.text)",
-            "the named line is read from its start, so the entry declared before the engine is taken for it",
-        )
+    @kills.delete(
+        rewrite._reference_match,
+        ", declared.location.column",
+        "the named line is read from its start, so the entry declared before the engine is taken for it",
     )
     def test_the_engine_is_updated_where_another_node_entry_shares_its_line(self, mock_glob: Mock):
         """Test that the engine is the entry updated where another section declares a node version on its line."""
@@ -114,13 +111,11 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged("node", docker_hub_version("19"), Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            package_json_manifest.PackageJson.declares_a_node_engine,
-            "return isinstance(engines, dict) and NODE_ENGINE in engines",
-            "return engines is not None and NODE_ENGINE in engines",
-            "a section that is a string or a list is read as one naming the engine, so the file is opened for it",
-        )
+    @kills.replace(
+        package_json_manifest.PackageJson.declares_a_node_engine,
+        "return isinstance(engines, dict)",
+        "return engines is not None",
+        "a section that is a string or a list is read as one naming the engine, so the file is opened for it",
     )
     def test_no_node_engine(self, mock_glob: Mock):
         """Test that a package.json whose `engines` section declares no Node version is skipped."""
@@ -137,16 +132,13 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
                 self.assert_no_new_version_logged()
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            update_node_engine._update_node_engine,
-            """if engine.location.line_number is None:
-        _LOG.no_entry(package_json_manifest.NODE_ENGINE, package_json.path)
-        return
-    update_file(""",
-            "update_file(",
-            "the run passes over an engine it cannot find the entry of, in silence",
-        )
+    @kills.delete(
+        update_node_engine._update_node_engine,
+        "if engine.location.line_number is None:\n"
+        "        _LOG.no_entry(package_json_manifest.NODE_ENGINE, package_json.path)\n"
+        "        return\n"
+        "    ",
+        "the run passes over an engine it cannot find the entry of, in silence",
     )
     def test_an_engine_whose_entry_cannot_be_found(self, mock_glob: Mock):
         """Test that an engine the file declares but whose entry cannot be found is warned about, not passed over."""
@@ -216,13 +208,10 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         mock_package_json.write_text.assert_called_once_with(_package_json("19", directives="ignore[updaet]"))
         self.assert_invalid_bracket_item_logged("node", Location(mock_package_json, 3), "updaet")
 
-    @kills(
-        Mutation(
-            package_json_manifest._field_spelling,
-            ", ensure_ascii=False)",
-            ")",
-            "the field is quoted with its non-ASCII text escaped rather than as the file writes it",
-        ),
+    @kills.delete(
+        package_json_manifest._field_spelling,
+        ", ensure_ascii=False",
+        "the field is quoted with its non-ASCII text escaped rather than as the file writes it",
     )
     def test_the_engines_marker_is_recognised_as_the_field_the_file_holds(self, mock_glob: Mock):
         """Test that the engine's marker is recognised, quoted as the JSON of its field with its text as written."""
@@ -230,19 +219,17 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.update_engine(mock_glob, f'{{"engines": {{"node": "18"}}, "update-time": {marker}}}\n')
         self.assert_recognised_marker_spelled(marker)
 
-    @kills(
-        Mutation(
-            package_json_manifest._marker,
-            "name)), spelling=_field_spelling(contents))",
-            "name)))",
-            "no Recognised line names a field of the wrong shape",
-        ),
-        Mutation(
-            Logger.recognised_marker,
-            "if not str(marker := reference.marker):",
-            "if not (marker := reference.marker).raw:",
-            "no Recognised line names a marker spelled without directive text",
-        ),
+    @kills.replace(
+        package_json_manifest._marker,
+        "name)), spelling=_field_spelling(contents))",
+        "name)))",
+        "no Recognised line names a field of the wrong shape",
+    )
+    @kills.replace(
+        Logger.recognised_marker,
+        "if not str(marker := reference.marker):",
+        "if not (marker := reference.marker).raw:",
+        "no Recognised line names a marker spelled without directive text",
     )
     def test_a_field_of_the_wrong_shape_is_warned_about_and_recognised_and_the_engine_updates(self, mock_glob: Mock):
         """Test that an `update-time` field of the wrong shape is warned about and quoted, and the engine updates."""

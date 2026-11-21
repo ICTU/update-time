@@ -3,7 +3,7 @@
 import unittest
 from datetime import UTC, datetime
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import dependency
 from update_time.domain.dependency import DependencyVersion, Release, Yank, is_valid
 from update_time.primitives.lookup import LookedUp
@@ -41,13 +41,10 @@ class YankTest(unittest.TestCase):
 class ReleaseTest(unittest.TestCase):
     """Unit tests for the release a dependency's source published."""
 
-    @kills(
-        Mutation(
-            dependency.Release._sortable_version,
-            "return Version(self.version) if is_valid(self.version) else LOWEST_VERSION",
-            "return LOWEST_VERSION",
-            "releases published at one moment order by the order the source listed them in",
-        )
+    @kills.delete(
+        dependency.Release._sortable_version,
+        "Version(self.version) if is_valid(self.version) else ",
+        "releases published at one moment order by the order the source listed them in",
     )
     def test_a_tie_is_broken_by_version(self):
         """Test that two releases published at the same moment are ordered by version, in either listing order.

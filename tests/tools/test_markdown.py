@@ -5,7 +5,7 @@ import unittest
 from tools import markdown
 from tools.markdown import anchor, anchors, headings, lines_without_code_blocks, without_code_blocks
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 
 _DOCUMENT = "# Title\n\n## ⚡ Usage\n\n### Workflow\n\n#### Detail\n"
 
@@ -39,19 +39,17 @@ class WithoutCodeBlocksTest(unittest.TestCase):
 class AnchorTest(unittest.TestCase):
     """Unit tests for the anchor GitHub gives a heading."""
 
-    @kills(
-        Mutation(
-            markdown._combining_mark,
-            'unicodedata.category(match[0]).startswith("M")',
-            r'match[0] == "\ufe0f"',
-            "only the U+FE0F after an emoji is kept, so another combining mark is dropped where GitHub keeps it",
-        ),
-        Mutation(
-            markdown._combining_mark,
-            'unicodedata.category(match[0]).startswith("M")',
-            "unicodedata.combining(match[0])",
-            "only a mark with a combining class is kept, so the U+FE0F after an emoji such as ⚠️ is dropped",
-        ),
+    @kills.replace(
+        markdown._combining_mark,
+        'unicodedata.category(match[0]).startswith("M")',
+        r'match[0] == "\ufe0f"',
+        "only the U+FE0F after an emoji is kept, so another combining mark is dropped where GitHub keeps it",
+    )
+    @kills.replace(
+        markdown._combining_mark,
+        'unicodedata.category(match[0]).startswith("M")',
+        "unicodedata.combining(match[0])",
+        "only a mark with a combining class is kept, so the U+FE0F after an emoji such as ⚠️ is dropped",
     )
     def test_github_anchor_rules(self):
         """Test that the anchor is lower-cased, drops punctuation and emoji, keeps marks, and hyphenates spaces."""
@@ -89,14 +87,7 @@ class LinesWithoutCodeBlocksTest(unittest.TestCase):
         expected = [(1, "Intro"), (2, ""), (3, ""), (4, ""), (5, ""), (6, ""), (7, "Outro")]
         self.assertEqual(list(lines_without_code_blocks(markdown)), expected)
 
-    @kills(
-        Mutation(
-            lines_without_code_blocks,
-            ".lstrip()",
-            "",
-            "a code block indented under a list item is read as prose",
-        )
-    )
+    @kills.delete(lines_without_code_blocks, ".lstrip()", "a code block indented under a list item is read as prose")
     def test_code_block_indented_under_a_list_item_comes_back_empty(self):
         """Test that a fence indented under a list item opens and closes a code block."""
         markdown = "1. Item:\n\n   ```console\n   $ update-time\n   ```\n\n2. Next\n"

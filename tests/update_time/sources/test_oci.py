@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import dependency
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
@@ -98,13 +98,11 @@ class IsDockerHubImageTest(unittest.TestCase):
 class TagTest(unittest.TestCase):
     """Unit tests for tags."""
 
-    @kills(
-        Mutation(
-            oci.Tag.version,
-            r'r"+\1"',
-            r'r".\1"',
-            "a build number is read as a version component, so 26.0.2_10 sorts above 26.0.2.1_1",
-        )
+    @kills.replace(
+        oci.Tag.version,
+        r'r"+\1"',
+        r'r".\1"',
+        "a build number is read as a version component, so 26.0.2_10 sorts above 26.0.2.1_1",
     )
     def test_sort_tag(self):
         """Test that a tag sorts below one with a higher version, or a more precise version of the same release."""
@@ -177,13 +175,11 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         )
         self.assert_could_not_fetch_logged(_PYTHON_TAG_NAMES_URL, status=HTTPStatus.SERVICE_UNAVAILABLE)
 
-    @kills(
-        Mutation(
-            oci._tag_names,
-            "if response is None:\n            break",
-            "if response is None:\n            return LookedUp(None, absent=True)",
-            "a tag names request that fails in transport reads as a repository the registry does not serve",
-        )
+    @kills.replace(
+        oci._tag_names,
+        "if response is None:\n            break",
+        "if response is None:\n            return LookedUp(None, absent=True)",
+        "a tag names request that fails in transport reads as a repository the registry does not serve",
     )
     def test_tag_names_request_that_fails_takes_the_repository_as_served(self):
         """Test that a tag names request failing in transport leaves the reference on a repository taken as served."""
@@ -192,13 +188,10 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "3.14.6")
         self.assertIsNone(latest.unserved)
 
-    @kills(
-        Mutation(
-            oci._refuses_the_repository,
-            "response.status_code == HTTPStatus.UNAUTHORIZED and _AUTHORIZATION_REFUSED not in challenge",
-            "response.status_code == HTTPStatus.UNAUTHORIZED",
-            "an expired or invalid token reads as a repository the registry does not serve, and goes unwarned",
-        )
+    @kills.delete(
+        oci._refuses_the_repository,
+        " and _AUTHORIZATION_REFUSED not in challenge",
+        "an expired or invalid token reads as a repository the registry does not serve, and goes unwarned",
     )
     def test_tag_names_refused_for_an_invalid_token_are_warned_about(self):
         """Test that tag names refused for an invalid token are warned about, on a repository taken as served."""
@@ -262,37 +255,35 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "1.0")
         self.assertEqual(DIGEST, latest.sha)
 
-    @kills(
-        Mutation(
-            oci.Tag.suffix_label,
-            "return (self._suffix_tag.prefix, self._suffix_tag.suffix)",
-            'return (self._suffix_tag.prefix, "")',
-            "a suffix's remainder is dropped from its label, so a slim reference drifts onto the fat image",
-        ),
-        Mutation(
-            oci.Tag._date_spelling,
-            're.sub(r"\\d", "0", cast("re.Match[str]", self._match).group("version"))',
-            '""',
-            "every snapshot spells its date the same way, so a reference on a date moves onto a timestamp",
-        ),
-        Mutation(
-            oci.Tag._date_spelling,
-            'cast("re.Match[str]", self._match).group("version")',
-            "str(self.version)",
-            "a snapshot's date spelling is read from its parsed version, so an undashed date moves onto a dashed one",
-        ),
-        Mutation(
-            dependency,
-            r'r"(?:-|$)(?P<suffix>',
-            r'r"-?(?P<suffix>',
-            "a date is read from the first eight of a longer run of digits, so a tag naming an hour moves to another",
-        ),
-        Mutation(
-            oci,
-            r'r"_(\d+)$"',
-            r'r"_(\w+)$"',
-            "a prerelease label after an underscore is read as a build number, so a reference moves onto a prerelease",
-        ),
+    @kills.replace(
+        oci.Tag.suffix_label,
+        "self._suffix_tag.suffix",
+        '""',
+        "a suffix's remainder is dropped from its label, so a slim reference drifts onto the fat image",
+    )
+    @kills.replace(
+        oci.Tag._date_spelling,
+        're.sub(r"\\d", "0", cast("re.Match[str]", self._match).group("version"))',
+        '""',
+        "every snapshot spells its date the same way, so a reference on a date moves onto a timestamp",
+    )
+    @kills.replace(
+        oci.Tag._date_spelling,
+        'cast("re.Match[str]", self._match).group("version")',
+        "str(self.version)",
+        "a snapshot's date spelling is read from its parsed version, so an undashed date moves onto a dashed one",
+    )
+    @kills.replace(
+        dependency,
+        r'r"(?:-|$)(?P<suffix>',
+        r'r"-?(?P<suffix>',
+        "a date is read from the first eight of a longer run of digits, so a tag naming an hour moves to another",
+    )
+    @kills.replace(
+        oci,
+        r'r"_(\d+)$"',
+        r'r"_(\w+)$"',
+        "a prerelease label after an underscore is read as a build number, so a reference moves onto a prerelease",
     )
     def test_which_listed_tags_leave_the_reference_as_it_is(self):
         """Test which listed tags leave the reference on the tag it already names."""
@@ -408,13 +399,10 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         url = "https://registry-1.docker.io/v2/library/manifest_not_found/manifests/2.2"
         self.assert_could_not_fetch_logged(url, status=HTTPStatus.NOT_FOUND)
 
-    @kills(
-        Mutation(
-            oci.Tag._is_dated_snapshot,
-            ".re is _DASHED_SNAPSHOT",
-            ".re is None",
-            "a timestamp is read as a release, so a release pin moves onto it",
-        )
+    @kills.force_none(
+        oci.Tag._is_dated_snapshot,
+        "_DASHED_SNAPSHOT",
+        "a timestamp is read as a release, so a release pin moves onto it",
     )
     def test_dated_snapshot_tag_is_no_candidate_for_a_release(self):
         """Test that a tag naming a date, or a date and a time, loses to a release tag it sorts above."""
@@ -462,14 +450,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("2024.01", DIGEST))
         self.assertEqual(get_latest_tag("cimg/base", "2023.12").version, "2024.01")
 
-    @kills(
-        Mutation(
-            oci.Tag.version,
-            r'r"+\1"',
-            r'r"+b\1"',
-            "a build number is compared as text, so build 10 sorts below build 9",
-        )
-    )
+    @kills.append(oci.Tag.version, 'r"+', "b", "a build number is compared as text, so build 10 sorts below build 9")
     def test_tag_with_a_build_number_is_a_candidate(self):
         """Test that a tag spelling its version with a build number, such as `26.0.2_10-jre`, updates a reference."""
         self.requests.side_effect = mock_docker_registry(
@@ -534,25 +515,23 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "bookworm-20250101")
         self.assertEqual(latest.sha, DIGEST2)
 
-    @kills(
-        Mutation(
-            dependency,
-            r'r"(?P<prefix>.+-)(?P<version>\d{8})',
-            r'r"(?P<prefix>).+-(?P<version>\d{8})',
-            "a snapshot's prefix leaves out its label, so the reference crosses to another line",
-        ),
-        Mutation(
-            dependency,
-            r'r"(?P<prefix>(?:.+-)?)(?P<version>\d{4}-',
-            r'r"(?P<prefix>)(?:.+-)?(?P<version>\d{4}-',
-            "a dashed date's prefix leaves out its label, so the reference crosses to another line",
-        ),
-        Mutation(
-            dependency,
-            r'(?:-\d{2}-\d{2}-\d{2})?)" + _LABEL_AFTER_A_DATE',
-            r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)"',
-            "a dashed date is read wherever it starts the tag, so a slim reference drifts onto the fat image",
-        ),
+    @kills.replace(
+        dependency,
+        r'r"(?P<prefix>.+-)(?P<version>\d{8})',
+        r'r"(?P<prefix>).+-(?P<version>\d{8})',
+        "a snapshot's prefix leaves out its label, so the reference crosses to another line",
+    )
+    @kills.replace(
+        dependency,
+        r'r"(?P<prefix>(?:.+-)?)(?P<version>\d{4}-',
+        r'r"(?P<prefix>)(?:.+-)?(?P<version>\d{4}-',
+        "a dashed date's prefix leaves out its label, so the reference crosses to another line",
+    )
+    @kills.replace(
+        dependency,
+        r'(?:-\d{2}-\d{2}-\d{2})?)" + _LABEL_AFTER_A_DATE',
+        r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)"',
+        "a dashed date is read wherever it starts the tag, so a slim reference drifts onto the fat image",
     )
     def test_dated_snapshot_moves_to_the_newest_snapshot_under_its_own_labels(self):
         """Test that a dated snapshot moves to the newest snapshot under its own labels, whatever other labels hold."""
@@ -671,13 +650,11 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         tags_call = next(call for call in self.requests.call_args_list if "/tags/list" in call.args[0])
         self.assertEqual(tags_call.kwargs["headers"], {})  # No Authorization header for an anonymous registry.
 
-    @kills(
-        Mutation(
-            oci._resolved_tag,
-            "lambda candidate: candidate.name == current.name,",
-            "lambda candidate: False,",
-            "a rate-limited push date leaves the reference unpinned, holding back its own tag as well",
-        )
+    @kills.replace(
+        oci._resolved_tag,
+        "lambda candidate: candidate.name == current.name,",
+        "lambda candidate: False,",
+        "a rate-limited push date leaves the reference unpinned, holding back its own tag as well",
     )
     def test_tag_whose_push_date_cannot_be_fetched_holds_back_the_tags_in_between(self):
         """Test that a Docker Hub tag whose push date can't be fetched holds back the tags in between, logging why."""
@@ -771,13 +748,11 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         listings = [call for call in self.requests.call_args_list if "/tags?" in call.args[0]]
         self.assertEqual(len(listings), _MAX_TAG_LISTING_PAGES)
 
-    @kills(
-        Mutation(
-            oci._unpinned_floating_tag,
-            "if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
-            "if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST, FloatingPin.NOT_AMONG_EXAMINED)",
-            "a listing cut short before reaching the tag leaves the image's newest release off the reference",
-        )
+    @kills.append(
+        oci._unpinned_floating_tag,
+        "if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST",
+        ", FloatingPin.NOT_AMONG_EXAMINED",
+        "a listing cut short before reaching the tag leaves the image's newest release off the reference",
     )
     def test_newest_release_when_the_listing_was_cut_short(self):
         """Test that a floating tag the listing may hold below the page cap is dated by the image's newest release."""
@@ -803,14 +778,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(*(docker_tag(name, DIGEST) for name in aliases))
         self.assertEqual(get_latest_tag("wordpress", "latest").version, "7.1.0")
 
-    @kills(
-        Mutation(
-            oci,
-            "@cache\ndef _get_tag(image: str, name: str) -> Tag | None:",
-            "def _get_tag(image: str, name: str) -> Tag | None:",
-            "a tag named more than once in a scan is resolved once per reference",
-        )
-    )
+    @kills.uncache(oci._get_tag, "a tag named more than once in a scan is resolved once per reference")
     def test_repeating_a_reference_costs_no_request(self):
         """Test that a tag resolved a second time asks the registry for nothing, everything it reads being cached."""
         self.requests.side_effect = mock_docker_registry(docker_tag("12.14", DIGEST), docker_tag("12.15", DIGEST))
@@ -855,20 +823,16 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "3.14.7")
         self.assertIsNone(latest.unserved)
 
-    @kills(
-        Mutation(
-            oci._resolved_tag,
-            "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed)",
-            "return DependencyVersion(version=current.name, publication=tag.pushed)",
-            "a tag naming neither a version nor a channel is left without the digest that would pin it",
-        ),
-        Mutation(
-            oci._resolved_tag,
-            "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed)",
-            "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed, "
-            "unserved=Unserved.VERSION)",
-            "a tag naming neither a version nor a channel is dated by no release, whatever the registry serves",
-        ),
+    @kills.delete(
+        oci._resolved_tag,
+        "sha=tag.digest, ",
+        "a tag naming neither a version nor a channel is left without the digest that would pin it",
+    )
+    @kills.append(
+        oci._resolved_tag,
+        "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed",
+        ", unserved=Unserved.VERSION",
+        "a tag naming neither a version nor a channel is dated by no release, whatever the registry serves",
     )
     def test_tag_naming_neither_a_version_nor_a_channel(self):
         """Test that a tag such as `dev-2024` keeps its tag, is pinned to the digest it serves, and is dated."""
@@ -882,13 +846,10 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertIsNone(latest.floating)  # The tag names no channel, so no pin of its floats.
         self.assertIsNone(latest.unserved)
 
-    @kills(
-        Mutation(
-            oci._resolved_tag,
-            "return DependencyVersion(version=current.name, unserved=Unserved.VERSION)",
-            "return DependencyVersion(version=current.name)",
-            "a tag the registry serves no manifest for is dated by the image's newest release",
-        )
+    @kills.delete(
+        oci._resolved_tag,
+        ", unserved=Unserved.VERSION",
+        "a tag the registry serves no manifest for is dated by the image's newest release",
     )
     def test_no_newest_release_when_the_registry_serves_no_manifest(self):
         """Test that a tag such as `dev-2024` the registry serves no manifest for is dated by no release."""
@@ -935,17 +896,15 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         url = "https://registry.hub.docker.com/v2/namespaces/library/repositories/python/tags?page_size=100"
         self.assert_could_not_fetch_logged(url, status=HTTPStatus.SERVICE_UNAVAILABLE)
 
-    @kills(
-        Mutation(
-            oci._walked_floating_tag,
-            """for candidate in ordered[:_MAX_FLOATING_TAG_PROBES]:
+    @kills.replace(
+        oci._walked_floating_tag,
+        """for candidate in ordered[:_MAX_FLOATING_TAG_PROBES]:
         if _manifest_digest(image, candidate.name) == digest:
             return DependencyVersion(version=candidate.name, sha=digest, floating=FloatingPin.RESOLVED)""",
-            """probes = ordered[:_MAX_FLOATING_TAG_PROBES]
+        """probes = ordered[:_MAX_FLOATING_TAG_PROBES]
     for candidate in [tag for tag in probes if _manifest_digest(image, tag.name) == digest]:
         return DependencyVersion(version=candidate.name, sha=digest, floating=FloatingPin.RESOLVED)""",
-            "the walk asks every tag for its manifest rather than stopping at the tag it pins",
-        )
+        "the walk asks every tag for its manifest rather than stopping at the tag it pins",
     )
     def test_walk_stops_at_the_first_tag_serving_the_digest(self):
         """Test that the walk asks for one manifest per candidate down to the match, and for none below it."""
@@ -980,13 +939,8 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         # The walk asked the floating tag for its digest, then spent its budget on the newest version tags:
         self.assertEqual(len(manifests), _MAX_FLOATING_TAG_PROBES + 1)
 
-    @kills(
-        Mutation(
-            oci,
-            "@cache\ndef _manifest_digest(image: str, tag: str) -> str:",
-            "def _manifest_digest(image: str, tag: str) -> str:",
-            "a walked candidate has its manifest read once per reference naming the floating tag",
-        )
+    @kills.uncache(
+        oci._manifest_digest, "a walked candidate has its manifest read once per reference naming the floating tag"
     )
     def test_the_digest_of_a_walked_candidate_is_read_once(self):
         """Test that a second reference to one floating tag off Docker Hub re-reads none of the walk's manifests."""

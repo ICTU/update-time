@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
 from update_time.io.log import Logger
 from update_time.package_managers.uv import uv
@@ -103,13 +103,10 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         )
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            update_python_version_file._report_requires_python,
-            " and not reference.marker.ignores(Scope.UPDATE)",
-            "",
-            "an entry its marker holds back is logged as held back by the `requires-python` as well",
-        )
+    @kills.delete(
+        update_python_version_file._report_requires_python,
+        " and not reference.marker.ignores(Scope.UPDATE)",
+        "an entry its marker holds back is logged as held back by the `requires-python` as well",
     )
     def test_a_requires_python_that_holds_nothing_back_is_not_logged(self, mock_glob: Mock):
         """Test that a `requires-python` is not logged as holding an entry back where it holds nothing back."""
@@ -140,13 +137,11 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
         version_file.write_text.assert_called_once_with("3.11.9\n")
 
-    @kills(
-        Mutation(
-            uv.workspace_pyproject_tomls,
-            "root = _workspace_root(pyproject_toml)",
-            "root = pyproject_toml",
-            "a member's own `.python-version` is bounded by that member alone, though uv checks the whole workspace",
-        )
+    @kills.replace(
+        uv.workspace_pyproject_tomls,
+        "root = _workspace_root(pyproject_toml)",
+        "root = pyproject_toml",
+        "a member's own `.python-version` is bounded by that member alone, though uv checks the whole workspace",
     )
     def test_a_workspace_member_bounds_the_entry_of_another_member(self, mock_glob: Mock):
         """Test that the `requires-python` of one workspace member bounds the `.python-version` of another."""
@@ -156,13 +151,10 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         )
         version_file.write_text.assert_called_once_with("3.11.9\n")
 
-    @kills(
-        Mutation(
-            uv.workspace_pyproject_tomls,
-            " and _workspace_includes(root_dir, workspace, member)",
-            "",
-            "the excluded members of a workspace bound the entry, though uv leaves them out",
-        )
+    @kills.delete(
+        uv.workspace_pyproject_tomls,
+        " and _workspace_includes(root_dir, workspace, member)",
+        "the excluded members of a workspace bound the entry, though uv leaves them out",
     )
     def test_an_excluded_workspace_member_does_not_bound_the_entry(self, mock_glob: Mock):
         """Test that the `requires-python` of a member the workspace excludes does not bound the entry."""
@@ -170,13 +162,10 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.10.14", "3.15.1"))
         version_file.write_text.assert_called_once_with("3.15.1\n")
 
-    @kills(
-        Mutation(
-            uv.workspace_pyproject_tomls,
-            'if (member / "pyproject.toml").exists() and _workspace_includes(root_dir, workspace, member)',
-            "if _workspace_includes(root_dir, workspace, member)",
-            "a directory without a pyproject.toml counts as a member, so a warning names a file that is not there",
-        )
+    @kills.delete(
+        uv.workspace_pyproject_tomls,
+        '(member / "pyproject.toml").exists() and ',
+        "a directory without a pyproject.toml counts as a member, so a warning names a file that is not there",
     )
     def test_a_member_glob_matching_a_directory_without_a_pyproject_toml_passes_it_over(self, mock_glob: Mock):
         """Test that a member glob passes over a directory that does not hold a `pyproject.toml`."""
@@ -206,13 +195,10 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         )
         version_file.write_text.assert_called_once_with("3.15.1\n")
 
-    @kills(
-        Mutation(
-            update_python_version_file._report_requires_python,
-            "if not bound.keeps(Version(version), version):",
-            "if False:",
-            "the run does not warn about an entry outside the `requires-python`, though uv refuses to run with it",
-        )
+    @kills.force_false(
+        update_python_version_file._report_requires_python,
+        "not bound.keeps(Version(version), version)",
+        "the run does not warn about an entry outside the `requires-python`, though uv refuses to run with it",
     )
     def test_an_entry_outside_the_requires_python_is_warned_about(self, mock_glob: Mock):
         """Test that an entry the `requires-python` excludes, and the run leaves there, is warned about."""
@@ -240,27 +226,24 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file.write_text.assert_called_once_with("3.15.1\n")
         self.assert_logged(message_of(Logger.invalid_requires_python), location=Location(PYPROJECT_TOML, 2))
 
-    @kills(
-        Mutation(
-            update_python_version_file._requires_python,
-            "except (OSError, UnicodeDecodeError) as error:",
-            "except UnicodeDecodeError as error:",
-            "a `pyproject.toml` that cannot be read stops the run for every `.python-version` file",
-            raises="PermissionError: [Errno 13] Permission denied: '/pyproject.toml'",
-        ),
-        Mutation(
-            update_python_version_file._requires_python,
-            "except (OSError, UnicodeDecodeError) as error:",
-            "except OSError as error:",
-            "a `pyproject.toml` that is not UTF-8 stops the run for every `.python-version` file",
-            raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
-        ),
-        Mutation(
-            update_python_version_file._requires_python,
-            "_LOG.unreadable_requires_python(pyproject_toml, error)",
-            "pass",
-            "a `pyproject.toml` that cannot be read goes unreported, so its `requires-python` drops out silently",
-        ),
+    @kills.replace(
+        update_python_version_file._requires_python,
+        "except (OSError, UnicodeDecodeError) as error:",
+        "except UnicodeDecodeError as error:",
+        "a `pyproject.toml` that cannot be read stops the run for every `.python-version` file",
+        raises="PermissionError: [Errno 13] Permission denied: '/pyproject.toml'",
+    )
+    @kills.replace(
+        update_python_version_file._requires_python,
+        "except (OSError, UnicodeDecodeError) as error:",
+        "except OSError as error:",
+        "a `pyproject.toml` that is not UTF-8 stops the run for every `.python-version` file",
+        raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+    )
+    @kills.delete(
+        update_python_version_file._requires_python,
+        "_LOG.unreadable_requires_python(pyproject_toml, error)",
+        "a `pyproject.toml` that cannot be read goes unreported, so its `requires-python` drops out silently",
     )
     def test_a_pyproject_toml_that_cannot_be_read_is_warned_about_and_bounds_nothing(self, mock_glob: Mock):
         """Test that a `pyproject.toml` that cannot be read is warned about, and the entry updates as without it."""
@@ -286,13 +269,9 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file.write_text.assert_called_once_with("3.15.1\n")
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            update_python_version_file,
-            "@cache\ndef _requires_python(",
-            "def _requires_python(",
-            "every `.python-version` file under a `pyproject.toml` reads it again, and repeats its warning",
-        )
+    @kills.uncache(
+        update_python_version_file._requires_python,
+        "every `.python-version` file under a `pyproject.toml` reads it again, and repeats its warning",
     )
     def test_a_pyproject_toml_several_version_files_share_is_warned_about_once(self, mock_glob: Mock):
         """Test that a `requires-python` two `.python-version` files share is warned about once, not once per file."""

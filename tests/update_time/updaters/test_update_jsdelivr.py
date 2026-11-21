@@ -2,7 +2,7 @@
 
 from unittest.mock import ANY, Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
@@ -233,19 +233,15 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3))
 
-    @kills(
-        Mutation(
-            jsdelivr.version_getter,
-            "return DependencyVersion(version=pinned.version, unserved=Unserved.VERSION)",
-            "return DependencyVersion(version=pinned.version)",
-            "a URL whose version is not PEP 440 is looked up at the npm registry and checked for staleness",
-        ),
-        Mutation(
-            resolve._archival_alone,
-            "if not get_project.declares_archival(dependency):",
-            "if False:",
-            "a URL whose version is not PEP 440 is looked up at the npm registry, although npm does not archive",
-        ),
+    @kills.delete(
+        jsdelivr.version_getter,
+        ", unserved=Unserved.VERSION",
+        "a URL whose version is not PEP 440 is looked up at the npm registry and checked for staleness",
+    )
+    @kills.force_false(
+        resolve._archival_alone,
+        "not get_project.declares_archival(dependency)",
+        "a URL whose version is not PEP 440 is looked up at the npm registry, although npm does not archive",
     )
     def test_a_url_whose_version_is_not_pep_440_is_not_checked_for_staleness(self, mock_get: Mock, mock_glob: Mock):
         """Test that a URL on a version such as `1.` is left alone, and the npm registry is not asked about it."""

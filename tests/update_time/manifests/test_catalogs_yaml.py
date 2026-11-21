@@ -2,7 +2,7 @@
 
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.reference import Reference
 from update_time.manifests import catalogs_yaml
 from update_time.manifests.catalogs_yaml import CatalogsYaml
@@ -45,13 +45,11 @@ class DeclarationsTest(unittest.TestCase):
 class CatalogsTest(unittest.TestCase):
     """Unit tests for reading the catalogs of a pnpm-workspace.yaml."""
 
-    @kills(
-        Mutation(
-            catalogs_yaml.CatalogsYaml._catalogs,
-            "(catalog_name(named.key), named.value)",
-            "(named.key, named.value)",
-            "a version pnpm moved for a `catalog:` dependency is reported at the member, not at the default catalog",
-        )
+    @kills.replace(
+        catalogs_yaml.CatalogsYaml._catalogs,
+        "(catalog_name(named.key), named.value)",
+        "(named.key, named.value)",
+        "a version pnpm moved for a `catalog:` dependency is reported at the member, not at the default catalog",
     )
     def test_the_named_catalog_default_is_the_unnamed_one(self):
         """Test that the entries of a named catalog called default are located as the unnamed catalog's."""
@@ -59,13 +57,10 @@ class CatalogsTest(unittest.TestCase):
         expected = Catalogs({CatalogEntry("", "left-pad"): Reference("left-pad", "1.3.0", Location(path, 3, 4))})
         self.assertEqual(CatalogsYaml.read(path).catalogs(), expected)
 
-    @kills(
-        Mutation(
-            catalogs_yaml.CatalogsYaml.catalogs,
-            "                if entry.text is not None\n",
-            "",
-            "a pnpm catalog entry whose value is a mapping is taken for an entry without a range",
-        )
+    @kills.delete(
+        catalogs_yaml.CatalogsYaml.catalogs,
+        "if entry.text is not None\n",
+        "a pnpm catalog entry whose value is a mapping is taken for an entry without a range",
     )
     def test_an_entry_whose_value_is_not_a_scalar_is_left_out(self):
         """Test that a catalog entry whose value is a mapping is left out, and the entry beside it is read."""

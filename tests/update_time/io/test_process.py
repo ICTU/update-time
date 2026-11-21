@@ -10,7 +10,7 @@ from logging import DEBUG
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.io import process as process_module
 from update_time.io.log import Logger
 from update_time.io.process import Processes, run, tool_version
@@ -51,20 +51,6 @@ class RunTests(LoggingTestCase):
         run(Command("tool", "list"))
         self.assertIsNone(mock_run.call_args.kwargs["cwd"])
 
-    @kills(
-        Mutation(
-            process_module.run_unlogged,
-            "env = os.environ | dict(environment) if environment else None",
-            "env = None",
-            "a command runs without the variables Update-time adds to its environment, such as yarn's cooldown",
-        ),
-        Mutation(
-            process_module.run_unlogged,
-            "os.environ | dict(environment)",
-            "dict(environment)",
-            "a command that Update-time adds variables to runs without the environment it inherits, such as its PATH",
-        ),
-    )
     def test_environment_variables_are_passed_on_top_of_the_inherited_ones(self, mock_run: Mock):
         """Test that the variables given are added to the inherited environment, and that none given inherits it."""
         mock_run.return_value = Mock(stdout="", stderr="")
@@ -151,19 +137,16 @@ class DebugLogTests(LoggingTestCase):
         """Return each command the stub for subprocess.run received, with the directory it ran in."""
         return [(each.args[0], each.kwargs["cwd"]) for each in mock_run.call_args_list]
 
-    @kills(
-        Mutation(
-            process_module.run,
-            "_LOG.command_run(command, directory, variables)",
-            "pass",
-            "the debug log leaves out the commands Update-time runs, so it does not show the options they ran with",
-        ),
-        Mutation(
-            Logger.command_run,
-            '" ".join((*variables, *command))',
-            '" ".join(command)',
-            "the debug log leaves out the variables a command adds to its environment, such as yarn's cooldown",
-        ),
+    @kills.delete(
+        process_module.run,
+        "_LOG.command_run(command, directory, variables)",
+        "the debug log leaves out the commands Update-time runs, so it does not show the options they ran with",
+    )
+    @kills.replace(
+        Logger.command_run,
+        '" ".join((*variables, *command))',
+        '" ".join(command)',
+        "the debug log leaves out the variables a command adds to its environment, such as yarn's cooldown",
     )
     def test_the_command_is_logged_with_its_arguments_and_the_directory_it_runs_in(self, mock_run: Mock):
         """Test that each command is logged with its arguments, the variables it adds, and the directory it runs in."""
@@ -225,13 +208,8 @@ class DebugLogTests(LoggingTestCase):
             ],
         )
 
-    @kills(
-        Mutation(
-            process_module,
-            "@cache\ndef _tool_version",
-            "def _tool_version",
-            "a run at DEBUG asks a tool for the version that a caller asked it for already",
-        )
+    @kills.uncache(
+        process_module._tool_version, "a run at DEBUG asks a tool for the version that a caller asked it for already"
     )
     def test_a_version_asked_for_before_a_run_is_not_asked_for_again(self, mock_run: Mock):
         """Test that a run logging the version that a caller asked for already does not ask for it a second time."""
@@ -307,13 +285,11 @@ class DebugLogTests(LoggingTestCase):
 class ProcessesTest(unittest.TestCase):
     """Unit tests for the processes a run started."""
 
-    @kills(
-        Mutation(
-            process_module.Processes._start,
-            "if self.stop_signal is not None:\n            return None",
-            "if False:\n            return None",
-            "a process starts after the run stopped, and outlives the run",
-        )
+    @kills.replace(
+        process_module.Processes._start,
+        "if self.stop_signal is not None:\n            return None",
+        "if False:\n            return None",
+        "a process starts after the run stopped, and outlives the run",
     )
     @patch("os.killpg")
     def test_a_stopped_run_starts_no_further_process(self, _mock_killpg: Mock, mock_popen: Mock):

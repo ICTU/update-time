@@ -176,6 +176,7 @@ mutate-help:
     @echo "    a broken version of it"
     @echo "    EOF"
     @echo "\nThe snippet's first line drops its leading indentation; later lines keep theirs as in the file."
+    @echo "The probe leaves a docstring as it is, so a docstring may quote the snippet."
     @echo "\nName a definition after the file to look for the snippet inside that definition alone, so a snippet the"
     @echo "file repeats needs no padding to tell one occurrence from another:"
     @echo "\n    just mutate src/mutation_time/mutation.py:Mutation._mutated <<'EOF'"

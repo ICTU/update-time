@@ -12,6 +12,7 @@ import functools
 import importlib
 import inspect
 import os
+import re
 import sys
 import types
 import unittest
@@ -35,14 +36,10 @@ _CHECKED_TEST = "_MUTATION_TIME_CHECKED_TEST"
 # so that run's kill list holds the tests that failed on the mutation it was given.
 CHECKS_OFF = "_MUTATION_TIME_CHECKS_OFF"
 
-# The attribute a decorated test carries, holding the mutations it registers. A second `kills` on the same test
-# finds it there and fails the test. It survives a decorator written between the two, since `functools.wraps`
-# copies the attributes of whatever it wraps.
+# The attribute a decorated test carries, holding the mutations it registers. A `kills` stacked above finds it there
+# and adds its mutation. A decorator written between the two holds a copy of it, since `functools.wraps` copies the
+# attributes of whatever it wraps.
 _REGISTERED = "_registered_mutations"
-
-# What a test is told when its registration cannot be honoured. `_failing` puts each after the test's own id.
-_NO_MUTATION = "registers no mutation; give its kills decorator at least one"
-_STACKED = "registers mutations in more than one kills decorator; give them all to one"
 
 _Method = TypeVar("_Method", bound="Callable[..., object]")
 
@@ -52,6 +49,10 @@ class _Function(Protocol):
 
     __module__: str
     __qualname__: str
+
+
+# A mutation changes the code of a module, or of a definition the module holds.
+type _Anchor = types.ModuleType | _Function | types.MethodType | property | functools.cached_property[Any]
 
 
 class Outcome(StrEnum):
@@ -101,7 +102,7 @@ class Mutation:
     module anchor is stale when one function or method holds the snippet.
     """
 
-    anchor: types.ModuleType | _Function | types.MethodType | property | functools.cached_property[Any]
+    anchor: _Anchor
     old: str
     new: str
     regression: str
@@ -160,8 +161,7 @@ class Mutation:
     def lines(self) -> range:
         """Return the numbers of the lines the snippet covers in its file, counted from one."""
         source = self._source()
-        start, end = _span(source, self._qualified_name)
-        offset = start + source[start:end].index(self.old)
+        offset = _occurrences(source, self._qualified_name, self.old)[0]
         first = source.count("\n", 0, offset) + 1
         return range(first, first + self.old.count("\n") + 1)
 
@@ -224,7 +224,7 @@ class Mutation:
         """
         if self._qualified_name or self.module.__name__ == __name__:
             return None
-        start = source.index(self.old)
+        start = _occurrences(source, "", self.old)[0]
         try:
             statements = _statements_overlapping(mutated, start, start + len(self.new))
         except SyntaxError:
@@ -355,11 +355,38 @@ def mutated_source(source: str, qualified_name: str, old: str, new: str) -> str:
     if old[:1] in (" ", "\t") and new[:1] == old[:1]:
         message = "the snippet and its replacement open on the same indentation, so drop that indentation from both"
         raise StaleError(message)
-    start, end = _span(source, qualified_name)
-    if (occurrences := source[start:end].count(old)) != 1:
-        message = f"the snippet occurs {occurrences} times rather than once"
+    if len(offsets := _occurrences(source, qualified_name, old)) != 1:
+        message = f"the snippet occurs {len(offsets)} times rather than once"
         raise StaleError(message)
-    return source[:start] + source[start:end].replace(old, new) + source[end:]
+    return source[: offsets[0]] + new + source[offsets[0] + len(old) :]
+
+
+def _occurrences(source: str, qualified_name: str, snippet: str) -> list[int]:
+    """Return the offset of each occurrence of the snippet in the code of the definition the name points at.
+
+    An occurrence inside a docstring is left out, since a docstring may quote the code it describes.
+    """
+    start, end = _span(source, qualified_name)
+    docstrings = _docstrings(source)
+    return [
+        match.start()
+        for match in re.compile(re.escape(snippet)).finditer(source, start, end)
+        if not any(first <= match.start() and match.end() <= last for first, last in docstrings)
+    ]
+
+
+def _docstrings(source: str) -> list[tuple[int, int]]:
+    """Return the offsets where each docstring of the source's module, classes, and functions starts and ends."""
+    try:
+        tree = _parsed(source)
+    except SyntaxError:
+        return []  # The file is not Python, or does not parse, so every occurrence counts.
+    definitions = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    return [
+        _node_span(source, node.body[0])
+        for node in ast.walk(tree)
+        if isinstance(node, definitions) and ast.get_docstring(node, clean=False) is not None
+    ]
 
 
 def _span(source: str, qualified_name: str) -> tuple[int, int]:
@@ -375,7 +402,7 @@ def _span(source: str, qualified_name: str) -> tuple[int, int]:
 
 def _function_holding(source: str, snippet: str) -> str:
     """Return the qualified name of the function or method whose span holds the snippet, or the empty string."""
-    start = source.index(snippet)
+    start = _occurrences(source, "", snippet)[0]
     end = start + len(snippet)
     functions = {name: node for name, node in _definitions(source).items() if not isinstance(node, ast.ClassDef)}
     spans = {name: _node_span(source, node) for name, node in functions.items()}
@@ -591,31 +618,20 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
                 test_case.assertEqual(result.outcome, Outcome.KILLED, _failure(mutation, result))
 
 
-def _failing(method: Callable[..., object], complaint: str) -> Callable[..., object]:
-    """Return a stand-in that fails with the complaint, for a test whose registration cannot be honoured."""
-
-    @functools.wraps(method)
-    def fail(self: unittest.TestCase, *_args: object, **_kwargs: object) -> object:
-        return self.fail(f"{self.id()} {complaint}")
-
-    return fail
-
-
-def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
-    """Return a decorator making the decorated test kill the mutations it is meant to kill.
+def _registration(mutation: Mutation) -> Callable[[_Method], _Method]:
+    """Return a decorator making the decorated test kill the mutation.
 
     The test runs its own body first, so a test already failing for a reason of its own never reports a mutation as
-    killed. It checks the mutations once it has finished and its other cleanups have run, when the patches decorating
-    it and the ones its set-up entered have stopped, since checking a mutation runs the test again. One decorator
-    holds every mutation a test kills, so there is never a reason to write two. A second decorator on the same test
-    fails it, as does one given no mutation at all.
+    killed. It checks its mutations once it has finished and its other cleanups have run, when the patches decorating
+    it and the ones its set-up entered have stopped, since checking a mutation runs the test again. A decorator stacked
+    above another one adds its mutation to the other's, whatever decorator sits between the two, so the test checks
+    its mutations top to bottom.
     """
 
     def decorate(method: _Method) -> _Method:
-        if not mutations:
-            return cast("_Method", _failing(method, _NO_MUTATION))
         if hasattr(method, _REGISTERED):
-            return cast("_Method", _failing(method, _STACKED))
+            _register_above(method, mutation)
+            return method
 
         @functools.wraps(method)
         def wrapper(self: unittest.TestCase, *args: object, **kwargs: object) -> object:
@@ -625,14 +641,85 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
             if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":
                 return result
             cleanups = self._cleanups  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
-            # `doCleanups` runs the cleanups from the end of the list, so the check at its front runs after the others:
-            cleanups.insert(0, (_fail_unless_killed, (self, mutations), {}))
+            # `doCleanups` runs the cleanups from the end, so the check at the front of the list runs last:
+            cleanups.insert(0, (_fail_unless_killed, (self, getattr(wrapper, _REGISTERED)), {}))
             return result
 
-        setattr(wrapper, _REGISTERED, mutations)
+        setattr(wrapper, _REGISTERED, (mutation,))
         return cast("_Method", wrapper)
 
     return decorate
+
+
+def _register_above(method: Callable[..., object], mutation: Mutation) -> None:
+    """Put the mutation in front of the ones registered beneath it, in each decorator down to the registration."""
+    layer: object = method
+    while hasattr(layer, _REGISTERED):
+        setattr(layer, _REGISTERED, (mutation, *getattr(layer, _REGISTERED)))
+        layer = getattr(layer, "__wrapped__", None)
+
+
+class _Kills:
+    """The decorators making a test kill a mutation, one for each change a mutation makes."""
+
+    def replace(
+        self, anchor: _Anchor, old: str, new: str, regression: str, raises: str = ""
+    ) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that replaces the snippet with the new code."""
+        return _registration(Mutation(anchor, old, new, regression, raises))
+
+    def delete(self, anchor: _Anchor, old: str, regression: str, raises: str = "") -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that deletes the snippet."""
+        return _registration(Mutation(anchor, old, "", regression, raises))
+
+    def prepend(
+        self, anchor: _Anchor, old: str, new: str, regression: str, raises: str = ""
+    ) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that inserts the new code before the snippet."""
+        return _registration(Mutation(anchor, old, new + old, regression, raises))
+
+    def append(
+        self, anchor: _Anchor, old: str, new: str, regression: str, raises: str = ""
+    ) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that inserts the new code after the snippet."""
+        return _registration(Mutation(anchor, old, old + new, regression, raises))
+
+    def force_true(
+        self, anchor: _Anchor, condition: str, regression: str, raises: str = ""
+    ) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that replaces the condition with `True`."""
+        return _registration(Mutation(anchor, condition, "True", regression, raises))
+
+    def force_false(
+        self, anchor: _Anchor, condition: str, regression: str, raises: str = ""
+    ) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that replaces the condition with `False`."""
+        return _registration(Mutation(anchor, condition, "False", regression, raises))
+
+    def force_none(
+        self, anchor: _Anchor, expression: str, regression: str, raises: str = ""
+    ) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that replaces the expression with `None`."""
+        return _registration(Mutation(anchor, expression, "None", regression, raises))
+
+    def delete_statement(self, anchor: _Anchor, statement: str, regression: str) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that deletes the statement.
+
+        The mutation leaves `pass` where the statement was, so a block that held the statement alone still parses.
+        """
+        return _registration(Mutation(anchor, statement, "pass", regression))
+
+    def uncache(self, function: _Function, regression: str) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation that removes the function's cache decorator.
+
+        The mutation is anchored on the function's module, since the decorator lies outside the function's span.
+        """
+        definition = f"def {function.__qualname__}("
+        module = sys.modules[function.__module__]
+        return _registration(Mutation(module, f"@cache\n{definition}", definition, regression))
+
+
+kills = _Kills()
 
 
 def registered_mutations(test: unittest.TestCase) -> tuple[Mutation, ...]:

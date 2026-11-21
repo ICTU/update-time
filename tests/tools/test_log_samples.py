@@ -7,7 +7,7 @@ import unittest
 
 from tools.log_samples import _Capture
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.io.console import MESSAGE_NAME, delimit_dependency, delimit_location
 
 from tests.helpers import log_record
@@ -65,13 +65,11 @@ class CaptureTest(unittest.TestCase):
         collected = self.capture(f"Stale dependency {dependency} in {location}")
         self.assertEqual(collected.take(), "WARNING Stale dependency humanize in docs/requirements.txt")
 
-    @kills(
-        Mutation(
-            _Capture.emit,
-            "self.samples.setdefault(name, line)",
-            "self.samples[name] = line",
-            "the index shows the last sample logged for a name rather than the first",
-        )
+    @kills.replace(
+        _Capture.emit,
+        "self.samples.setdefault(name, line)",
+        "self.samples[name] = line",
+        "the index shows the last sample logged for a name rather than the first",
     )
     def test_the_first_line_collected_for_a_name_is_its_sample(self):
         """Test that the handler keeps the first line it collected for each name, and none for a record without one."""

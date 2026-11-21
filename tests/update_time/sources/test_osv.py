@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.reference import Reference
 from update_time.domain.vulnerability import RISK_LEVELS, Ecosystem, Vulnerability
 from update_time.io.log import Logger
@@ -102,21 +102,19 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         """Test that an advisory reporting no risk level is read as a vulnerability of no level, rather than failing."""
         self.assert_level(mock_post, osv_advisory(_ADVISORY, _SUMMARY), "")
 
-    @kills(
-        Mutation(
-            osv._vulnerability,
-            'frozenset(record.get("aliases") or []),',
-            'frozenset(record.get("aliases", [])),',
-            "an advisory whose aliases OSV reports as null ends the run with a traceback",
-            raises="TypeError: 'NoneType' object is not iterable",
-        ),
-        Mutation(
-            osv._banded_risk_level,
-            'for severity in record.get("severity") or []}',
-            'for severity in record.get("severity", [])}',
-            "an advisory whose severity OSV reports as null ends the run with a traceback",
-            raises="TypeError: 'NoneType' object is not iterable",
-        ),
+    @kills.replace(
+        osv._vulnerability,
+        'frozenset(record.get("aliases") or []),',
+        'frozenset(record.get("aliases", [])),',
+        "an advisory whose aliases OSV reports as null ends the run with a traceback",
+        raises="TypeError: 'NoneType' object is not iterable",
+    )
+    @kills.replace(
+        osv._banded_risk_level,
+        'for severity in record.get("severity") or []}',
+        'for severity in record.get("severity", [])}',
+        "an advisory whose severity OSV reports as null ends the run with a traceback",
+        raises="TypeError: 'NoneType' object is not iterable",
     )
     def test_advisory_with_a_null_array(self, mock_post: Mock):
         """Test that an advisory whose severity or aliases OSV reports as null is read as a vulnerability still."""
@@ -367,13 +365,11 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
             {"at the last affected version": ("v45.0.7", _ACTION_VULNERABILITIES), "past it": ("v45.0.8", [])}
         )
 
-    @kills(
-        Mutation(
-            osv._events_name,
-            "named = False\n    return named",
-            "return False\n    return named",
-            "a range is read as ending at its first fix, so a version after a reintroduction goes unreported",
-        )
+    @kills.replace(
+        osv._events_name,
+        "named = False\n    return named",
+        "return False\n    return named",
+        "a range is read as ending at its first fix, so a version after a reintroduction goes unreported",
     )
     def test_a_version_is_reported_where_a_range_reintroduces_the_vulnerability_after_a_fix(self, mock_post: Mock):
         """Test that an action version is reported between a range's second introduction and its second fix."""
@@ -397,13 +393,10 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
                 mock_post.side_effect = osv_api(_advisory_affecting(_GHSA, entry))
                 self.assertEqual(_action_vulnerabilities("v45.0.0"), [[]])
 
-    @kills(
-        Mutation(
-            osv._entry_names,
-            ' if range_["type"] == "ECOSYSTEM"',
-            "",
-            "a range of commits is read as a range of versions, and its commit SHA warned about as unreadable",
-        )
+    @kills.delete(
+        osv._entry_names,
+        ' if range_["type"] == "ECOSYSTEM"',
+        "a range of commits is read as a range of versions, and its commit SHA warned about as unreadable",
     )
     def test_a_git_range_is_passed_over(self, mock_post: Mock):
         """Test that a `GIT` range is passed over, so a version the `ECOSYSTEM` range fixes stays unreported."""
@@ -466,13 +459,10 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
             }
         )
 
-    @kills(
-        Mutation(
-            osv._in_range,
-            'if kind == "introduced" and at <= version:',
-            'if kind == "introduced":',
-            "an open range names a version below its introduction, wherever the last known affected range holds it",
-        )
+    @kills.delete(
+        osv._in_range,
+        " and at <= version",
+        "an open range names a version below its introduction, wherever the last known affected range holds it",
     )
     def test_the_last_known_affected_version_range_bounds_an_open_range(self, mock_post: Mock):
         """Test that an open range reports an action version only within its last known affected version range."""

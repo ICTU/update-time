@@ -13,10 +13,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, call, patch
 
-import update_time
 from mutation_time import mutation as checker
 from mutation_time.mutation import (
     _CHECKED_TEST,
+    _REGISTERED,
     CHECKS_OFF,
     KillsTestLoader,
     Mutation,
@@ -25,6 +25,7 @@ from mutation_time.mutation import (
     _failure,
     _record_survival,
     kills,
+    registered_mutations,
 )
 from update_time.primitives import timestamp
 
@@ -59,7 +60,6 @@ _TRIPLING = "value * 3"
 _SUBJECT_TEST_NAME = "tests.mutation_time.test_mutation.IsEvenTest.test_an_even_number"
 _MULTIPLE_TEST_NAME = "tests.mutation_time.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
 _FIVE_TEST_NAME = "tests.mutation_time.test_mutation.IsMultipleOfFiveTest.test_a_multiple_of_five"
-_NO_MUTATION_TEST_NAME = "tests.mutation_time.test_mutation.KillsTest.test_a_registration_of_no_mutation_fails_the_test"
 _DOUBLER_TEST_NAME = "tests.mutation_time.test_mutation.DoublerTest.test_a_doubled_value"
 _ONE_DOUBLED_TEST_NAME = "tests.mutation_time.test_mutation.DoublerTest.test_one_doubled"
 _TWO_DOUBLED_TEST_NAME = "tests.mutation_time.test_mutation.DoublerTest.test_two_doubled"
@@ -74,10 +74,12 @@ _COUNTER_TEST_NAME = "tests.mutation_time.test_mutation.CounterTest.test_one_ste
 _TALLY_TEST_NAME = "tests.mutation_time.test_mutation.TallyTest.test_the_summary"
 _LIMIT_TEST_NAME = "tests.mutation_time.test_mutation.LimitTest.test_the_value"
 # The `IsEvenTest` tests `KillsTest` runs to exercise the decorator: one registers a single mutation, one several,
-# one asserts inside a subTest, and one has a patch above its decorator. `IsEvenPatchedInSetUpTest` gives its
-# decorated test the name of the first.
+# one asserts inside a subTest, one has a patch above its decorator, and two stack their registrations, the second
+# with a patch between them. `IsEvenPatchedInSetUpTest` gives its decorated test the name of the first.
 _DECORATED_TEST = "test_an_odd_number"
 _SEVERAL_MUTATIONS_TEST = "test_an_odd_number_against_several_mutations"
+_STACKED_TEST = "test_an_odd_number_against_stacked_registrations"
+_STACKED_ACROSS_A_PATCH_TEST = "test_an_odd_number_against_registrations_stacked_across_a_patch"
 _SUBTEST_DECORATED_TEST = "test_an_odd_number_in_a_subtest"
 _PATCHED_ABOVE_TEST = "test_an_odd_number_patched_above_the_decorator"
 _REGRESSION = "an odd number is reported as even"
@@ -92,18 +94,18 @@ _NAME_ERROR = "NameError: name 'nonexistent' is not defined"
 _UNPARSABLE = "number %"  # A replacement that leaves the subject unparsable, so it does not import at all.
 _SURVIVING = "number == 2"  # A replacement the test passes against, so nothing it asserts breaks.
 _ODD_REPORTED_AS_EVEN = Mutation(mutation_subject.is_even, _EVEN, _ODD, _REGRESSION)
+_KILLS_ODD_REPORTED_AS_EVEN = kills.replace(mutation_subject.is_even, _EVEN, _ODD, _REGRESSION)
 _ONLY_THREE_REPORTED_AS_EVEN = Mutation(mutation_subject.is_even, _EVEN, _ONLY_THREE, _ONLY_THREE_REGRESSION)
+_KILLS_ONLY_THREE_REPORTED_AS_EVEN = kills.replace(mutation_subject.is_even, _EVEN, _ONLY_THREE, _ONLY_THREE_REGRESSION)
 # The regressions of the walk over a source's definitions that both an anchor and the anchor check rely on.
-_CLASSES_SKIPPED = Mutation(
+_KILLS_CLASSES_SKIPPED = kills.delete_statement(
     checker._named,
     'yield from _named(node.body, f"{prefix}{node.name}.")',
-    "pass",
     "the walk skips classes, so a method is neither found for its anchor nor seen by the check",
 )
-_SPAN_STOPS_BEFORE_THE_NEWLINE = Mutation(
+_KILLS_SPAN_STOPS_BEFORE_THE_NEWLINE = kills.delete(
     checker._node_span,
     '    if source.startswith("\\n", end):\n        end += 1\n',
-    "",
     "a span stops before the newline ending a definition's last line, so a snippet ending in it escapes both",
 )
 
@@ -123,18 +125,18 @@ class IsEvenTest(unittest.TestCase):
         """Test that two is positive and even."""
         self.assertTrue(is_positive_even(2))
 
-    @kills(_ODD_REPORTED_AS_EVEN)
+    @_KILLS_ODD_REPORTED_AS_EVEN
     def test_an_odd_number(self):
         """Test that an odd number is not even."""
         self.assertFalse(is_even(3))
 
-    @kills(_ODD_REPORTED_AS_EVEN)
+    @_KILLS_ODD_REPORTED_AS_EVEN
     def test_an_odd_number_in_a_subtest(self):
         """Test that an odd number is not even, asserting inside a subTest."""
         with self.subTest(number=3):
             self.assertFalse(is_even(3))
 
-    @kills(_ODD_REPORTED_AS_EVEN)
+    @_KILLS_ODD_REPORTED_AS_EVEN
     @patch("tests.mutation_time.mutation_subject.is_even")
     def test_an_odd_number_patched_beneath_the_decorator(self, patched_subject: Mock):
         """Test that an odd number is not even, with a patch handing this test a mock from beneath the decorator.
@@ -146,7 +148,7 @@ class IsEvenTest(unittest.TestCase):
         self.assertFalse(is_even(3))
 
     @patch("tests.mutation_time.mutation_subject.is_even")
-    @kills(_ODD_REPORTED_AS_EVEN)
+    @_KILLS_ODD_REPORTED_AS_EVEN
     def test_an_odd_number_patched_above_the_decorator(self, patched_subject: Mock):
         """Test that an odd number is not even, with a patch above the decorator handing this test a mock.
 
@@ -156,15 +158,27 @@ class IsEvenTest(unittest.TestCase):
         self.assertIsInstance(patched_subject, Mock)
         self.assertFalse(is_even(3))
 
-    @kills(
-        _ODD_REPORTED_AS_EVEN,
-        _ONLY_THREE_REPORTED_AS_EVEN,
-    )
+    @_KILLS_ODD_REPORTED_AS_EVEN
+    @_KILLS_ONLY_THREE_REPORTED_AS_EVEN
     def test_an_odd_number_against_several_mutations(self):
         """Test that an odd number is not even, killing each of the mutations its registration holds."""
         self.assertFalse(is_even(3))
 
-    @kills(Mutation(mutation_subject.is_even, _EVEN, _ERRORING, _RAISING_REGRESSION, raises=_NAME_ERROR))
+    @_KILLS_ODD_REPORTED_AS_EVEN
+    @_KILLS_ONLY_THREE_REPORTED_AS_EVEN
+    def test_an_odd_number_against_stacked_registrations(self):
+        """Test that an odd number is not even, killing the mutations of two registrations stacked on it."""
+        self.assertFalse(is_even(3))
+
+    @_KILLS_ODD_REPORTED_AS_EVEN
+    @patch("tests.mutation_time.mutation_subject.is_even")
+    @_KILLS_ONLY_THREE_REPORTED_AS_EVEN
+    def test_an_odd_number_against_registrations_stacked_across_a_patch(self, patched_subject: Mock):
+        """Test that an odd number is not even, killing the mutations of two registrations with a patch between."""
+        self.assertIsInstance(patched_subject, Mock)
+        self.assertFalse(is_even(3))
+
+    @kills.replace(mutation_subject.is_even, _EVEN, _ERRORING, _RAISING_REGRESSION, raises=_NAME_ERROR)
     def test_an_odd_number_against_a_mutation_that_raises(self):
         """Test that an odd number is not even, killing a mutation by raising the error the mutation declares."""
         self.assertFalse(is_even(3))
@@ -177,7 +191,7 @@ class IsEvenPatchedInSetUpTest(unittest.TestCase):
         """Patch the subject module's attribute until the test's cleanups run."""
         self.enterContext(patch("tests.mutation_time.mutation_subject.is_even"))
 
-    @kills(_ODD_REPORTED_AS_EVEN)
+    @_KILLS_ODD_REPORTED_AS_EVEN
     def test_an_odd_number(self):
         """Test that an odd number is not even, while the set-up's patch hands the subject module a mock."""
         self.assertFalse(is_even(3))
@@ -301,7 +315,7 @@ def _checked(mutation: Mutation, test_name: str) -> tuple[Result, int]:
 class CheckTest(unittest.TestCase):
     """Unit tests for checking a test against the mutation it is meant to kill."""
 
-    @kills(_SPAN_STOPS_BEFORE_THE_NEWLINE)
+    @_KILLS_SPAN_STOPS_BEFORE_THE_NEWLINE
     def test_a_mutation_anchored_to_a_function_is_applied_inside_it(self):
         """Test that a mutation anchored to a function is applied to it, up to the newline after its last line."""
         self.assertEqual(
@@ -312,14 +326,12 @@ class CheckTest(unittest.TestCase):
             Result(Outcome.KILLED),
         )
 
-    @kills(
-        _CLASSES_SKIPPED,
-        Mutation(
-            checker._span,
-            "(qualified_name)",
-            '(qualified_name.split(".")[-1])',
-            "the lookup uses the bare name, so a method is searched for at the top of the module and never found",
-        ),
+    @_KILLS_CLASSES_SKIPPED
+    @kills.append(
+        checker._span,
+        "(qualified_name",
+        '.split(".")[-1]',
+        "the lookup uses the bare name, so a method is searched for at the top of the module and never found",
     )
     def test_a_mutation_anchored_to_a_method_is_applied_inside_it(self):
         """Test that a mutation anchored to a method is applied to it, though its class holds the snippet twice."""
@@ -329,51 +341,39 @@ class CheckTest(unittest.TestCase):
         anchored = Mutation(Doubler.doubled, _DOUBLING, _TRIPLING, _ANY_REGRESSION)
         self.assertEqual(_checked(anchored, _DOUBLER_TEST_NAME), (Result(Outcome.KILLED), 0))
 
-    @kills(
-        Mutation(
-            checker.Mutation._unwrapped,
-            'cast("_Function", self.anchor.fget) if isinstance(self.anchor, property) else self.anchor',
-            "self.anchor",
-            "a property anchor is passed on as it is, so the run ends with a traceback",
-            raises=(
-                "AttributeError: 'property' object has no attribute '__module__'. "
-                "Did you mean '.__reduce__' instead of '.__module__'?"
-            ),
-        )
+    @kills.delete(
+        checker.Mutation._unwrapped,
+        'cast("_Function", self.anchor.fget) if isinstance(self.anchor, property) else ',
+        "a property anchor is passed on as it is, so the run ends with a traceback",
+        raises="AttributeError: 'property' object has no attribute '__module__'. "
+        "Did you mean '.__reduce__' instead of '.__module__'?",
     )
     def test_a_mutation_anchored_to_a_property_is_applied_inside_its_getter(self):
         """Test that a mutation anchored to a property reaches the getter, which is what carries its names."""
         mutation = Mutation(Doubler.one_doubled, "self.doubled(1)", "self.doubled(2)", _ANY_REGRESSION)
         self.assertEqual(_checked(mutation, _ONE_DOUBLED_TEST_NAME), (Result(Outcome.KILLED), 0))
 
-    @kills(
-        Mutation(
-            checker.Mutation._unwrapped,
-            'return cast("_Function", self.anchor.func)',
-            "return self.anchor",
-            "a cached property anchor is passed on as it is, so the run ends with a traceback",
-            raises=(
-                "AttributeError: 'cached_property' object has no attribute '__qualname__'. "
-                "Did you mean '.__set_name__' instead of '.__qualname__'?"
-            ),
-        )
+    @kills.replace(
+        checker.Mutation._unwrapped,
+        'return cast("_Function", self.anchor.func)',
+        "return self.anchor",
+        "a cached property anchor is passed on as it is, so the run ends with a traceback",
+        raises="AttributeError: 'cached_property' object has no attribute '__qualname__'. "
+        "Did you mean '.__set_name__' instead of '.__qualname__'?",
     )
     def test_a_mutation_anchored_to_a_cached_property_is_applied_inside_its_function(self):
         """Test that a mutation anchored to a cached property reaches its function, which is what carries its names."""
         mutation = Mutation(Doubler.three_doubled, "self.doubled(3)", "self.doubled(4)", _ANY_REGRESSION)
         self.assertEqual(_checked(mutation, _THREE_DOUBLED_TEST_NAME), (Result(Outcome.KILLED), 0))
 
-    @kills(
-        Mutation(
-            checker._named,
-            "if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):",
-            "if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):",
-            "a class is left out of the definitions, so a mutation anchored to one is reported stale",
-        )
+    @kills.delete(
+        checker._named,
+        "ast.ClassDef, ",
+        "a class is left out of the definitions, so a mutation anchored to one is reported stale",
     )
     def test_a_mutation_anchored_to_a_class_is_applied_inside_it(self):
         """Test that a mutation anchored to a class is applied to a snippet in its body, outside its methods."""
-        mutation = Mutation(Doubler, "A value doubler", "A doubler", _ANY_REGRESSION)
+        mutation = Mutation(Greeter, '"hello"', '"hi"', _ANY_REGRESSION)
         self.assertEqual(mutation.check(_DOUBLER_TEST_NAME), Result(Outcome.SURVIVED))
 
     def test_a_mutation_anchored_to_a_function_is_checked_without_executing_its_module_afresh(self):
@@ -397,10 +397,17 @@ class CheckTest(unittest.TestCase):
             with self.subTest(case):
                 self.assertEqual(_checked(mutation, test_name), (Result(Outcome.KILLED), 0))
 
+    @kills.replace(
+        checker.Mutation._mutated_assignments,
+        '_occurrences(source, "", self.old)[0]',
+        "source.index(self.old)",
+        "the check takes a docstring repeating a module-level assignment for it, so it executes the module afresh",
+    )
     def test_a_mutation_of_a_module_level_assignment_is_checked_without_executing_its_module_afresh(self):
         """Test that a mutation of a module-level assignment kills its test in the loaded module, then restores it.
 
-        The module loses a name again afterwards when only the mutated assignment binds it.
+        A docstring above the assignment repeats it. The module loses a name again afterwards when only the mutated
+        assignment binds it.
         """
         for case, new in (("rebinding a name", "_FIVE = 4"), ("binding a name the module lacks", "_FIVE = _SIX = 4")):
             with self.subTest(case):
@@ -409,56 +416,22 @@ class CheckTest(unittest.TestCase):
                 self.assertEqual(mutation_subject._FIVE, 5)
                 self.assertFalse(hasattr(mutation_subject, "_SIX"))
 
-    @kills(
-        Mutation(
-            checker.Mutation._run_test,
-            "if result.failures and not result.errors:",
-            "if True:",
-            "a mutation of an assignment that survives in place is reported as surviving, though a constant computed "
-            "from it still holds the original value",
-        ),
-        Mutation(
-            checker.Mutation._mutated_assignments,
-            "if self._qualified_name or self.module.__name__ == __name__:",
-            "if self._qualified_name:",
-            "a mutation of one of the checker's own constants is swapped into the checker that runs the check",
-        ),
+    @kills.force_true(
+        checker.Mutation._run_test,
+        "result.failures and not result.errors",
+        "a mutation of an assignment that survives in place is reported as surviving, though a constant computed "
+        "from it still holds the original value",
     )
     def test_a_mutation_of_an_assignment_the_loaded_module_cannot_judge_is_checked_afresh(self):
-        """Test that a mutated assignment that does not parse, raises, or leaves its test passing is checked afresh.
-
-        So is one of the checker's own, which would otherwise change the check that runs it.
-        """
+        """Test that a mutated assignment that does not parse, raises, or leaves its test passing is checked afresh."""
         five = "_FIVE = 5"
-        checker_constant = '_NO_MUTATION = "registers '
-        for case, mutation, test_name, outcome in (
-            (
-                "does not parse",
-                Mutation(mutation_subject, five, "_FIVE = (5", _ANY_REGRESSION),
-                _FIVE_TEST_NAME,
-                Outcome.BROKEN,
-            ),
-            (
-                "raises",
-                Mutation(mutation_subject, five, "_FIVE = 5 // 0", _ANY_REGRESSION),
-                _FIVE_TEST_NAME,
-                Outcome.BROKEN,
-            ),
-            (
-                "leaves its test passing",
-                Mutation(mutation_subject, five, "_FIVE = 4 + 1", _ANY_REGRESSION),
-                _FIVE_TEST_NAME,
-                Outcome.SURVIVED,
-            ),
-            (
-                "assigns a name of the checker",
-                Mutation(checker, checker_constant, '_NO_MUTATION = "lists ', _ANY_REGRESSION),
-                _NO_MUTATION_TEST_NAME,
-                Outcome.KILLED,
-            ),
+        for case, new, outcome in (
+            ("does not parse", "_FIVE = (5", Outcome.BROKEN),
+            ("raises", "_FIVE = 5 // 0", Outcome.BROKEN),
+            ("leaves its test passing", "_FIVE = 4 + 1", Outcome.SURVIVED),
         ):
             with self.subTest(case):
-                result, executed = _checked(mutation, test_name)
+                result, executed = _checked(Mutation(mutation_subject, five, new, _ANY_REGRESSION), _FIVE_TEST_NAME)
                 self.assertEqual((result.outcome, executed), (outcome, 1))
 
     def test_a_mutation_leaves_a_string_spanning_the_methods_lines_as_it_is(self):
@@ -492,43 +465,35 @@ class CheckTest(unittest.TestCase):
             with self.subTest(case):
                 self.assertEqual(_checked(mutation, test_name), (Result(Outcome.KILLED), 1))
 
-    @kills(
-        Mutation(
-            checker._executed_module,
-            "executed.__path__ = module.__path__",
-            "pass",
-            "a mutated package is not a package, so a test importing a submodule of it ends the check as broken",
-        )
+    @kills.delete_statement(
+        checker._executed_module,
+        "executed.__path__ = module.__path__",
+        "a mutated package is not a package, so a test importing a submodule of it ends the check as broken",
     )
     def test_a_mutation_of_a_package_importing_its_own_submodule_is_killed(self):
         """Test that a mutation of a package whose module imports a submodule of its own reaches the test it breaks."""
         mutation = Mutation(mutation_subject_package, "start = 0", "start = 1", _ANY_REGRESSION)
         self.assertEqual(_checked(mutation, _COUNTER_TEST_NAME), (Result(Outcome.KILLED), 1))
 
-    @kills(
-        Mutation(
-            checker._executed_module,
-            "sys.modules[module.__name__] = executed\n"
-            "    try:\n"
-            '        exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)',
-            "try:\n"
-            '        exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)\n'
-            "        sys.modules[module.__name__] = executed",
-            "the mutation survives, since a module importing the mutated one back gets the original",
-        )
+    @kills.replace(
+        checker._executed_module,
+        "sys.modules[module.__name__] = executed\n"
+        "    try:\n"
+        '        exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)',
+        "try:\n"
+        '        exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)\n'
+        "        sys.modules[module.__name__] = executed",
+        "the mutation survives, since a module importing the mutated one back gets the original",
     )
     def test_a_mutation_of_a_module_that_a_module_it_imports_imports_back_is_killed(self):
         """Test that a mutation reaches the test it breaks through a module that imports the mutated module back."""
         mutation = Mutation(tally, "start = 0", "start = 1", _ANY_REGRESSION)
         self.assertEqual(_checked(mutation, _TALLY_TEST_NAME), (Result(Outcome.KILLED), 1))
 
-    @kills(
-        Mutation(
-            checker._bind_on_parent,
-            "setattr(package, child, module)",
-            "pass",
-            "a test naming the mutated module by a dotted name does not find it on its parent",
-        )
+    @kills.delete(
+        checker._bind_on_parent,
+        "setattr(package, child, module)",
+        "a test naming the mutated module by a dotted name does not find it on its parent",
     )
     def test_a_mutation_of_a_module_the_test_reaches_by_its_dotted_name_is_killed(self):
         """Test that a mutation reaches the test it breaks where the test names the mutated module by a dotted name."""
@@ -537,26 +502,21 @@ class CheckTest(unittest.TestCase):
         )
         self.assertEqual(_checked(mutation, _LIMIT_TEST_NAME), (Result(Outcome.KILLED), 1))
 
-    @kills(
-        Mutation(
-            checker._bind_on_parent,
-            "if not parent:",
-            "if False:",
-            "a mutated top-level package is reported as broken, since the check imports an empty parent name",
-        )
+    @kills.force_false(
+        checker._bind_on_parent,
+        "not parent",
+        "a mutated top-level package is reported as broken, since the check imports an empty parent name",
     )
     def test_a_mutation_of_a_top_level_package_is_checked_afresh(self):
         """Test that a mutation of a package without a parent is checked afresh, with nothing to bind it on."""
-        mutation = Mutation(update_time, '"""Update-time main package."""', '"""Update-time."""', _ANY_REGRESSION)
+        mutation = Mutation(tests, " no test may lift the refusal.", "", _ANY_REGRESSION)
         self.assertEqual(_checked(mutation, _SUBJECT_TEST_NAME), (Result(Outcome.SURVIVED), 1))
 
-    @kills(
-        Mutation(
-            checker.Mutation._mutated_function,
-            "return defined.get(",
-            "return (vars(self.module) | defined).get(",
-            "a mutation renaming its function runs the unmutated function in place, so it survives",
-        )
+    @kills.replace(
+        checker.Mutation._mutated_function,
+        "return defined.get(",
+        "return (vars(self.module) | defined).get(",
+        "a mutation renaming its function runs the unmutated function in place, so it survives",
     )
     def test_a_mutation_renaming_its_function_executes_its_module_afresh(self):
         """Test that a mutation renaming the function it is anchored to executes its module afresh, the name gone."""
@@ -575,13 +535,11 @@ class CheckTest(unittest.TestCase):
         # The other predicate ends on the same snippet, so its own test survives only while the change stays put.
         self.assertEqual(anchored.check(_SUBJECT_TEST_NAME), Result(Outcome.SURVIVED))
 
-    @kills(
-        Mutation(
-            checker.Mutation.check,
-            "return Result(Outcome.KILLED if test_result.failures else Outcome.SURVIVED)",
-            "return Result(Outcome.KILLED if test_result.failures or self.raises else Outcome.SURVIVED)",
-            "a declaration alone counts as a kill, so a mutation the test passes against is reported as killed",
-        )
+    @kills.append(
+        checker.Mutation.check,
+        "return Result(Outcome.KILLED if test_result.failures ",
+        "or self.raises ",
+        "a declaration alone counts as a kill, so a mutation the test passes against is reported as killed",
     )
     def test_a_test_that_passes_against_the_mutation(self):
         """Test that a mutation the registered test passes against is reported as survived, declared error or not."""
@@ -606,36 +564,28 @@ class CheckTest(unittest.TestCase):
         staleness_test_name = "tests.update_time.domain.test_staleness.IsStaleTest.test_boundary_compares_whole_days"
         self.assertEqual(mutation.check(staleness_test_name), Result(Outcome.KILLED))
 
-    @kills(
-        Mutation(
-            checker._loaded_test,
-            "return unittest.TestLoader().loadTestsFromName(test_name)\n    except Exception as error:",
-            "return unittest.TestLoader().loadTestsFromName(test_name)\n    except SyntaxError as error:",
-            "a mutation the test module cannot import escapes the check rather than being reported as broken",
-            raises="AttributeError: 'function' object has no attribute '_registered_mutations'",
-        ),
-        Mutation(
-            checker._loaded_test,
-            "return unittest.TestLoader().loadTestsFromName(test_name)\n"
-            "    except Exception as error:\n"
-            "        raise _SourceError(_reason(error)) from error",
-            "return unittest.TestLoader().loadTestsFromName(test_name)\n"
-            "    except Exception as error:\n"
-            "        raise _SourceError() from error",
-            "a mutation the test module cannot import is reported as broken without naming the error",
-        ),
-        Mutation(
-            checker._bind_on_parent,
-            "raise _SourceError(_reason(error)) from error",
-            "raise _SourceError() from error",
-            "a mutation that leaves its parent package unimportable is reported as broken without naming the error",
-        ),
+    @kills.replace(
+        checker._loaded_test,
+        "Exception",
+        "SyntaxError",
+        "a mutation the test module cannot import escapes the check rather than being reported as broken",
+        raises="AttributeError: 'function' object has no attribute '_registered_mutations'",
+    )
+    @kills.delete(
+        checker._loaded_test,
+        "_reason(error)",
+        "a mutation the test module cannot import is reported as broken without naming the error",
+    )
+    @kills.delete(
+        checker._bind_on_parent,
+        "_reason(error)",
+        "a mutation that leaves its parent package unimportable is reported as broken without naming the error",
     )
     def test_a_mutation_that_cannot_be_judged_is_reported_as_broken(self):
         """Test that a mutation the check could not judge is reported as broken rather than as survived."""
         deletes_the_registration = Mutation(
-            checker.kills,
-            "setattr(wrapper, _REGISTERED, mutations)",
+            checker._registration,
+            "setattr(wrapper, _REGISTERED, (mutation,))",
             "delattr(wrapper, _REGISTERED)",
             _ANY_REGRESSION,
         )
@@ -663,13 +613,11 @@ class CheckTest(unittest.TestCase):
                 self.assertEqual(result.outcome, Outcome.BROKEN)
                 self.assertIn(error, result.reason)
 
-    @kills(
-        Mutation(
-            checker.Mutation.check,
-            "return Result(Outcome.BROKEN, str(error))",
-            "return Result(Outcome.KILLED if str(error) == self.raises else Outcome.BROKEN, str(error))",
-            "a mutation whose source does not import counts as killed where the declaration names the import's error",
-        )
+    @kills.prepend(
+        checker.Mutation.check,
+        "Outcome.BROKEN, str(error))",
+        "Outcome.KILLED if str(error) == self.raises else ",
+        "a mutation whose source does not import counts as killed where the declaration names the import's error",
     )
     def test_a_source_that_does_not_import_though_its_error_is_declared(self):
         """Test that a mutation whose source does not import is reported as broken though it declares that error."""
@@ -679,26 +627,20 @@ class CheckTest(unittest.TestCase):
         declaring = Mutation(mutation_subject.is_even, _EVEN, _UNPARSABLE, _ANY_REGRESSION, raises=reported)
         self.assertEqual(declaring.check(_SUBJECT_TEST_NAME), Result(Outcome.BROKEN, reported))
 
-    @kills(
-        Mutation(
-            checker.Mutation.check,
-            "return Result(Outcome.KILLED) if raised == self.raises else Result(Outcome.BROKEN, raised)",
-            "return Result(Outcome.BROKEN, raised)",
-            "a test that kills a mutation by raising the error the mutation declares is reported as broken",
-        )
+    @kills.delete(
+        checker.Mutation.check,
+        "Result(Outcome.KILLED) if raised == self.raises else ",
+        "a test that kills a mutation by raising the error the mutation declares is reported as broken",
     )
     def test_a_test_that_raises_the_declared_error(self):
         """Test that a mutation whose test raises the declared error is reported as killed."""
         mutation = Mutation(mutation_subject.is_even, _EVEN, _ERRORING, _ANY_REGRESSION, raises=_NAME_ERROR)
         self.assertEqual(mutation.check(_SUBJECT_TEST_NAME), Result(Outcome.KILLED))
 
-    @kills(
-        Mutation(
-            checker.Mutation.check,
-            "Result(Outcome.BROKEN, raised)",
-            "Result(Outcome.BROKEN)",
-            "a mutation reported as broken does not name the error the test raised, which is the line to declare",
-        )
+    @kills.delete(
+        checker.Mutation.check,
+        ", raised",
+        "a mutation reported as broken does not name the error the test raised, which is the line to declare",
     )
     def test_a_test_that_raises_an_undeclared_error(self):
         """Test that a mutation whose test raises an undeclared error is reported as broken, naming the error."""
@@ -710,13 +652,11 @@ class CheckTest(unittest.TestCase):
             Result(Outcome.BROKEN, _NAME_ERROR),
         )
 
-    @kills(
-        Mutation(
-            checker.Mutation.check,
-            "except _SourceError as error:",
-            "except Exception as error:",
-            "an error in the checker itself is caught and misreported as a broken mutation",
-        )
+    @kills.replace(
+        checker.Mutation.check,
+        "_SourceError",
+        "Exception",
+        "an error in the checker itself is caught and misreported as a broken mutation",
     )
     def test_a_defect_in_the_checker_itself(self):
         """Test that an error from the checker is raised, rather than reported as the mutation being broken."""
@@ -740,13 +680,10 @@ class CheckTest(unittest.TestCase):
                 changed = [name for name in names if sys.modules.get(name) is not imported.get(name)]
                 self.assertEqual(changed, [])
 
-    @kills(
-        Mutation(
-            checker.Mutation._source,
-            "raise StaleError(_reason(error)) from error",
-            "raise StaleError from error",
-            "a mutation naming an unreadable file is reported as stale without saying why",
-        )
+    @kills.delete(
+        checker.Mutation._source,
+        "_reason(error)",
+        "a mutation naming an unreadable file is reported as stale without saying why",
     )
     def test_a_mutation_whose_file_cannot_be_read(self):
         """Test that a mutation naming a file that cannot be read is reported as stale, and says so."""
@@ -762,14 +699,11 @@ class CheckTest(unittest.TestCase):
             result = Mutation(mutation_subject.is_even, _EVEN, _ODD, _ANY_REGRESSION).check(_SUBJECT_TEST_NAME)
         self.assertEqual(result, Result(Outcome.KILLED))
 
-    @kills(
-        Mutation(
-            checker._definitions,
-            "raise StaleError(_reason(error)) from error",
-            "raise error",
-            "the run ends with a traceback where a source no longer parses, rather than reporting it stale",
-            raises="SyntaxError: '(' was never closed",
-        )
+    @kills.delete(
+        checker._definitions,
+        "StaleError(_reason(error)) from ",
+        "the run ends with a traceback where a source no longer parses, rather than reporting it stale",
+        raises="SyntaxError: '(' was never closed",
     )
     def test_a_mutation_whose_source_does_not_parse(self):
         """Test that a mutation whose file no longer parses is reported as stale, and says so, whatever its anchor."""
@@ -788,13 +722,11 @@ class CheckTest(unittest.TestCase):
             result = Mutation(mutation_subject, "return 1", "return 2", _ANY_REGRESSION).check(_SUBJECT_TEST_NAME)
         self.assertEqual(result, Result(Outcome.STALE, "the snippet lies inside last, so anchor the mutation on last"))
 
-    @kills(
-        Mutation(
-            checker._definitions,
-            "definitions.setdefault(name, node)",
-            "definitions[name] = node",
-            "a setter hides its getter, so a module anchor is accepted around a snippet the getter holds",
-        )
+    @kills.replace(
+        checker._definitions,
+        "definitions.setdefault(name, node)",
+        "definitions[name] = node",
+        "a setter hides its getter, so a module anchor is accepted around a snippet the getter holds",
     )
     def test_a_module_anchor_on_a_getter_whose_property_has_a_setter(self):
         """Test that a module anchor on a getter's snippet is stale, though the setter shares the getter's name."""
@@ -806,13 +738,23 @@ class CheckTest(unittest.TestCase):
             result = Mutation(mutation_subject, "self._x + 1", "self._x + 2", _ANY_REGRESSION).check(_DOUBLER_TEST_NAME)
         self.assertEqual(result, Result(Outcome.STALE, "the snippet lies inside A.x, so anchor the mutation on A.x"))
 
-    @kills(
-        Mutation(
-            checker.mutated_source,
-            "if new == old:",
-            "if False:",
-            "a mutation that changes nothing is reported as survived, blaming the test rather than the registration",
-        )
+    @kills.replace(
+        checker._function_holding,
+        '_occurrences(source, "", snippet)[0]',
+        "source.index(snippet)",
+        "a module anchor's message names the function whose docstring repeats the snippet, not the one holding it",
+    )
+    def test_a_module_anchor_on_a_snippet_an_earlier_docstring_repeats(self):
+        """Test that a module anchor on a function's snippet names the function, not an earlier docstring's."""
+        source = 'def f():\n    """Return x or None."""\n\n\ndef g(x):\n    return x or None\n'
+        with patch.object(checker, "_READ_TEXT", Mock(return_value=source)):
+            result = Mutation(mutation_subject, " or None", "", _ANY_REGRESSION).check(_SUBJECT_TEST_NAME)
+        self.assertEqual(result, Result(Outcome.STALE, "the snippet lies inside g, so anchor the mutation on g"))
+
+    @kills.force_false(
+        checker.mutated_source,
+        "new == old",
+        "a mutation that changes nothing is reported as survived, blaming the test rather than the registration",
     )
     def test_a_mutation_that_would_change_nothing(self):
         """Test that a replacement equal to the snippet is reported as stale, rather than as the test's failing."""
@@ -820,25 +762,20 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(result.outcome, Outcome.STALE)
         self.assertEqual(result.reason, "the snippet and its replacement are the same, so nothing changes")
 
-    @kills(
-        Mutation(
-            checker.mutated_source,
-            "if old[:1] in",
-            "if False and old[:1] in",
-            "a registration pads its snippet with indentation, hiding the token the mutation changes",
-        ),
-        Mutation(
-            checker.mutated_source,
-            'in (" ", "\\t")',
-            'in (" ",)',
-            "a registration pads its snippet with tabs, hiding the token the mutation changes",
-        ),
-        Mutation(
-            checker.mutated_source,
-            "new[:1] == old[:1]:",
-            "True:",
-            "a mutation deleting a whole line is rejected, though the line's indentation is part of what it deletes",
-        ),
+    @kills.force_false(
+        checker.mutated_source,
+        'old[:1] in (" ", "\\t") and new[:1] == old[:1]',
+        "a registration pads its snippet with indentation, hiding the token the mutation changes",
+    )
+    @kills.delete(
+        checker.mutated_source,
+        ' "\\t"',
+        "a registration pads its snippet with tabs, hiding the token the mutation changes",
+    )
+    @kills.force_true(
+        checker.mutated_source,
+        "new[:1] == old[:1]",
+        "a mutation deleting a whole line is rejected, though the line's indentation is part of what it deletes",
     )
     def test_a_snippet_and_replacement_opening_on_the_same_indentation(self):
         """Test that a snippet and a replacement opening on the same indentation are reported as stale."""
@@ -853,28 +790,25 @@ class CheckTest(unittest.TestCase):
         deleted_line = Mutation(is_even, f"    return {_EVEN}\n", "", _ANY_REGRESSION)
         self.assertEqual(deleted_line.check(_SUBJECT_TEST_NAME), Result(Outcome.KILLED))
 
-    @kills(
-        Mutation(
-            checker._function_holding,
-            "first <= start and end <= last",
-            "False",
-            "a module anchor is accepted around a snippet one function holds, so the anchor claims the whole file",
-        ),
-        _CLASSES_SKIPPED,
-        Mutation(
-            checker._named,
-            'f"{prefix}{node.name}."',
-            "prefix",
-            "the message names a method without its class, and an anchor cannot reach the method by that name",
-        ),
-        Mutation(
-            checker._named,
-            'yield f"{prefix}{node.name}", node',
-            'yield from _named(node.body, f"{prefix}{node.name}.")\n            yield f"{prefix}{node.name}", node',
-            "the message names a nested function instead of the function around it, and an anchor cannot reach it",
-        ),
-        _SPAN_STOPS_BEFORE_THE_NEWLINE,
+    @kills.force_false(
+        checker._function_holding,
+        "first <= start and end <= last",
+        "a module anchor is accepted around a snippet one function holds, so the anchor claims the whole file",
     )
+    @_KILLS_CLASSES_SKIPPED
+    @kills.replace(
+        checker._named,
+        'f"{prefix}{node.name}."',
+        "prefix",
+        "the message names a method without its class, and an anchor cannot reach the method by that name",
+    )
+    @kills.prepend(
+        checker._named,
+        'yield f"{prefix}{node.name}", node',
+        'yield from _named(node.body, f"{prefix}{node.name}.")\n            ',
+        "the message names a nested function instead of the function around it, and an anchor cannot reach it",
+    )
+    @_KILLS_SPAN_STOPS_BEFORE_THE_NEWLINE
     def test_a_module_anchor_on_a_snippet_one_function_holds(self):
         """Test that a module anchor on a snippet one function or method holds is reported as stale, naming it."""
         for case, old, new, test_name, function in (
@@ -890,26 +824,22 @@ class CheckTest(unittest.TestCase):
                     result.reason, f"the snippet lies inside {function}, so anchor the mutation on {function}"
                 )
 
-    @kills(
-        Mutation(
-            checker._function_holding,
-            "first <= start and end <= last",
-            "True",
-            "a module anchor is rejected around a snippet outside every function, though a function cannot anchor it",
-        ),
-        Mutation(
-            checker._node_span,
-            "_offset(source, node.lineno, node.col_offset)",
-            "_offset(source, min([node.lineno, "
-            '*(decorator.lineno for decorator in getattr(node, "decorator_list", []))]), 0)',
-            "a span starts at the decorators, so a snippet starting at one is rejected, though its function lacks it",
-        ),
-        Mutation(
-            checker._function_holding,
-            "first <= start and end <= last",
-            "first <= start <= last",
-            "a snippet starting in one function and ending in the next is rejected as if the first held it all",
-        ),
+    @kills.force_true(
+        checker._function_holding,
+        "first <= start and end <= last",
+        "a module anchor is rejected around a snippet outside every function, though a function cannot anchor it",
+    )
+    @kills.replace(
+        checker._node_span,
+        "_offset(source, node.lineno, node.col_offset)",
+        "_offset(source, min([node.lineno, "
+        '*(decorator.lineno for decorator in getattr(node, "decorator_list", []))]), 0)',
+        "a span starts at the decorators, so a snippet starting at one is rejected, though its function lacks it",
+    )
+    @kills.delete(
+        checker._function_holding,
+        "and end ",
+        "a snippet starting in one function and ending in the next is rejected as if the first held it all",
     )
     def test_a_module_anchor_on_a_snippet_no_function_holds_on_its_own(self):
         """Test that a module anchor on a snippet no function or method holds on its own is applied."""
@@ -925,21 +855,17 @@ class CheckTest(unittest.TestCase):
                 result = Mutation(mutation_subject, old, new, _ANY_REGRESSION).check(_SUBJECT_TEST_NAME)
                 self.assertEqual(result, Result(Outcome.SURVIVED))
 
-    @kills(
-        Mutation(
-            checker.mutated_source,
-            "if (occurrences := source[start:end].count(old)) != 1:",
-            "if not source[start:end].count(old):\n"
-            "        start, end = 0, len(source)\n"
-            "    if (occurrences := source[start:end].count(old)) != 1:",
-            "the checker falls back to the whole file, so a mutation lands outside the anchor that named it",
-        )
+    @kills.append(
+        checker._occurrences,
+        "start, end = _span(source, qualified_name)",
+        "\n    if snippet not in source[start:end]:\n        start, end = 0, len(source)",
+        "the checker falls back to the whole file, so a mutation lands outside the anchor that named it",
     )
     def test_a_snippet_the_anchor_does_not_hold_exactly_once(self):
         """Test that a snippet the anchor holds never, or more than once, is reported as stale, saying how often."""
         for case, anchor, old, occurrences in (
             ("absent from the file", mutation_subject, "number % 3 == 0", 0),
-            ("repeated in the file", mutation_subject, "number", 6),
+            ("repeated in the file", mutation_subject, "number", 4),
             ("in the file but outside the anchored function", is_multiple_of_three, _EVEN, 0),
         ):
             with self.subTest(case=case):
@@ -947,14 +873,11 @@ class CheckTest(unittest.TestCase):
                 self.assertEqual(result.outcome, Outcome.STALE)
                 self.assertEqual(result.reason, f"the snippet occurs {occurrences} times rather than once")
 
-    @kills(
-        Mutation(
-            checker._span,
-            "if definition is None:",
-            "if False:",
-            "the checker reads the offsets of a definition it did not find, so the run ends with a traceback",
-            raises="AttributeError: 'NoneType' object has no attribute 'lineno'",
-        )
+    @kills.force_false(
+        checker._span,
+        "definition is None",
+        "the checker reads the offsets of a definition it did not find, so the run ends with a traceback",
+        raises="AttributeError: 'NoneType' object has no attribute 'lineno'",
     )
     def test_an_anchor_the_source_does_not_define(self):
         """Test that an anchor the source does not define is reported as stale, naming the anchor."""
@@ -967,6 +890,58 @@ class CheckTest(unittest.TestCase):
 
 def _stand_in(_test_case: unittest.TestCase, *_args: object) -> None:
     """Stand in for the test that a registration under test decorates."""
+
+
+# What a mutation raises where a docstring repeats its snippet and the docstring counts as code.
+_SNIPPET_TWICE = "mutation_time.mutation.StaleError: the snippet occurs 2 times rather than once"
+
+
+class MutatedSourceTest(unittest.TestCase):
+    """Unit tests for the source a mutation turns the file into."""
+
+    @kills.replace(
+        checker._docstrings,
+        "ast.walk(tree)",
+        "[tree, *tree.body]",
+        "a nested function's docstring counts as code, so a snippet it repeats makes the mutation stale",
+        raises=_SNIPPET_TWICE,
+    )
+    @kills.delete(
+        checker._docstrings,
+        "ast.Module, ",
+        "the module's docstring counts as code, so a snippet it repeats makes a module anchor's mutation stale",
+        raises=_SNIPPET_TWICE,
+    )
+    @kills.delete(
+        checker._docstrings,
+        "ast.ClassDef, ",
+        "a class's docstring counts as code, so a snippet it repeats makes a class anchor's mutation stale",
+        raises=_SNIPPET_TWICE,
+    )
+    def test_a_docstring_repeating_the_snippet_is_left_as_written(self):
+        """Test that a snippet a docstring repeats is replaced in the code, and left as written in the docstring."""
+        for case, anchor, source, mutated in (
+            (
+                "a nested function's docstring",
+                "f",
+                'def f(x):\n    def g():\n        """Return x or None."""\n\n    return x or None\n',
+                'def f(x):\n    def g():\n        """Return x or None."""\n\n    return x\n',
+            ),
+            (
+                "a class's docstring",
+                "C",
+                'class C:\n    """Hold x or None."""\n\n    X = x or None\n',
+                'class C:\n    """Hold x or None."""\n\n    X = x\n',
+            ),
+            (
+                "the module's docstring",
+                "",
+                '"""Hold x or None."""\n\nX = x or None\n',
+                '"""Hold x or None."""\n\nX = x\n',
+            ),
+        ):
+            with self.subTest(case):
+                self.assertEqual(checker.mutated_source(source, anchor, " or None", ""), mutated)
 
 
 class LinesTest(unittest.TestCase):
@@ -985,6 +960,13 @@ class LinesTest(unittest.TestCase):
         for case, (mutation, lines) in cases.items():
             with self.subTest(case):
                 self.assertEqual(mutation.lines, lines)
+
+    def test_the_lines_of_the_code_rather_than_of_a_docstring_repeating_the_snippet(self):
+        """Test that a mutation's lines are the code's, though the docstring above the code repeats the snippet."""
+        source = 'def is_even(number):\n    """Return number or None."""\n    return number or None\n'
+        with patch.object(checker, "_READ_TEXT", Mock(return_value=source)):
+            lines = Mutation(is_even, " or None", "", _ANY_REGRESSION).lines
+        self.assertEqual(lines, range(3, 4))
 
 
 class CapturedMethodsTest(unittest.TestCase):
@@ -1083,19 +1065,17 @@ class RecordSurvivalTest(unittest.TestCase):
 class FailureMessageTest(unittest.TestCase):
     """Unit tests for the message that reports a mutation the test did not kill."""
 
-    @kills(
-        Mutation(
-            checker.Mutation.anchor_name,
-            '".".join(filter(None, (self.module.__name__, self._qualified_name)))',
-            "self.module.__name__",
-            "a report names the module alone, so it does not say which of its anchors went stale",
-        ),
-        Mutation(
-            checker.Mutation.anchor_name,
-            "filter(None, (self.module.__name__, self._qualified_name))",
-            "(self.module.__name__, self._qualified_name)",
-            "a module anchor is reported with a trailing dot, as though a definition were missing from the name",
-        ),
+    @kills.replace(
+        checker.Mutation.anchor_name,
+        '".".join(filter(None, (self.module.__name__, self._qualified_name)))',
+        "self.module.__name__",
+        "a report names the module alone, so it does not say which of its anchors went stale",
+    )
+    @kills.replace(
+        checker.Mutation.anchor_name,
+        "filter(None, (self.module.__name__, self._qualified_name))",
+        "(self.module.__name__, self._qualified_name)",
+        "a module anchor is reported with a trailing dot, as though a definition were missing from the name",
     )
     def test_the_message_names_the_anchor(self):
         """Test that the message names the definition the mutation is anchored to, and the module where none is."""
@@ -1145,19 +1125,17 @@ class KillsTest(unittest.TestCase):
             decorated.run(result)
         return result
 
-    @kills(
-        Mutation(
-            checker._fail_unless_killed,
-            "for mutation in mutations:",
-            "for mutation in mutations[:1]:",
-            "only the first of the mutations a registration holds is checked",
-        ),
-        Mutation(
-            checker._fail_unless_killed,
-            "result = mutation.check(test_name)",
-            'result = mutation.check(test_name.split(".")[-1])',
-            "the test is named without the module it sits in, so the checker cannot load it",
-        ),
+    @kills.append(
+        checker._fail_unless_killed,
+        "for mutation in mutations",
+        "[:1]",
+        "only the first of the mutations a registration holds is checked",
+    )
+    @kills.append(
+        checker._fail_unless_killed,
+        "result = mutation.check(test_name",
+        '.split(".")[-1]',
+        "the test is named without the module it sits in, so the checker cannot load it",
     )
     def test_a_decorated_test_checks_every_mutation_it_registers(self):
         """Test that a registration holding several mutations checks each of them, in order, naming the test."""
@@ -1171,13 +1149,177 @@ class KillsTest(unittest.TestCase):
             ],
         )
 
-    @kills(
-        Mutation(
-            checker._failure,
-            "{mutation.regression} — the test did not kill",
-            "the test did not kill",
-            "the survivor message drops the regression, so it no longer says what went wrong",
-        )
+    @kills.replace(
+        checker._Kills.replace,
+        "regression, raises))",
+        "regression))",
+        "a replacement on kills drops the error it declares, so a test killing it by raising is reported as broken",
+    )
+    @kills.replace(
+        checker._Kills.delete,
+        "regression, raises))",
+        "regression))",
+        "a deletion on kills drops the error it declares, so a test killing it by raising is reported as broken",
+    )
+    @kills.replace(
+        checker._Kills.prepend,
+        "new + old",
+        "old + new",
+        "prepending on kills inserts the new code after the snippet rather than before it",
+    )
+    @kills.replace(
+        checker._Kills.append,
+        "old + new",
+        "new + old",
+        "appending on kills inserts the new code before the snippet rather than after it",
+    )
+    @kills.replace(
+        checker._Kills.uncache,
+        "definition, regression))",
+        'definition, ""))',
+        "uncaching on kills drops the regression, so a survivor's report does not say what went wrong",
+    )
+    @kills.replace(
+        checker._Kills.uncache,
+        "Mutation(module,",
+        "Mutation(function,",
+        "uncaching anchors on the function, whose span leaves out the decorator, so every uncaching is stale",
+    )
+    @kills.replace(
+        checker._Kills.force_true,
+        '"True", regression',
+        '"False", regression',
+        "forcing a condition true on kills forces it false, so the mutation stands for another regression",
+    )
+    @kills.replace(
+        checker._Kills.force_true,
+        "regression, raises))",
+        "regression))",
+        "forcing a condition true on kills drops the error it declares, so a test killing it by raising is broken",
+    )
+    @kills.replace(
+        checker._Kills.force_false,
+        '"False", regression',
+        '"True", regression',
+        "forcing a condition false on kills forces it true, so the mutation stands for another regression",
+    )
+    @kills.replace(
+        checker._Kills.force_false,
+        "regression, raises))",
+        "regression))",
+        "forcing a condition false on kills drops the error it declares, so a test killing it by raising is broken",
+    )
+    @kills.replace(
+        checker._Kills.force_none,
+        '"None", regression',
+        '"False", regression',
+        "forcing an expression to None on kills forces it false, so the mutation stands for another regression",
+    )
+    @kills.replace(
+        checker._Kills.force_none,
+        "regression, raises))",
+        "regression))",
+        "forcing an expression to None on kills drops the error it declares, so a test killing it by raising is broken",
+    )
+    @kills.replace(
+        checker._Kills.delete_statement,
+        '"pass", regression',
+        '"", regression',
+        "deleting a statement on kills leaves empty a block that held the statement alone",
+    )
+    @kills.replace(
+        checker._Kills.delete_statement,
+        '"pass", regression))',
+        '"pass", ""))',
+        "deleting a statement on kills drops the regression, so a survivor's report does not say what went wrong",
+    )
+    def test_each_verb_on_kills_registers_the_plain_mutation_making_its_change(self):
+        """Test that each verb on kills registers the one mutation making its change, such as forcing a condition."""
+        for case, decorator, mutation in (
+            (
+                "replace",
+                kills.replace(is_even, _EVEN, _ODD, _REGRESSION, raises=_NAME_ERROR),
+                Mutation(is_even, _EVEN, _ODD, _REGRESSION, raises=_NAME_ERROR),
+            ),
+            (
+                "delete",
+                kills.delete(is_even, _EVEN, _REGRESSION, raises=_NAME_ERROR),
+                Mutation(is_even, _EVEN, "", _REGRESSION, raises=_NAME_ERROR),
+            ),
+            (
+                "prepend",
+                kills.prepend(is_even, _EVEN, "not ", _REGRESSION, raises=_NAME_ERROR),
+                Mutation(is_even, _EVEN, f"not {_EVEN}", _REGRESSION, raises=_NAME_ERROR),
+            ),
+            (
+                "append",
+                kills.append(is_even, _EVEN, " + 1", _REGRESSION, raises=_NAME_ERROR),
+                Mutation(is_even, _EVEN, f"{_EVEN} + 1", _REGRESSION, raises=_NAME_ERROR),
+            ),
+            (
+                "uncache",
+                kills.uncache(is_odd, _REGRESSION),
+                Mutation(mutation_subject, "@cache\ndef is_odd(", "def is_odd(", _REGRESSION),
+            ),
+            (
+                "force_true",
+                kills.force_true(is_even, _EVEN, _REGRESSION, raises=_NAME_ERROR),
+                Mutation(is_even, _EVEN, "True", _REGRESSION, raises=_NAME_ERROR),
+            ),
+            (
+                "force_false",
+                kills.force_false(is_even, _EVEN, _REGRESSION, raises=_NAME_ERROR),
+                Mutation(is_even, _EVEN, "False", _REGRESSION, raises=_NAME_ERROR),
+            ),
+            (
+                "delete_statement",
+                kills.delete_statement(is_even, f"return {_EVEN}", _REGRESSION),
+                Mutation(is_even, f"return {_EVEN}", "pass", _REGRESSION),
+            ),
+            (
+                "force_none",
+                kills.force_none(is_even, _EVEN, _REGRESSION, raises=_NAME_ERROR),
+                Mutation(is_even, _EVEN, "None", _REGRESSION, raises=_NAME_ERROR),
+            ),
+        ):
+            with self.subTest(case):
+                self.assertEqual(getattr(decorator(_stand_in), _REGISTERED), (mutation,))
+
+    @kills.replace(
+        checker._register_above,
+        "(mutation, *getattr(layer, _REGISTERED))",
+        "(*getattr(layer, _REGISTERED), mutation)",
+        "stacked registrations are checked bottom to top, in the reverse of the order they read in",
+    )
+    @kills.force_none(
+        checker._register_above,
+        'getattr(layer, "__wrapped__", None)',
+        "a registration stacked above a patch stops at the patch, so the test never checks its mutations",
+    )
+    @kills.replace(
+        checker._registration,
+        "getattr(wrapper, _REGISTERED)",
+        "[mutation]",
+        "a test checks the mutations of its lowest registration alone, leaving the ones stacked above unchecked",
+    )
+    def test_stacked_registrations_check_their_mutations_top_to_bottom(self):
+        """Test that a test with stacked registrations checks each of their mutations, top to bottom, naming the test.
+
+        A patch between the registrations changes nothing.
+        """
+        expected = (_ODD_REPORTED_AS_EVEN, _ONLY_THREE_REPORTED_AS_EVEN)
+        for test_name in (_STACKED_TEST, _STACKED_ACROSS_A_PATCH_TEST):
+            with self.subTest(test_name):
+                result = self.run_decorated_test(Result(Outcome.KILLED), test_name)
+                self.assertEqual((result.failures, result.errors), ([], []))
+                self.assertEqual(self.checked.call_args_list, [call(each, self.decorated_id) for each in expected])
+                self.assertEqual(registered_mutations(IsEvenTest(test_name)), expected)
+
+    @kills.replace(
+        checker._failure,
+        "{mutation.regression} — the test did not kill",
+        "the test did not kill",
+        "the survivor message drops the regression, so it no longer says what went wrong",
     )
     def test_a_surviving_mutation_fails_the_test(self):
         """Test that a survivor fails the test, leading with the regression rather than the snippets."""
@@ -1188,25 +1330,22 @@ class KillsTest(unittest.TestCase):
         self.assertNotIn(_ODD, message)
         self.assertNotIn(_EVEN, message)
 
-    @kills(
-        Mutation(
-            checker._fail_unless_killed,
-            "with unittest.TestCase.subTest(test_case, regression=mutation.regression):",
-            "if True:",
-            "a test stops at the first mutation it did not kill, leaving every mutation after it unreported",
-        ),
-        Mutation(
-            checker._fail_unless_killed,
-            "with unittest.TestCase.subTest(test_case, regression=mutation.regression):",
-            "with unittest.TestCase.subTest(test_case):",
-            "a mutation the test did not kill is reported without naming which mutation it was",
-        ),
-        Mutation(
-            checker._fail_unless_killed,
-            "_failure(mutation, result))",
-            "_failure(mutations[0], result))",
-            "every mutation the test did not kill is reported with the first one's regression",
-        ),
+    @kills.replace(
+        checker._fail_unless_killed,
+        "with unittest.TestCase.subTest(test_case, regression=mutation.regression):",
+        "if True:",
+        "a test stops at the first mutation it did not kill, leaving every mutation after it unreported",
+    )
+    @kills.delete(
+        checker._fail_unless_killed,
+        ", regression=mutation.regression",
+        "a mutation the test did not kill is reported without naming which mutation it was",
+    )
+    @kills.replace(
+        checker._fail_unless_killed,
+        "_failure(mutation, result))",
+        "_failure(mutations[0], result))",
+        "every mutation the test did not kill is reported with the first one's regression",
     )
     def test_every_surviving_mutation_is_reported_separately(self):
         """Test that each mutation a test does not kill fails it as a case of its own, naming its regression."""
@@ -1218,13 +1357,11 @@ class KillsTest(unittest.TestCase):
                 self.assertIn(f"(regression={regression!r})", str(subtest))
                 self.assertIn(regression, message)
 
-    @kills(
-        Mutation(
-            checker._failure,
-            "{mutation.regression} — this mutation of",
-            "this mutation of",
-            "the stale-or-broken message drops the regression, so it no longer says what went wrong",
-        )
+    @kills.replace(
+        checker._failure,
+        "{mutation.regression} — this mutation of",
+        "this mutation of",
+        "the stale-or-broken message drops the regression, so it no longer says what went wrong",
     )
     def test_a_mutation_the_test_could_not_judge_fails_it_with_the_reason(self):
         """Test that a stale or broken mutation fails the test, leading with the regression and then the reason."""
@@ -1276,19 +1413,16 @@ class KillsTest(unittest.TestCase):
                 self.assertEqual(len(result.failures), 1)
                 self.checked.assert_not_called()
 
-    @kills(
-        Mutation(
-            checker.kills,
-            'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
-            "if os.environ.get(CHECKS_OFF):",
-            "a test re-run against its own mutation checks its mutations again, so a run never ends",
-        ),
-        Mutation(
-            checker.kills,
-            'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
-            "if os.environ.get(_CHECKED_TEST) == self.id():",
-            "a `just mutate` run checks the registered mutations too, so its kill list names tests it never broke",
-        ),
+    @kills.replace(
+        checker._registration,
+        'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
+        "if os.environ.get(CHECKS_OFF):",
+        "a test re-run against its own mutation checks its mutations again, so a run never ends",
+    )
+    @kills.delete(
+        checker._registration,
+        ' or os.environ.get(CHECKS_OFF) == "1"',
+        "a `just mutate` run checks the registered mutations too, so its kill list names tests it never broke",
     )
     def test_a_test_held_back_by_a_sentinel_checks_nothing(self):
         """Test that a test held back by either sentinel runs its body and checks nothing further."""
@@ -1305,19 +1439,15 @@ class KillsTest(unittest.TestCase):
                 is_even_stub.assert_called_once_with(3)
                 self.checked.assert_not_called()
 
-    @kills(
-        Mutation(
-            checker.sentinels,
-            "for sentinel in (CHECKS_OFF, _CHECKED_TEST)",
-            "for sentinel in (_CHECKED_TEST,)",
-            "a test whose class clears the environment loses the sentinel, so `just mutate` checks it after all",
-        ),
-        Mutation(
-            checker.sentinels,
-            "for sentinel in (CHECKS_OFF, _CHECKED_TEST)",
-            "for sentinel in (CHECKS_OFF,)",
-            "a rerun that clears the environment checks its registrations again, so a survivor passes as killed",
-        ),
+    @kills.delete(
+        checker.sentinels,
+        "CHECKS_OFF, ",
+        "a test whose class clears the environment loses the sentinel, so `just mutate` checks it after all",
+    )
+    @kills.delete(
+        checker.sentinels,
+        " _CHECKED_TEST",
+        "a rerun that clears the environment checks its registrations again, so a survivor passes as killed",
     )
     def test_the_sentinels_survive_a_cleared_environment(self):
         """Test that patching the environment keeps both mutation-check sentinels, whatever else it clears."""
@@ -1325,13 +1455,11 @@ class KillsTest(unittest.TestCase):
             with self.subTest(sentinel), patch.dict(os.environ, {sentinel: value}, clear=True), patch_environ():
                 self.assertEqual(os.environ.get(sentinel), value)
 
-    @kills(
-        Mutation(
-            checker.kills,
-            'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
-            "if os.environ.get(_CHECKED_TEST) or os.environ.get(CHECKS_OFF):",
-            "a decorated test the checked test reaches stands aside too, so its mutations go unchecked",
-        )
+    @kills.replace(
+        checker._registration,
+        'if os.environ.get(_CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":',
+        "if os.environ.get(_CHECKED_TEST) or os.environ.get(CHECKS_OFF):",
+        "a decorated test the checked test reaches stands aside too, so its mutations go unchecked",
     )
     def test_a_test_the_sentinel_does_not_name_checks_its_mutations(self):
         """Test that a decorated test checks its mutations while another test is the one being checked."""
@@ -1339,57 +1467,15 @@ class KillsTest(unittest.TestCase):
         self.assertEqual((result.failures, result.errors), ([], []))
         self.checked.assert_called_once()
 
-    @kills(
-        Mutation(
-            checker.kills,
-            "setattr(wrapper, _REGISTERED, mutations)",
-            "pass",
-            "a decorated test carries no registration, so a second one on it goes undetected",
-        )
-    )
-    def test_a_second_registration_on_one_test_fails_it(self):
-        """Test that a second kills decorator on one test fails it, whatever decorator sits between the two."""
-        registered = kills(_ODD_REPORTED_AS_EVEN)(_stand_in)
-        for case, stacked in (
-            ("adjacent", registered),
-            ("with a patch between", patch("tests.mutation_time.mutation_subject.is_even")(registered)),
-        ):
-            with self.subTest(case=case):
-                with patch.object(Mutation, "check", autospec=True) as checked:
-                    checked.return_value = Result(Outcome.KILLED)
-                    twice_registered = kills(_ODD_REPORTED_AS_EVEN)(stacked)
-                    with self.assertRaises(self.failureException) as raised:
-                        twice_registered(self)
-                self.assertIn("more than one kills decorator", str(raised.exception))
-                checked.assert_not_called()
-
-    @kills(
-        Mutation(
-            checker.kills,
-            "if not mutations:",
-            "if False:",
-            "a registration naming no mutation is accepted, so the test it decorates checks nothing",
-        )
-    )
-    def test_a_registration_of_no_mutation_fails_the_test(self):
-        """Test that a kills decorator given no mutation fails the test, rather than leaving it checking nothing."""
-        decorated = kills()(_stand_in)
-        with self.assertRaises(self.failureException) as raised:
-            decorated(self)
-        self.assertIn("registers no mutation", str(raised.exception))
-
-    @kills(
-        Mutation(
-            checker.kills,
-            "        @functools.wraps(method)",
-            "",
-            "a decorated test reports under the wrapper's name, so a failing run names no test",
-        )
+    @kills.delete(
+        checker._registration,
+        "@functools.wraps(method)",
+        "a decorated test reports under the wrapper's name, so a failing run names no test",
     )
     def test_the_decorated_test_reports_as_the_test_it_decorates(self):
         """Test that the wrapper carries the name and the docstring unittest prints for the test it decorates."""
         method = IsEvenTest.test_an_even_number
-        wrapped = kills(_ODD_REPORTED_AS_EVEN)(method)
+        wrapped = _KILLS_ODD_REPORTED_AS_EVEN(method)
         self.assertEqual((wrapped.__qualname__, wrapped.__doc__), (method.__qualname__, method.__doc__))
 
 
@@ -1407,6 +1493,8 @@ class KillsTestLoaderTest(unittest.TestCase):
                     "test_an_odd_number_patched_beneath_the_decorator",
                     _PATCHED_ABOVE_TEST,
                     _SEVERAL_MUTATIONS_TEST,
+                    _STACKED_TEST,
+                    _STACKED_ACROSS_A_PATCH_TEST,
                     "test_an_odd_number_against_a_mutation_that_raises",
                 )
             ),

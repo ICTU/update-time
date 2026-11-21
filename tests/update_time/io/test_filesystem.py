@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 if TYPE_CHECKING:
     from unittest.mock import _patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.file_type import FileType
 from update_time.io import filesystem as filesystem_module
 from update_time.io.filesystem import _EXCLUDE_PATHS, configure_excluded_paths, glob_for, inside_git_repository
@@ -84,13 +84,11 @@ class GlobForTest(unittest.TestCase):
         skipped_files = [f"{folder}/file.txt" for folder in ignored_folders]
         self.assert_kept(mock_glob, _TEXT_FILES, skipped_files, ["src/file.txt"])
 
-    @kills(
-        Mutation(
-            filesystem_module.glob_for,
-            "_is_skipped(path.relative_to(start)",
-            "_is_skipped(path.relative_to(root)",
-            "a file under a hidden start folder, such as `.github`, is skipped as hidden",
-        )
+    @kills.replace(
+        filesystem_module.glob_for,
+        "_is_skipped(path.relative_to(start)",
+        "_is_skipped(path.relative_to(root)",
+        "a file under a hidden start folder, such as `.github`, is skipped as hidden",
     )
     def test_hidden_folders_and_files_are_skipped_unless_named(self, mock_glob: Mock):
         """Test that the walk skips a hidden folder or file, except one the pattern or the start folder names."""

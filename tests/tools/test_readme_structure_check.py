@@ -17,7 +17,7 @@ from tools.readme_structure_check import (
     main,
 )
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 
 # The dependency types the README has to answer for, derived here rather than read off the check, so a fixture
@@ -93,13 +93,11 @@ class ProblemsTest(unittest.TestCase):
             with self.subTest(document=description):
                 self.assertEqual(_problems(markdown), expected)
 
-    @kills(
-        Mutation(
-            structure_check._type_section_problems,
-            "if not any(_documents(title, name) for title in titles)",
-            "if not titles",
-            "a declared dependency type goes unreported as long as the details chapter has a section for another",
-        )
+    @kills.replace(
+        structure_check._type_section_problems,
+        "if not any(_documents(title, name) for title in titles)",
+        "if not titles",
+        "a declared dependency type goes unreported as long as the details chapter has a section for another",
     )
     def test_declared_type_without_a_section_is_reported(self):
         """Test that a dependency type no section in the details chapter names is reported, naming the type."""
@@ -107,18 +105,15 @@ class ProblemsTest(unittest.TestCase):
         expected = [f"the details chapter has no section for '{_TYPE_NAMES[-1]}'"]
         self.assertEqual(_problems(markdown), expected)
 
-    @kills(
-        Mutation(
-            structure_check._type_section_problems,
-            """    problems += [
+    @kills.delete(
+        structure_check._type_section_problems,
+        """    problems += [
         f"the details chapter's section '{title}' documents no dependency type"
         for title in titles
         if not any(_documents(title, name) for name in _TYPE_NAMES)
     ]
 """,
-            "",
-            "a section of the details chapter that documents no dependency type goes unreported",
-        )
+        "a section of the details chapter that documents no dependency type goes unreported",
     )
     def test_section_documenting_no_declared_type_is_reported(self):
         """Test that a section in the details chapter naming no declared dependency type is reported."""
@@ -126,13 +121,10 @@ class ProblemsTest(unittest.TestCase):
         expected = ["the details chapter's section 'Cargo crates' documents no dependency type"]
         self.assertEqual(_problems(markdown), expected)
 
-    @kills(
-        Mutation(
-            structure_check._problems,
-            "        + _files_problems(markdown)\n",
-            "",
-            "a file a dependency type declares that the README's Files table leaves out goes unreported",
-        )
+    @kills.delete(
+        structure_check._problems,
+        "        + _files_problems(markdown)\n",
+        "a file a dependency type declares that the README's Files table leaves out goes unreported",
     )
     def test_file_a_types_cell_leaves_out_is_reported(self):
         """Test that a file type a dependency type declares that its Files cell doesn't name is reported."""

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.reference import Reference
 from update_time.domain.source import Source
 from update_time.domain.staleness import STALE_AFTER
@@ -39,21 +39,18 @@ class WarnAboutProjectsTest(unittest.TestCase):
 class WarnAboutDelegatedChecksTest(unittest.TestCase):
     """Unit tests for the checks the delegating updaters run over the dependencies a source serves."""
 
-    @kills(
-        Mutation(
-            delegated_module.warn_about_delegated_checks,
-            "if source.project is not None:",
-            "if True:",
-            "a source without a project getter is asked about projects all the same",
-            raises="TypeError: 'NoneType' object is not callable",
-        ),
-        Mutation(
-            vulnerability_module.warn_about_vulnerable_dependencies,
-            "if (ecosystem := source.ecosystem) is None:\n        return",
-            "ecosystem = source.ecosystem",
-            "a source without an ecosystem is asked about at OSV all the same",
-            raises="KeyError: None",
-        ),
+    @kills.force_true(
+        delegated_module.warn_about_delegated_checks,
+        "source.project is not None",
+        "a source without a project getter is asked about projects all the same",
+        raises="TypeError: 'NoneType' object is not callable",
+    )
+    @kills.replace(
+        vulnerability_module.warn_about_vulnerable_dependencies,
+        "if (ecosystem := source.ecosystem) is None:\n        return",
+        "ecosystem = source.ecosystem",
+        "a source without an ecosystem is asked about at OSV all the same",
+        raises="KeyError: None",
     )
     def test_a_source_without_a_project_getter_is_asked_about_the_pins_alone(self):
         """Test that a source without a project getter skips the project checks, and still checks the pins' yanks."""

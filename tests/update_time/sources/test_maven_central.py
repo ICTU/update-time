@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, ArchivedSubject, Project, Release
 from update_time.io.log import Logger
@@ -108,13 +108,10 @@ class ProjectTest(LoggingTestCase):
         self.assertIsNone(archival)
         self.assertEqual(requested_urls(mock_get), list(urls))
 
-    @kills(
-        Mutation(
-            pom_xml_manifest,
-            '("url", "connection", "developerConnection")',
-            '("url",)',
-            "a pom naming its repository in a connection alone is read as naming none, so its archival goes unread",
-        )
+    @kills.delete(
+        pom_xml_manifest,
+        ' "connection", "developerConnection"',
+        "a pom naming its repository in a connection alone is read as naming none, so its archival goes unread",
     )
     def test_a_pom_naming_an_archived_repository(self):
         """Test that an artefact whose pom names a repository GitHub declares archived is reported as archived.
@@ -209,13 +206,10 @@ class ProjectTest(LoggingTestCase):
                     archival = project(GUAVA).archival
                 self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
 
-    @kills(
-        Mutation(
-            maven_central._parent_pom,
-            "    if pom_xml_manifest.scm_urls(pom):\n        return LookedUp(None, absent=True)\n",
-            "",
-            "an artefact whose pom names its repository on another host is given its generic parent's repository",
-        )
+    @kills.delete(
+        maven_central._parent_pom,
+        "    if pom_xml_manifest.scm_urls(pom):\n        return LookedUp(None, absent=True)\n",
+        "an artefact whose pom names its repository on another host is given its generic parent's repository",
     )
     def test_a_pom_naming_a_repository_on_another_host(self):
         """Test that an artefact whose pom names a repository outside GitHub leaves its parent and GitHub unasked."""
@@ -240,13 +234,8 @@ class ProjectTest(LoggingTestCase):
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
         self.assert_could_not_fetch_logged(_GUAVA_POM, status=404, reason="Not Found")
 
-    @kills(
-        Mutation(
-            maven_central._pom,
-            "_LOG.invalid_pom(url)",
-            "pass",
-            "an artefact pom whose XML does not parse goes unreported",
-        )
+    @kills.delete_statement(
+        maven_central._pom, "_LOG.invalid_pom(url)", "an artefact pom whose XML does not parse goes unreported"
     )
     def test_a_pom_whose_xml_does_not_parse(self):
         """Test that an artefact whose pom does not parse is warned about, and leaves GitHub unasked."""
@@ -255,14 +244,7 @@ class ProjectTest(LoggingTestCase):
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
         self.assert_logged(message_of(Logger.invalid_pom), url=_GUAVA_POM)
 
-    @kills(
-        Mutation(
-            maven_central,
-            "@cache\ndef _pom(",
-            "def _pom(",
-            "every pom declaring an artefact costs a pom request of its own",
-        )
-    )
+    @kills.uncache(maven_central._pom, "every pom declaring an artefact costs a pom request of its own")
     def test_an_artefact_is_asked_for_its_pom_once_per_run(self):
         """Test that two poms declaring the same artefact cost one pom request between them."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(GUAVA_SCM), archived=True) as mock_get:
@@ -272,13 +254,11 @@ class ProjectTest(LoggingTestCase):
         self.assert_archived(mock_get, first, _GUAVA_REPOSITORY)
         self.assertEqual(second, first)
 
-    @kills(
-        Mutation(
-            maven_central._parent_pom,
-            "_pom(parent.name",
-            "_pom.__wrapped__(parent.name",
-            "every artefact sharing a parent costs a request for the parent's pom of its own",
-        )
+    @kills.prepend(
+        maven_central._parent_pom,
+        "(parent.name",
+        ".__wrapped__",
+        "every artefact sharing a parent costs a request for the parent's pom of its own",
     )
     def test_artefacts_sharing_a_parent_are_asked_for_its_pom_once_per_run(self):
         """Test that two artefacts whose poms name the same parent cost one request for the parent's pom."""
@@ -291,31 +271,29 @@ class ProjectTest(LoggingTestCase):
 class LacksAGitHubRepositoryTest(LoggingTestCase):
     """Unit tests for telling whether an artefact's poms name a repository on GitHub."""
 
-    @kills(
-        Mutation(
-            maven_central._pom_repository,
-            "if pom is None:\n        return LookedUp(None)",
-            "if pom is None:\n        return LookedUp(None, absent=True)",
-            "a pom that fails to fetch reads as lacking a repository, so its `archived` scope is reported as redundant",
-        ),
-        Mutation(
-            maven_central._pom_repository,
-            "LookedUp(None, absent=parent_pom.absent)",
-            "LookedUp(None, absent=True)",
-            "a parent pom that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
-        ),
-        Mutation(
-            maven_central._repository,
-            "return LookedUp(None) if newest is None else",
-            "return LookedUp(None, absent=True) if newest is None else",
-            "a listing that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
-        ),
-        Mutation(
-            maven_central._parent_pom,
-            "return LookedUp(None, absent=True) if parent is None else",
-            "return LookedUp(None) if parent is None else",
-            "a pom naming neither a repository nor a parent reads as unknown, so its `archived` scope goes unreported",
-        ),
+    @kills.replace(
+        maven_central._pom_repository,
+        "return LookedUp(None)",
+        "return LookedUp(None, absent=True)",
+        "a pom that fails to fetch reads as lacking a repository, so its `archived` scope is reported as redundant",
+    )
+    @kills.replace(
+        maven_central._pom_repository,
+        "LookedUp(None, absent=parent_pom.absent)",
+        "LookedUp(None, absent=True)",
+        "a parent pom that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
+    )
+    @kills.append(
+        maven_central._repository,
+        "return LookedUp(None",
+        ", absent=True",
+        "a listing that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
+    )
+    @kills.replace(
+        maven_central._parent_pom,
+        "return LookedUp(None, absent=True) if parent is None else",
+        "return LookedUp(None) if parent is None else",
+        "a pom naming neither a repository nor a parent reads as unknown, so its `archived` scope goes unreported",
     )
     def test_an_artefact_lacks_a_github_repository_only_where_its_poms_say_so(self):
         """Test that an artefact lacks a GitHub repository where its poms say so, not where they could not be read."""
@@ -378,13 +356,11 @@ class GetChangesTest(LoggingTestCase):
                 with patch_maven_central(_listing_of(version), maven_central_pom(GUAVA_SCM), releases=releases):
                     self.assertEqual(get_changes(GUAVA, version), f"Changes in {version}")
 
-    @kills(
-        Mutation(
-            maven_central.get_changes,
-            "_release_tags(artefact, repository, version)",
-            "_release_tags(artefact, repository, _newest_release(artefact).version)",
-            "the newest release's changes are reported for a version the run left behind it",
-        ),
+    @kills.append(
+        maven_central.get_changes,
+        "_release_tags(artefact, repository, ",
+        "_newest_release(artefact).",
+        "the newest release's changes are reported for a version the run left behind it",
     )
     def test_the_changes_are_those_of_the_release_matching_the_version(self):
         """Test that the changes are the body of the release for the version the run left the dependency on."""
@@ -401,37 +377,34 @@ class GetChangesTest(LoggingTestCase):
             get_changes(GUAVA, "33.6.0-jre")
         self.assertIn(_GUAVA_POM, requested_urls(mock_get))
 
-    @kills(
-        Mutation(
-            maven_central._release_tags,
-            "(artifact_id,",
-            "(artefact,",
-            "a release tagged by the artifact's name goes unmatched, since the tag names never carry the group",
-        ),
-        Mutation(
-            maven_central._release_tags,
-            "spelling, repository.name)",
-            "spelling)",
-            "a release tagged by the repository's name rather than the artifact's goes unmatched",
-        ),
-        Mutation(
-            maven_central._release_tags,
-            "(artifact_id, spelling, repository.name)",
-            "(repository.name, spelling, artifact_id)",
-            "a repository tagging one version by both names has the repository's release reported for the artifact",
-        ),
-        Mutation(
-            maven_central._release_tags,
-            "*release_tags(artifact_id, spelling, repository.name),",
-            "*release_tags(artifact_id, spelling),\n            *release_tags(repository.name, spelling),",
-            "a repository tagging one version by its name and by the version alone has the wrong release reported",
-        ),
-        Mutation(
-            maven_central._spellings,
-            '(version, _QUALIFIER.sub("", version))',
-            '(_QUALIFIER.sub("", version), version)',
-            "a repository tagging one version with and without its qualifier has the wrong release reported for it",
-        ),
+    @kills.replace(
+        maven_central._release_tags,
+        "(artifact_id,",
+        "(artefact,",
+        "a release tagged by the artifact's name goes unmatched, since the tag names never carry the group",
+    )
+    @kills.delete(
+        maven_central._release_tags,
+        ", repository.name",
+        "a release tagged by the repository's name rather than the artifact's goes unmatched",
+    )
+    @kills.replace(
+        maven_central._release_tags,
+        "(artifact_id, spelling, repository.name)",
+        "(repository.name, spelling, artifact_id)",
+        "a repository tagging one version by both names has the repository's release reported for the artifact",
+    )
+    @kills.replace(
+        maven_central._release_tags,
+        "*release_tags(artifact_id, spelling, repository.name),",
+        "*release_tags(artifact_id, spelling),\n            *release_tags(repository.name, spelling),",
+        "a repository tagging one version by its name and by the version alone has the wrong release reported",
+    )
+    @kills.replace(
+        maven_central._spellings,
+        '(version, _QUALIFIER.sub("", version))',
+        '(_QUALIFIER.sub("", version), version)',
+        "a repository tagging one version with and without its qualifier has the wrong release reported for it",
     )
     def test_the_more_specific_of_two_tags_for_a_version_takes_precedence(self):
         """Test that the release under the more specific of two tags for the same version holds its changes."""
@@ -454,19 +427,17 @@ class GetChangesTest(LoggingTestCase):
         cases = {"dash qualifier": ("33.7.1-jre", "v33.7.1"), "dot qualifier": ("7.4.10.Final", "7.4.10")}
         self.assert_changes_from_releases(cases)
 
-    @kills(
-        Mutation(
-            maven_central._release_tags,
-            "in _VERSION_PREFIXES",
-            "in ()",
-            "a release tagged with a prefix other than `v` goes unmatched",
-        ),
-        Mutation(
-            maven_central._release_tags,
-            'f"{prefix}{spelling}"',
-            'f"{prefix}{version}"',
-            "a release tagged with a prefix other than `v` and without the version's qualifier goes unmatched",
-        ),
+    @kills.replace(
+        maven_central._release_tags,
+        "in _VERSION_PREFIXES",
+        "in ()",
+        "a release tagged with a prefix other than `v` goes unmatched",
+    )
+    @kills.replace(
+        maven_central._release_tags,
+        'f"{prefix}{spelling}"',
+        'f"{prefix}{version}"',
+        "a release tagged with a prefix other than `v` and without the version's qualifier goes unmatched",
     )
     def test_a_release_tagged_with_a_prefix_other_than_v_matches(self):
         """Test that a release tagged with the version behind `r`, `version-`, or `REL` holds the version's changes."""
@@ -478,19 +449,16 @@ class GetChangesTest(LoggingTestCase):
         }
         self.assert_changes_from_releases(cases)
 
-    @kills(
-        Mutation(
-            maven_central.get_changes,
-            " or _changes_from_changelog_file(repository, version)",
-            "",
-            "the changes of a version its repository tagged without publishing a release go unreported",
-        ),
-        Mutation(
-            maven_central._changes_from_changelog_file,
-            "in _spellings(version)",
-            "in (version,)",
-            "a changelog heading the version without the qualifier Maven appends has its changes go unreported",
-        ),
+    @kills.delete(
+        maven_central.get_changes,
+        " or _changes_from_changelog_file(repository, version)",
+        "the changes of a version its repository tagged without publishing a release go unreported",
+    )
+    @kills.replace(
+        maven_central._changes_from_changelog_file,
+        "in _spellings(version)",
+        "in (version,)",
+        "a changelog heading the version without the qualifier Maven appends has its changes go unreported",
     )
     def test_the_changes_come_from_a_changelog_file_where_no_release_matches(self):
         """Test that the changes come from the changelog file when the repository did not release the version."""
@@ -499,19 +467,17 @@ class GetChangesTest(LoggingTestCase):
                 self.serve_releases_and_changelog(mock_get, [github_release_json("v33.6.0-jre")], heading)
                 self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), markdown_changes(heading))
 
-    @kills(
-        Mutation(
-            maven_central.get_changes,
-            "return changes_from_tagged_release(",
-            "return changes_from_changelog_file(repository, version) or changes_from_tagged_release(",
-            "the changelog file wins over the release the repository published for the version",
-        ),
-        Mutation(
-            maven_central.get_changes,
-            "tags =",
-            "changelog = changes_from_changelog_file(repository, version)\n    tags =",
-            "every dependency Maven moved costs a changelog file request, whether or not a release matched",
-        ),
+    @kills.prepend(
+        maven_central.get_changes,
+        "changes_from_tagged_release(",
+        "changes_from_changelog_file(repository, version) or ",
+        "the changelog file wins over the release the repository published for the version",
+    )
+    @kills.prepend(
+        maven_central.get_changes,
+        "tags =",
+        "changelog = changes_from_changelog_file(repository, version)\n    ",
+        "every dependency Maven moved costs a changelog file request, whether or not a release matched",
     )
     def test_a_matching_release_wins_over_the_changelog_file(self):
         """Test that the changes come from the release matching the version, without reading the changelog file."""
@@ -538,13 +504,11 @@ class GetChangesTest(LoggingTestCase):
                     self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
                 self.assertIn(releases_url(repository), requested_urls(mock_get))
 
-    @kills(
-        Mutation(
-            maven_central.get_changes,
-            "_repository(artefact)",
-            "_named_repository(_pom(artefact, _newest_release(artefact).version), artefact)",
-            "an artefact whose pom leaves its repository to the parent pom has its changes go unreported",
-        )
+    @kills.replace(
+        maven_central.get_changes,
+        "_repository(artefact)",
+        "_named_repository(_pom(artefact, _newest_release(artefact).version), artefact)",
+        "an artefact whose pom leaves its repository to the parent pom has its changes go unreported",
     )
     def test_the_changes_come_from_the_repository_the_parent_pom_names(self):
         """Test that an artefact whose own pom does not name a GitHub repository has its parent's release notes."""
@@ -566,13 +530,10 @@ class VersionsHeldBackTest(LoggingTestCase):
         with patch_get(text=maven_central_listing(past_cooldown, fresh)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.1-jre",))
 
-    @kills(
-        Mutation(
-            maven_central._listing,
-            "_LOG.unserved_listing(url, found.reason)",
-            "pass",
-            "an artefact Maven Central does not serve is passed over without a word at debug",
-        )
+    @kills.delete(
+        maven_central._listing,
+        "_LOG.unserved_listing(url, found.reason)",
+        "an artefact Maven Central does not serve is passed over without a word at debug",
     )
     def test_an_unserved_listing_holds_no_version_back(self):
         """Test that an unserved listing is reported at debug, and that the run holds nothing back."""
@@ -600,27 +561,24 @@ class VersionsHeldBackTest(LoggingTestCase):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
         self.assert_logged(message_of(Logger.timeout), url=_GUAVA_LISTING)
 
-    @kills(
-        Mutation(
-            maven_central._published,
-            "try:\n        return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n"
-            "    except ValueError:\n        return None\n",
-            "return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
-            "one row the repository dated outside the calendar ends the run over every pom",
-            raises="ValueError: time data '2026-13-45 99:99' does not match format '%Y-%m-%d %H:%M'",
-        ),
-        Mutation(
-            maven_central._held_back,
-            "return True",
-            "return False",
-            "the versions plugin adopts a version dated outside the calendar, with the cooldown unchecked",
-        ),
-        Mutation(
-            maven_central._held_back,
-            '_LOG.unreadable_publication_date(artefact, row["version"], row["published"])',
-            "pass",
-            "a version dated outside the calendar is held back without a word",
-        ),
+    @kills.replace(
+        maven_central._published,
+        "try:\n        return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n"
+        "    except ValueError:\n        return None\n",
+        "return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
+        "one row the repository dated outside the calendar ends the run over every pom",
+        raises="ValueError: time data '2026-13-45 99:99' does not match format '%Y-%m-%d %H:%M'",
+    )
+    @kills.replace(
+        maven_central._held_back,
+        "return True",
+        "return False",
+        "the versions plugin adopts a version dated outside the calendar, with the cooldown unchecked",
+    )
+    @kills.delete(
+        maven_central._held_back,
+        '_LOG.unreadable_publication_date(artefact, row["version"], row["published"])',
+        "a version dated outside the calendar is held back without a word",
     )
     def test_a_row_dated_in_a_shape_the_format_cannot_read_is_held_back_and_logged(self):
         """Test that a version whose date does not parse is held back and logged, and the rows beside it are read."""
@@ -635,13 +593,11 @@ class VersionsHeldBackTest(LoggingTestCase):
             date="2026-13-45 99:99",
         )
 
-    @kills(
-        Mutation(
-            maven_central,
-            '/"[^>]*>',
-            '/?"[^>]*>',
-            "a file beside the versions reads as a version, so the metadata files are held back as releases",
-        )
+    @kills.prepend(
+        maven_central,
+        '"[^>]*>',
+        "?",
+        "a file beside the versions reads as a version, so the metadata files are held back as releases",
     )
     def test_a_metadata_file_is_not_held_back(self):
         """Test that a metadata file the listing dates inside the cooldown is not among the versions held back."""
@@ -651,14 +607,7 @@ class VersionsHeldBackTest(LoggingTestCase):
             held_back = versions_held_back(GUAVA, COOLDOWN.default)
         self.assertEqual(held_back, ("33.7.1-jre",))
 
-    @kills(
-        Mutation(
-            maven_central,
-            "@cache\ndef _listing",
-            "def _listing",
-            "every pom declaring an artefact costs a request of its own",
-        )
-    )
+    @kills.uncache(maven_central._listing, "every pom declaring an artefact costs a request of its own")
     def test_an_artefact_is_asked_about_once_per_run(self):
         """Test that asking about an artefact twice costs one request."""
         mock_get = Mock(
@@ -675,14 +624,12 @@ class VersionsHeldBackTest(LoggingTestCase):
 class ServesTest(LoggingTestCase):
     """Unit tests for telling whether the repository serves an artefact."""
 
-    @kills(
-        Mutation(
-            maven_central._listing,
-            "is None:\n        return LookedUp(None)",
-            "is None:\n        return LookedUp(None, absent=True)",
-            "a server error or a failed request reads as an artefact the repository lacks, so its scopes are reported "
-            "as redundant",
-        ),
+    @kills.replace(
+        maven_central._listing,
+        "LookedUp(None)",
+        "LookedUp(None, absent=True)",
+        "a server error or a failed request reads as an artefact the repository lacks, so its scopes are reported "
+        "as redundant",
     )
     def test_an_artefact_is_unserved_only_where_the_repository_lacks_its_listing(self):
         """Test that a missing listing reads as an unserved artefact, and a failed request as a served one."""
@@ -702,20 +649,17 @@ class ServesTest(LoggingTestCase):
 class PublicationTest(LoggingTestCase):
     """Unit tests for finding a version's row in the listing to date the version by."""
 
-    @kills(
-        Mutation(
-            maven_central.publication,
-            'if row["version"] == version)',
-            'if row["version"])',
-            "a new version is dated by whichever row the listing holds first",
-        ),
-        Mutation(
-            maven_central.publication,
-            "for row in rows), None)",
-            "for row in rows))",
-            "the run over every pom ends where the listing lacks a new version",
-            raises="StopIteration",
-        ),
+    @kills.replace(
+        maven_central.publication,
+        'if row["version"] == version)',
+        'if row["version"])',
+        "a new version is dated by whichever row the listing holds first",
+    )
+    @kills.delete(
+        maven_central.publication,
+        ", None",
+        "the run over every pom ends where the listing lacks a new version",
+        raises="StopIteration",
     )
     def test_a_version_is_dated_by_its_own_row(self):
         """Test that a version is dated by the listing's row for it, and undated where the listing lacks that row."""
@@ -734,13 +678,11 @@ class PublicationTest(LoggingTestCase):
 class PublishedTest(unittest.TestCase):
     """Unit tests for reading the date the listing holds for a version."""
 
-    @kills(
-        Mutation(
-            maven_central._published,
-            "return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
-            "return datetime.strptime(published, _PUBLISHED_FORMAT).astimezone()\n",
-            "a date is read in the machine's own zone, so a version falls on the wrong side of the cooldown",
-        )
+    @kills.replace(
+        maven_central._published,
+        "replace(tzinfo=UTC)",
+        "astimezone()",
+        "a date is read in the machine's own zone, so a version falls on the wrong side of the cooldown",
     )
     @time_zone("Asia/Tokyo")
     def test_a_date_is_read_as_gmt(self):

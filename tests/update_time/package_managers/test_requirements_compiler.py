@@ -5,7 +5,7 @@ from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, DEFAULT, Mock, patch
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import version_scheme
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
@@ -119,13 +119,11 @@ class RecompileTest(UvSettingsTestCase):
         recompile = Command(*command, "--quiet", *options)
         self.mock_run.assert_any_call(recompile, **SUBPROCESS_RUN_OPTIONS, cwd=cwd)
 
-    @kills(
-        Mutation(
-            uv.UvPipCompile.settings_hold_cutoff,
-            "self.compiled.compile_directory, self.compiled.path",
-            "self.compiled.path.parent, self.compiled.path",
-            "uv reads its settings where the compiled file sits rather than where it was compiled",
-        )
+    @kills.replace(
+        uv.UvPipCompile.settings_hold_cutoff,
+        "compile_directory",
+        "path.parent",
+        "uv reads its settings where the compiled file sits rather than where it was compiled",
     )
     def test_a_compiled_file_is_recompiled_with_the_command_its_header_records(self):
         """Test that uv reads its settings for the header's command, and runs it, where the file was compiled."""
@@ -160,13 +158,11 @@ class RecompileTest(UvSettingsTestCase):
         upgrades = ("--upgrade-package", "flask", "--upgrade-package", "werkzeug")
         self.assert_recompiled("--uploaded-prior-to", "P7D", *upgrades, command=_PIP_COMMAND)
 
-    @kills(
-        Mutation(
-            compiled_requirements_txt,
-            r'(?:uv pip compile|pip-compile)(?:[ \t].*)?)$"',
-            r'(?:uv pip compile|pip-compile)\s.*)$"',
-            "Update-time reads the next header line into a bare pip-compile command",
-        )
+    @kills.replace(
+        compiled_requirements_txt,
+        r'(?:uv pip compile|pip-compile)(?:[ \t].*)?)$"',
+        r'(?:uv pip compile|pip-compile)\s.*)$"',
+        "Update-time reads the next header line into a bare pip-compile command",
     )
     def test_a_file_pip_compile_compiled_without_arguments_is_recompiled_without_arguments(self):
         """Test that a header recording a bare `pip-compile` has pip-compile recompile the file in its directory."""
@@ -196,13 +192,10 @@ class RecompileTest(UvSettingsTestCase):
         self.recompile({_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
         self.mock_run.assert_not_called()
 
-    @kills(
-        Mutation(
-            requirements_compiler.RequirementsCompiler._recompiled,
-            "compiled.path.write_text(result.stdout)",
-            "pass",
-            "a file compiled to standard output keeps its old pins, though uv printed new ones",
-        )
+    @kills.delete_statement(
+        requirements_compiler.RequirementsCompiler._recompiled,
+        "compiled.path.write_text(result.stdout)",
+        "a file compiled to standard output keeps its old pins, though uv printed new ones",
     )
     def test_a_file_uv_compiled_to_standard_output_becomes_what_uv_prints(self):
         """Test that uv recompiles a file it printed, in the file's directory, and that what it prints is the file."""
@@ -254,13 +247,11 @@ class RecompileTest(UvSettingsTestCase):
         self.assert_recompiled("--uploaded-prior-to", "P14D", "--upgrade-package", "flask", command=_PIP_COMMAND)
         self.assertEqual(files[_SOURCE], source)
 
-    @kills(
-        Mutation(
-            pip_tools,
-            r"^[^.\n]*\.uploaded",
-            r"^\w*\.uploaded",
-            "Update-time does not see an uploaded-prior-to that pip reads from the environment",
-        )
+    @kills.replace(
+        pip_tools,
+        r"^[^.\n]*\.uploaded",
+        r"^\w*\.uploaded",
+        "Update-time does not see an uploaded-prior-to that pip reads from the environment",
     )
     def test_pip_compile_gets_no_cooldown_where_pips_settings_hold_an_uploaded_prior_to(self):
         """Test that pip-compile does not get the cooldown where pip's config or environment sets its cutoff."""
@@ -278,13 +269,10 @@ class RecompileTest(UvSettingsTestCase):
                 self.assertEqual(files[_SOURCE], "flask==1.0\n")
                 self.assert_project_cooldown_logged(_COMPILED, "pip-compile uploaded-prior-to")
 
-    @kills(
-        Mutation(
-            pip_tools.PipCompile.settings_hold_cutoff,
-            'config.stderr.strip() or "pip failed without saying why"',
-            "config.stderr.strip()",
-            "the warning about a pip that failed without saying why leaves its reason empty",
-        )
+    @kills.delete(
+        pip_tools.PipCompile.settings_hold_cutoff,
+        ' or "pip failed without saying why"',
+        "the warning about a pip that failed without saying why leaves its reason empty",
     )
     def test_pip_compile_gets_the_cooldown_with_a_warning_where_pips_settings_cannot_be_read(self):
         """Test that pip-compile gets the cooldown, with a warning, where pip does not list its settings."""
@@ -437,13 +425,10 @@ class RecompileTest(UvSettingsTestCase):
                     redundancy=ANY,
                 )
 
-    @kills(
-        Mutation(
-            requirements_compiler.RequirementsCompiler._warn_if_the_bound_is_redundant,
-            "if not declaration.current_version:",
-            "if True:",
-            "a bound on an exact pin is warned about twice, by the recompile as well as by the update",
-        )
+    @kills.force_true(
+        requirements_compiler.RequirementsCompiler._warn_if_the_bound_is_redundant,
+        "not declaration.current_version",
+        "a bound on an exact pin is warned about twice, by the recompile as well as by the update",
     )
     def test_a_bound_in_the_source_is_not_judged_by_the_recompile_where_it_decides_or_sits_on_an_exact_pin(self):
         """Test that the recompile does not warn about a bound keeping some versions, nor about one on an exact pin."""
@@ -482,13 +467,11 @@ class RecompileTest(UvSettingsTestCase):
         cooldowns = ("--exclude-newer", "7 days", "--exclude-newer-package", "flask=30 days")
         self.assert_recompiled(*cooldowns, "--upgrade-package", "flask")
 
-    @kills(
-        Mutation(
-            pip_tools.PipCompile,
-            "package_cooldown_option: ClassVar[str | None] = None",
-            'package_cooldown_option: ClassVar[str | None] = "--exclude-newer-package"',
-            "pip-compile gets uv's package cooldown option, which it rejects",
-        )
+    @kills.replace(
+        pip_tools.PipCompile,
+        "package_cooldown_option: ClassVar[str | None] = None",
+        'package_cooldown_option: ClassVar[str | None] = "--exclude-newer-package"',
+        "pip-compile gets uv's package cooldown option, which it rejects",
     )
     def test_pip_compile_gets_no_cooldown_for_a_package_alone(self):
         """Test that pip-compile gets the run's cooldown alone where a requirement's marker sets one of its own."""
@@ -541,19 +524,16 @@ class RecompileTest(UvSettingsTestCase):
                 self.recompile({_COMPILED: requirements_compiled_by_uv("base.in", options=options), _SOURCE: source})
                 self.assert_recompiled(*cooldowns, "--upgrade-package", "flask", command=(*_UV_TOOL, *header))
 
-    @kills(
-        Mutation(
-            requirements_compiler.RequirementsCompiler.recompile,
-            "if not is_installed(command.executable):",
-            "if False:",
-            "Update-time asks a tool missing from the path for its settings, and then runs it",
-        ),
-        Mutation(
-            requirements_compiler.RequirementsCompiler.recompile,
-            "self.log.compiler_not_on_path(self.compiled.path, command.executable)",
-            "self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)",
-            "a tool missing from the path is reported as a tool that failed",
-        ),
+    @kills.force_false(
+        requirements_compiler.RequirementsCompiler.recompile,
+        "not is_installed(command.executable)",
+        "Update-time asks a tool missing from the path for its settings, and then runs it",
+    )
+    @kills.replace(
+        requirements_compiler.RequirementsCompiler.recompile,
+        "self.log.compiler_not_on_path(self.compiled.path, command.executable)",
+        "self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)",
+        "a tool missing from the path is reported as a tool that failed",
     )
     def test_a_tool_missing_from_the_path_is_reported_without_asking_for_its_settings(self):
         """Test that Update-time reports a missing pip-compile in one line, and runs neither it nor a settings query."""
@@ -564,25 +544,23 @@ class RecompileTest(UvSettingsTestCase):
             (message_of(Logger.compiler_not_on_path), {"location": Location(_COMPILED), "executable": "pip-compile"}),
         )
 
-    @kills(
-        Mutation(
-            requirements_compiler.RequirementsCompiler.recompile,
-            "self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)",
-            'self.log.compiled_file_not_recompiled(self.compiled.path, "uv pip compile")',
-            "the error about a failed pip-compile names uv",
-        ),
-        Mutation(
-            requirements_compiler.RequirementsCompiler._recompiled,
-            "if not result.succeeded:\n"
-            "            return False\n"
-            "        if compiled.writes_to_standard_output:\n"
-            "            compiled.path.write_text(result.stdout)\n",
-            "if compiled.writes_to_standard_output:\n"
-            "            compiled.path.write_text(result.stdout)\n"
-            "        if not result.succeeded:\n"
-            "            return False\n",
-            "a failed recompile to standard output empties the file",
-        ),
+    @kills.replace(
+        requirements_compiler.RequirementsCompiler.recompile,
+        "self.tool",
+        '"uv pip compile"',
+        "the error about a failed pip-compile names uv",
+    )
+    @kills.replace(
+        requirements_compiler.RequirementsCompiler._recompiled,
+        "if not result.succeeded:\n"
+        "            return False\n"
+        "        if compiled.writes_to_standard_output:\n"
+        "            compiled.path.write_text(result.stdout)\n",
+        "if compiled.writes_to_standard_output:\n"
+        "            compiled.path.write_text(result.stdout)\n"
+        "        if not result.succeeded:\n"
+        "            return False\n",
+        "a failed recompile to standard output empties the file",
     )
     def test_a_failed_recompile_is_reported_naming_the_tool(self):
         """Test that a failed recompile is reported, naming the tool, and changes neither the source nor the file."""
@@ -619,19 +597,17 @@ class RecompileTest(UvSettingsTestCase):
         self.recompile({_COMPILED: requirements_compiled_by_uv("base.in") + _TRANSITIVE_PIN, _SOURCE: source})
         self.assert_new_versions_logged(published_version("1.1", PYPI_OLD_UPLOAD), Location(_SOURCE, 2), "flask")
 
-    @kills(
-        Mutation(
-            requirements_compiler.RequirementsCompiler._recompiled,
-            "self._report_moved_versions(command.executable, declarations)",
-            'self._report_moved_versions("uv", declarations)',
-            "a version pip-compile moved back is reported as moved back by uv",
-        ),
-        Mutation(
-            moved_versions.log_moved_versions,
-            "Reference(pin.name, old, location)",
-            "Reference(pin.name, old, locations[name][0])",
-            "a version moved back is reported at the first line declaring it alone",
-        ),
+    @kills.replace(
+        requirements_compiler.RequirementsCompiler._recompiled,
+        "self._report_moved_versions(command.executable, declarations)",
+        'self._report_moved_versions("uv", declarations)',
+        "a version pip-compile moved back is reported as moved back by uv",
+    )
+    @kills.replace(
+        moved_versions.log_moved_versions,
+        "Reference(pin.name, old, location)",
+        "Reference(pin.name, old, locations[name][0])",
+        "a version moved back is reported at the first line declaring it alone",
     )
     @patch("requests.Session.get", return_value=pypi_release(PYPI_OLD_UPLOAD))
     def test_a_version_the_recompile_moves_back_is_reported_as_moved_back_at_each_line_declaring_it(self, get: Mock):
@@ -651,20 +627,17 @@ class RecompileTest(UvSettingsTestCase):
                 self.assert_moved_back_logged(tool, "flask", "1.1", "1.0", *locations)
         get.assert_not_called()
 
-    @kills(
-        Mutation(
-            version_scheme._pep_440_order,
-            "Version(version) if is_valid(version) else None",
-            "Version(version)",
-            "the recompile parses a pin that is not PEP 440, so the run ends with a traceback",
-            raises="packaging.version.InvalidVersion: Invalid version: '2004d'",
-        ),
-        Mutation(
-            moved_versions.log_moved_versions,
-            'versions_before.get(name, "")',
-            'versions_before.get(name, "9")',
-            "the recompile compares a package it pins for the first time with a version the file never pinned",
-        ),
+    @kills.delete(
+        version_scheme._pep_440_order,
+        " if is_valid(version) else None",
+        "the recompile parses a pin that is not PEP 440, so the run ends with a traceback",
+        raises="packaging.version.InvalidVersion: Invalid version: '2004d'",
+    )
+    @kills.append(
+        moved_versions.log_moved_versions,
+        'versions_before.get(name, "',
+        "9",
+        "the recompile compares a package it pins for the first time with a version the file never pinned",
     )
     @patch("requests.Session.get", Mock(return_value=pypi_release(PYPI_OLD_UPLOAD)))
     def test_a_version_the_recompile_pins_is_reported_as_new_where_it_does_not_compare_with_the_pin_before(self):
@@ -710,13 +683,11 @@ class RecompileTest(UvSettingsTestCase):
             (files[_DEV], files[_SOURCE]), (f"{_UV_MANAGED_BY_COMMENT_LINE}\nwerkzeug==3.0\n", "flask==1.0\n")
         )
 
-    @kills(
-        Mutation(
-            requirements_compiler.RequirementsCompiler._recompiled,
-            "for source in compiled.sources)",
-            "for source in compiled.sources[:1])",
-            "a managed-by comment in a source other than the first is missed, so the cooldown stops being applied",
-        )
+    @kills.replace(
+        requirements_compiler.RequirementsCompiler._recompiled,
+        "for source in compiled.sources)",
+        "for source in compiled.sources[:1])",
+        "a managed-by comment in a source other than the first is missed, so the cooldown stops being applied",
     )
     @patch_environ({COOLDOWN.name: "14"})
     def test_the_managed_by_comment_counts_in_a_source_other_than_the_first_one_annotated(self):

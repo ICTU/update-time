@@ -3,21 +3,19 @@
 import re
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.manifests import requirements_txt
 
 
 class RequirementPatternTest(unittest.TestCase):
     """Unit tests for the patterns that tell an exact pin from a requirement pinning no version."""
 
-    @kills(
-        Mutation(
-            requirements_txt,
-            r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"',
-            r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*[A-Za-z0-9][A-Za-z0-9._+-]*{_VERSION_ENDS}"',
-            "the lookahead's copy of the pin drifts from the pin itself, so a spelling only one of them "
-            "accepts matches both patterns and is read twice",
-        )
+    @kills.replace(
+        requirements_txt,
+        r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"',
+        r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*[A-Za-z0-9][A-Za-z0-9._+-]*{_VERSION_ENDS}"',
+        "the lookahead's copy of the pin drifts from the pin itself, so a spelling only one of them "
+        "accepts matches both patterns and is read twice",
     )
     def test_a_requirement_matches_one_pattern(self):
         """Test that a requirement is read as an exact pin or as pinning none, and never as both or as neither."""

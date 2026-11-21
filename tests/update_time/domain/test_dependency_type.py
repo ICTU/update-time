@@ -2,7 +2,7 @@
 
 import unittest
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 from update_time.domain import dependency_type as dependency_type_module
 from update_time.domain import file_type as file_type_module
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
@@ -12,13 +12,10 @@ from update_time.domain.file_type import FileType
 class DependencyTypesTest(unittest.TestCase):
     """Unit tests for the declared dependency types."""
 
-    @kills(
-        Mutation(
-            dependency_type_module,
-            'jsdelivr_npm_urls=DependencyType("jsDelivr npm URLs", (file_type.SPHINX_CONFIG,)),',
-            'jsdelivr_npm_urls=DependencyType("jsDelivr npm URLs", ()),',
-            "a dependency type that declares no file goes unnoticed, and the help stops naming its files",
-        )
+    @kills.delete(
+        dependency_type_module,
+        "file_type.SPHINX_CONFIG,",
+        "a dependency type that declares no file goes unnoticed, and the help stops naming its files",
     )
     def test_every_dependency_type_declares_a_file(self):
         """Test that every dependency type declares at least one file type."""

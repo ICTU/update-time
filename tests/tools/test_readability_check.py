@@ -29,7 +29,7 @@ from tools.readability_check import (
     sentence_complexity,
 )
 
-from mutation_time.mutation import Mutation, kills
+from mutation_time.mutation import kills
 
 from tests.helpers import FakeFiles, mock_path
 
@@ -45,13 +45,11 @@ def _cache_text(verdicts: dict[str, str], key: str = "") -> str:
 class IsCodeTest(unittest.TestCase):
     """Unit tests for telling Python source from prose, so a lint rule's test cases are not measured as sentences."""
 
-    @kills(
-        Mutation(
-            readability_check._is_code,
-            "for candidate in (source, block):",
-            "for candidate in (source,):",
-            "the check measures a snippet as prose when it does not parse on its own, so code reads as a sentence",
-        )
+    @kills.replace(
+        readability_check._is_code,
+        "(source, block):",
+        "(source,):",
+        "the check measures a snippet as prose when it does not parse on its own, so code reads as a sentence",
     )
     def test_code_and_prose(self):
         """Test that source with a call is code, while prose and a bare word are not."""
@@ -234,25 +232,21 @@ class FaultsTest(unittest.TestCase):
     JOINED_SUBJECT = r"The bound and the cooldown are the two constraints on the candidates."
     LISTED_SUBJECT = r"A wildcard, an arbitrary equality, and a combined specifier are read without a version."
 
-    @kills(
-        Mutation(
-            readability_check._subject_is_split,
-            "return determiners >= _SPLIT_SUBJECT_DETERMINERS\n",
-            "return False\n",
-            "no sentence is reported for splitting its subject from its verb, so the fault goes unreported",
-        ),
-        Mutation(
-            readability_check._faults,
-            "tagged = _tagged(_without_asides(sentence))\n",
-            "tagged = _tagged(sentence)\n",
-            "an aside's noun phrase reads as a clause wedged into the subject, so plain prose is reported",
-        ),
-        Mutation(
-            readability_check._subject_is_split,
-            "if tag == _DETERMINER and previous not in _BESIDE_THE_SUBJECT:\n",
-            "if tag == _DETERMINER:\n",
-            "a noun phrase standing beside the subject reads as a clause wedged into it, so plain prose is reported",
-        ),
+    @kills.force_false(
+        readability_check._subject_is_split,
+        "determiners >= _SPLIT_SUBJECT_DETERMINERS",
+        "no sentence is reported for splitting its subject from its verb, so the fault goes unreported",
+    )
+    @kills.replace(
+        readability_check._faults,
+        "tagged = _tagged(_without_asides(sentence))\n",
+        "tagged = _tagged(sentence)\n",
+        "an aside's noun phrase reads as a clause wedged into the subject, so plain prose is reported",
+    )
+    @kills.delete(
+        readability_check._subject_is_split,
+        " and previous not in _BESIDE_THE_SUBJECT",
+        "a noun phrase standing beside the subject reads as a clause wedged into it, so plain prose is reported",
     )
     def test_a_subject_split_from_its_verb_is_reported(self):
         """Test that a sentence starting a second noun phrase before its verb is reported, and the rest are not.
@@ -279,31 +273,25 @@ class FaultsTest(unittest.TestCase):
     NEGATED_EXISTENCE = r"The check passes when there is no new version."
     NEGATED_POSSESSION = r"A body that isn't JSON has no message to include."
 
-    @kills(
-        Mutation(
-            readability_check._faults,
-            "if _negates_a_noun_phrase(tagged):\n",
-            "if False:\n",
-            "no sentence is reported for hanging its negation on a noun phrase, so the fault goes unreported",
-        ),
-        Mutation(
-            readability_check._negates_a_noun_phrase,
-            "elif seen_verb and tag == _DETERMINER",
-            "elif tag == _DETERMINER",
-            "a subject opening with the negation is reported, though it carries the negation to the verb",
-        ),
-        Mutation(
-            readability_check._is_plain,
-            "_denies_existence(tagged, index) or ",
-            "",
-            "`there is no new version` is reported, though that is how plain prose says it",
-        ),
-        Mutation(
-            readability_check._is_plain,
-            " or _denies_possession(tagged, index)",
-            "",
-            "`has no message to include` is reported, though that is how plain prose says it",
-        ),
+    @kills.force_false(
+        readability_check._faults,
+        "_negates_a_noun_phrase(tagged)",
+        "no sentence is reported for hanging its negation on a noun phrase, so the fault goes unreported",
+    )
+    @kills.delete(
+        readability_check._negates_a_noun_phrase,
+        "seen_verb and ",
+        "a subject opening with the negation is reported, though it carries the negation to the verb",
+    )
+    @kills.delete(
+        readability_check._is_plain,
+        "_denies_existence(tagged, index) or ",
+        "`there is no new version` is reported, though that is how plain prose says it",
+    )
+    @kills.delete(
+        readability_check._is_plain,
+        " or _denies_possession(tagged, index)",
+        "`has no message to include` is reported, though that is how plain prose says it",
     )
     def test_a_negation_in_a_noun_phrase_is_reported(self):
         """Test that a negation the sentence hangs on a noun phrase is reported, and one on its verb is not."""
