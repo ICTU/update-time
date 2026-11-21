@@ -18,21 +18,25 @@ class LockedVersionsTest(unittest.TestCase):
         "for section in DEPENDENCY_SECTIONS",
         "[:1]",
         "the versions bun moved for dev and optional dependencies go unreported",
+        case="every dependency section",
     )
     @kills.delete(
         bun_lock._workspace_versions,
         " if path else None",
         "a root named after a package it depends on gets the versions that package's own dependencies resolve to",
+        case="a root named after a package it depends on",
     )
     @kills.delete(
         bun_lock._entry,
         "packages[own] if member is not None and own in packages else ",
         "a member that resolves a dependency to a version of its own gets the version the workspaces share",
+        case="a scoped member's own version",
     )
     @kills.delete(
         bun_lock._version,
         ' or ":" in version',
         "a workspace member, a git repository, or a path reads as the version of a dependency",
+        case="entries that do not name a registry version",
     )
     def test_versions_per_workspace(self):
         """Test that each workspace gets the version the lock records for it, and an entry without one is left out."""
@@ -77,6 +81,15 @@ class LockedVersionsTest(unittest.TestCase):
         "package.elements()[0]",
         "an empty bun.lock entry stops the run",
         raises="IndexError: list index out of range",
+        case="an empty entry",
+    )
+    @kills.replace(
+        bun_lock._version,
+        "yaml.Document()).string()",
+        "yaml.Document())._value",
+        "a bun.lock entry whose first element is not a string stops the run",
+        raises="AttributeError: 'int' object has no attribute 'rsplit'",
+        case="an entry whose first element is not a string",
     )
     def test_entry_without_a_resolution_is_left_out(self):
         """Test that the lock records no version for a dependency whose entry does not start with a resolution."""
@@ -92,6 +105,15 @@ class LockedVersionsTest(unittest.TestCase):
         bun_lock.locked_versions,
         ' or "lockfileVersion" not in document',
         "a bun.lock holding merge conflict markers reads as a lock that records nothing",
+        case="a merge conflict",
+    )
+    @kills.replace(
+        bun_lock.locked_versions,
+        'if document is None or "lockfileVersion"',
+        'if "lockfileVersion"',
+        "a bun.lock that does not parse ends the run with a traceback",
+        raises="TypeError: argument of type 'NoneType' is not a container or iterable",
+        case="not JSON",
     )
     def test_lock_that_does_not_hold_the_json_bun_writes_raises(self):
         """Test that a lock that does not parse, or does not name the version of its format, raises a ValueError."""

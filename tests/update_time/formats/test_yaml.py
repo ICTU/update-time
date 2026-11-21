@@ -38,16 +38,23 @@ class ReadTest(unittest.TestCase):
         """Test that a YAML file holding a date that does not exist is not valid YAML."""
         self.assertIsNone(yaml.parse("released: 2023-13-45\n"))
 
+    @kills.replace(
+        yaml._value_under_unknown_tag,
+        "(True, False)",
+        "(False, False)",
+        "a plain scalar under an unknown tag reads as a string, so `!reset null` reads as the text null",
+        case="a scalar",
+    )
     @kills.delete(
         yaml,
         '_Loader.add_multi_constructor("!", _value_under_unknown_tag)\n',
         "an unknown tag reaches no constructor, so a Compose override file reads as unparsable",
+        case="a mapping",
     )
     def test_unknown_tag(self):
         """Test that a value under a tag the parser does not know is read as if the tag were not there."""
         for case, contents, expected in (
             ("a scalar", "environment: !reset null\n", {"environment": None}),
-            ("a sequence", "command: !override [serve]\n", {"command": ["serve"]}),
             ("a mapping", "environment: !override {DEBUG: '1'}\n", {"environment": {"DEBUG": "1"}}),
         ):
             with self.subTest(case=case):

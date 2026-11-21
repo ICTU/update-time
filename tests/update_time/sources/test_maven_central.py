@@ -112,6 +112,21 @@ class ProjectTest(LoggingTestCase):
         pom_xml_manifest,
         ' "connection", "developerConnection"',
         "a pom naming its repository in a connection alone is read as naming none, so its archival goes unread",
+        case="connection",
+    )
+    @kills.replace(
+        pom_xml_manifest,
+        '("url", "connection", "developerConnection")',
+        '("url", "connection")',
+        "a pom naming its repository in a developer connection alone is read as naming none",
+        case="developerConnection",
+    )
+    @kills.replace(
+        pom_xml_manifest,
+        '("url", "connection", "developerConnection")',
+        '("connection", "developerConnection")',
+        "a pom naming its repository in its scm's url alone is read as naming none",
+        case="url",
     )
     def test_a_pom_naming_an_archived_repository(self):
         """Test that an artefact whose pom names a repository GitHub declares archived is reported as archived.
@@ -276,24 +291,35 @@ class LacksAGitHubRepositoryTest(LoggingTestCase):
         "return LookedUp(None)",
         "return LookedUp(None, absent=True)",
         "a pom that fails to fetch reads as lacking a repository, so its `archived` scope is reported as redundant",
+        case="a pom that fails to fetch",
     )
     @kills.replace(
         maven_central._pom_repository,
         "LookedUp(None, absent=parent_pom.absent)",
         "LookedUp(None, absent=True)",
         "a parent pom that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
+        case="a parent pom that fails to fetch",
     )
     @kills.append(
         maven_central._repository,
         "return LookedUp(None",
         ", absent=True",
         "a listing that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
+        case="a listing that fails to fetch",
     )
     @kills.replace(
         maven_central._parent_pom,
         "return LookedUp(None, absent=True) if parent is None else",
         "return LookedUp(None) if parent is None else",
         "a pom naming neither a repository nor a parent reads as unknown, so its `archived` scope goes unreported",
+        case="a pom lacking both a repository and a parent",
+    )
+    @kills.replace(
+        maven_central._parent_pom,
+        "if pom_xml_manifest.scm_urls(pom):\n        return LookedUp(None, absent=True)",
+        "if pom_xml_manifest.scm_urls(pom):\n        return LookedUp(None)",
+        "a pom naming a repository outside GitHub reads as unknown, so its `archived` scope goes unreported",
+        case="a pom naming a repository outside GitHub",
     )
     def test_an_artefact_lacks_a_github_repository_only_where_its_poms_say_so(self):
         """Test that an artefact lacks a GitHub repository where its poms say so, not where they could not be read."""
@@ -304,7 +330,6 @@ class LacksAGitHubRepositoryTest(LoggingTestCase):
                 {_GUAVA_POM: mock_response(content=outside_github.encode())},
                 True,
             ),
-            "a parent pom lacking a repository": ({}, True),
             "a pom lacking both a repository and a parent": (
                 {_GUAVA_POM: mock_response(content=maven_central_pom().encode())},
                 True,
@@ -382,29 +407,34 @@ class GetChangesTest(LoggingTestCase):
         "(artifact_id,",
         "(artefact,",
         "a release tagged by the artifact's name goes unmatched, since the tag names never carry the group",
+        case="artifact name over repository name",
     )
     @kills.delete(
         maven_central._release_tags,
         ", repository.name",
         "a release tagged by the repository's name rather than the artifact's goes unmatched",
+        case="repository name over version alone",
     )
     @kills.replace(
         maven_central._release_tags,
         "(artifact_id, spelling, repository.name)",
         "(repository.name, spelling, artifact_id)",
         "a repository tagging one version by both names has the repository's release reported for the artifact",
+        case="artifact name over repository name",
     )
     @kills.replace(
         maven_central._release_tags,
         "*release_tags(artifact_id, spelling, repository.name),",
         "*release_tags(artifact_id, spelling),\n            *release_tags(repository.name, spelling),",
         "a repository tagging one version by its name and by the version alone has the wrong release reported",
+        case="repository name over version alone",
     )
     @kills.replace(
         maven_central._spellings,
         '(version, _QUALIFIER.sub("", version))',
         '(_QUALIFIER.sub("", version), version)',
         "a repository tagging one version with and without its qualifier has the wrong release reported for it",
+        case="qualifier over no qualifier",
     )
     def test_the_more_specific_of_two_tags_for_a_version_takes_precedence(self):
         """Test that the release under the more specific of two tags for the same version holds its changes."""
@@ -432,17 +462,32 @@ class GetChangesTest(LoggingTestCase):
         "in _VERSION_PREFIXES",
         "in ()",
         "a release tagged with a prefix other than `v` goes unmatched",
+        case="version-",
     )
     @kills.replace(
         maven_central._release_tags,
         'f"{prefix}{spelling}"',
         'f"{prefix}{version}"',
         "a release tagged with a prefix other than `v` and without the version's qualifier goes unmatched",
+        case="prefix without the qualifier",
+    )
+    @kills.replace(
+        maven_central,
+        '_VERSION_PREFIXES = ("r", "version-", "REL")',
+        '_VERSION_PREFIXES = ("r", "REL")',
+        "a release tagged with the version behind `version-` goes unmatched",
+        case="version-",
+    )
+    @kills.replace(
+        maven_central,
+        '_VERSION_PREFIXES = ("r", "version-", "REL")',
+        '_VERSION_PREFIXES = ("r", "version-")',
+        "a release tagged with the version behind `REL` goes unmatched",
+        case="REL",
     )
     def test_a_release_tagged_with_a_prefix_other_than_v_matches(self):
         """Test that a release tagged with the version behind `r`, `version-`, or `REL` holds the version's changes."""
         cases = {
-            "r": ("6.1.3", "r6.1.3"),
             "version-": ("2.5.250", "version-2.5.250"),
             "REL": ("42.7.13", "REL42.7.13"),
             "prefix without the qualifier": ("6.1.3-jre", "r6.1.3"),
@@ -462,10 +507,9 @@ class GetChangesTest(LoggingTestCase):
     )
     def test_the_changes_come_from_a_changelog_file_where_no_release_matches(self):
         """Test that the changes come from the changelog file when the repository did not release the version."""
-        for heading in (_GUAVA_VERSION, "33.7.1"):
-            with self.subTest(heading=heading), patch("requests.Session.get") as mock_get:
-                self.serve_releases_and_changelog(mock_get, [github_release_json("v33.6.0-jre")], heading)
-                self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), markdown_changes(heading))
+        with patch("requests.Session.get") as mock_get:
+            self.serve_releases_and_changelog(mock_get, [github_release_json("v33.6.0-jre")], "33.7.1")
+            self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), markdown_changes("33.7.1"))
 
     @kills.prepend(
         maven_central.get_changes,
@@ -630,6 +674,14 @@ class ServesTest(LoggingTestCase):
         "LookedUp(None, absent=True)",
         "a server error or a failed request reads as an artefact the repository lacks, so its scopes are reported "
         "as redundant",
+        case="a server error",
+    )
+    @kills.replace(
+        maven_central.serves,
+        "return not _listing(artefact).absent",
+        "return True",
+        "an artefact Maven Central does not serve reads as served, so its scopes are not reported as redundant",
+        case="a missing listing",
     )
     def test_an_artefact_is_unserved_only_where_the_repository_lacks_its_listing(self):
         """Test that a missing listing reads as an unserved artefact, and a failed request as a served one."""
@@ -638,7 +690,6 @@ class ServesTest(LoggingTestCase):
         cases = {
             "a missing listing": (Mock(return_value=missing), False),
             "a server error": (Mock(return_value=failed), True),
-            "a timeout": (Mock(side_effect=requests.exceptions.Timeout), True),
         }
         for case, (mock_get, served) in cases.items():
             with self.subTest(case=case), patch("requests.Session.get", mock_get):
@@ -662,17 +713,11 @@ class PublicationTest(LoggingTestCase):
         raises="StopIteration",
     )
     def test_a_version_is_dated_by_its_own_row(self):
-        """Test that a version is dated by the listing's row for it, and undated where the listing lacks that row."""
-        dated = datetime(2026, 10, 15, 15, 23, tzinfo=UTC)
+        """Test that a version the listing lacks is undated, rather than dated by another version's row."""
         older = maven_central_version_row("33.7.0-jre", datetime(2026, 9, 1, 8, 0, tzinfo=UTC))
-        cases = {
-            "a version the listing dates": ((older, maven_central_version_row("33.7.1-jre", dated)), dated),
-            "a version the listing lacks": ((older,), None),
-        }
-        for case, (rows, expected) in cases.items():
-            with self.subTest(case=case), patch_get(text=maven_central_listing(*rows)) as mock_get:
-                self.assertEqual(maven_central.publication(GUAVA, "33.7.1-jre"), expected)
-                self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
+        with patch_get(text=maven_central_listing(older)) as mock_get:
+            self.assertIsNone(maven_central.publication(GUAVA, "33.7.1-jre"))
+            self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
 
 
 class PublishedTest(unittest.TestCase):

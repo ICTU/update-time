@@ -312,13 +312,26 @@ class LatestVersionTest(unittest.TestCase):
         "return _archival_alone(source.project, reference.dependency)",
         "return NO_PROJECT",
         "an image on a tag Docker Hub does not serve is not checked for archival",
+        case="a version not served",
+    )
+    @kills.delete(
+        resolve_module._reported_project,
+        " or latest.unserved is Unserved.REPOSITORY",
+        "an image whose repository Docker Hub does not serve is checked for staleness and archival all the same",
+        case="a repository not served",
+    )
+    @kills.replace(
+        resolve_module._reported_project,
+        "if latest.unserved is Unserved.VERSION:",
+        "if latest.unserved is not None:",
+        "a repository that does not tag a release is not checked for staleness",
+        case="a repository that does not tag a release",
     )
     def test_the_project_reported_depends_on_what_the_source_serves(self):
         """Test that a repository not served drops the project, and a version not served drops its newest release."""
         archival = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
         project = Project(newest=Release("3.16", STALE_DATE), archival=archival)
         cases = {
-            "a version the source serves": (None, project),
             "a repository not served": (Unserved.REPOSITORY, Project()),
             "a version not served": (Unserved.VERSION, Project(archival=archival)),
             "a repository that does not tag a release": (Unserved.RELEASES, project),
@@ -338,6 +351,13 @@ class LatestVersionTest(unittest.TestCase):
         resolve_module._reported_project,
         "not _project_is_checked(source.project, reference)",
         "a run with the check off asks the source about a project it does not check",
+        case="no threshold of its own",
+    )
+    @kills.delete(
+        resolve_module._project_is_checked,
+        "reference.marker.stale.value is not None or ",
+        "a marker's threshold goes unchecked in a run with the check off",
+        case="a threshold of its own",
     )
     def test_a_source_declaring_no_archival_is_asked_only_if_a_marker_sets_a_threshold(self):
         """Test that with the check off, the source is asked about the project only where a marker sets a threshold.

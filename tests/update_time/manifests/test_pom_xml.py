@@ -142,35 +142,31 @@ class PomNameTest(unittest.TestCase):
         pom_xml.pom_name,
         ' or project.child("artifactId") is None',
         "a pom without an artifact of its own is named after its parent, so its parent's versions are skipped",
+        case="no artifact",
     )
     @kills.delete(
         pom_xml.pom_name,
         ' if all(parts) else ""',
         "a pom lacking both a coordinate and a parent to take it from is named anyway",
+        case="no version to inherit",
     )
-    def test_a_pom_is_named_by_its_coordinates_as_written(self):
-        """Test that a pom is named by its own coordinates, each it leaves out taken from its parent, as written."""
-        revision = properties_element({"revision": "1.0"})
+    @kills.replace(
+        pom_xml.pom_name,
+        "_coordinate(parent_element, tag)",
+        '_coordinate(parent_element, "version")',
+        "a pom that leaves its group to its parent is named without one, so its versions are skipped",
+        case="a parent's group and version",
+    )
+    def test_a_pom_is_named_by_its_coordinates(self):
+        """Test that a pom is named by its coordinates, taking the ones it leaves out from its parent, where it can."""
         cases = {
-            "its own coordinates": (pom_coordinates("child", "org.example", "1.0"), "", "org.example:child:1.0"),
-            "a parent's group and version": (SCANNED_POM_COORDINATES, "", SCANNED_POM_ID),
-            "a parent's version": (
-                pom_coordinates("child", "org.other", parent=PARENT_POM_ID),
-                "",
-                "org.other:child:1.0",
-            ),
-            "a property": (
-                pom_coordinates("child", parent="org.example:parent:${revision}"),
-                revision,
-                "org.example:child:${revision}",
-            ),
-            "no artifact": (pom_coordinates(None, parent=PARENT_POM_ID), "", ""),
-            "no version to inherit": (pom_coordinates("child", "org.example"), "", ""),
+            "a parent's group and version": (SCANNED_POM_COORDINATES, SCANNED_POM_ID),
+            "no artifact": (pom_coordinates(None, parent=PARENT_POM_ID), ""),
+            "no version to inherit": (pom_coordinates("child", "org.example"), ""),
         }
-        for case, (coordinates, properties, name) in cases.items():
+        for case, (coordinates, name) in cases.items():
             with self.subTest(case=case):
-                pom = pom_declaring(coordinates=coordinates, properties=properties)
-                self.assertEqual(pom_xml.pom_name(mock_path(pom)), name)
+                self.assertEqual(pom_xml.pom_name(mock_path(pom_declaring(coordinates=coordinates))), name)
 
     def test_a_pom_that_does_not_parse(self):
         """Test that a pom whose XML does not parse goes unnamed, rather than ending the run."""
@@ -246,12 +242,21 @@ class DeclarationsTest(unittest.TestCase):
         "_interpolated(artifact.text, property_elements)",
         "_element_holding(artifact, property_elements).text",
         "an artifact naming a property in part is read with its `${…}` left unresolved",
+        case="part of an artifact",
     )
     @kills.replace(
         pom_xml._declaration,
         "_interpolated(group.text, property_elements)",
         "_element_holding(group, property_elements).text",
         "a group naming a property in part is read with its `${…}` left unresolved",
+        case="part of a group",
+    )
+    @kills.replace(
+        pom_xml._resolvable_elements,
+        "_property_elements(project) | _own_coordinates(project)",
+        "_property_elements(project)",
+        "a dependency on a sibling module, named through `${project.groupId}`, is read with its `${…}` left unresolved",
+        case="the project's own group",
     )
     def test_coordinates_naming_a_property_the_pom_declares_resolve(self):
         """Test that a group or artifact naming a pom property, wholly or in part, reads as that property's value."""
@@ -373,12 +378,14 @@ class ResolvedDependenciesTest(unittest.TestCase):
         "_own_versions(project, effective_property_elements)",
         "_own_versions(project, property_elements)",
         "a managed artifact naming the parent's property keeps the version Maven moved away from",
+        case="a parent's artifact",
     )
     @kills.replace(
         pom_xml._own_versions,
         "_interpolated(artifact.text, property_elements)",
         "_element_holding(artifact, property_elements).text",
         "a managed artifact holding a parent's property inside its name keeps the version Maven moved away from",
+        case="a parent's property inside the artifact",
     )
     def test_a_version_the_pom_manages_under_a_parent_property_is_read_from_the_pom(self):
         """Test that a managed declaration whose artifact names a parent's property lends the version it holds."""
@@ -435,24 +442,13 @@ class ResolvedDependenciesTest(unittest.TestCase):
         "Update-time checks the version Maven moved away from, where the managed version names a property in part",
     )
     def test_a_version_the_pom_manages_through_its_own_property_is_read_from_that_property(self):
-        """Test that a dependency without a version takes the value its own pom manages it with, through a property."""
+        """Test that a dependency without a version takes the value its pom manages, partly through a property."""
         effective_managed = effective_dependency_element(GUAVA, "33.0.0-jre", line=9)
         guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=17, managed_at=(SCANNED_POM_ID, 10))
         effective_pom = effective_pom_declaring(guava, managed=dependency_management_element(effective_managed))
-        # Each case names the property, the managed version naming it, and the line the managed version is read at.
-        cases = {
-            "the whole version": ({"guava.version": "33.7.1-jre"}, "${guava.version}", 3),
-            "part of the version": ({"guava.major": "33"}, "${guava.major}.7.1-jre", 10),
-        }
-        for case, (values, version, line) in cases.items():
-            with self.subTest(case=case):
-                managed = dependency_management_element(guava_element(version))
-                pom = pom_declaring(guava_element(None), properties=properties_element(values), managed=managed)
-                expected = [
-                    (GUAVA, "33.7.1-jre", line),
-                    (GUAVA, "33.7.1-jre", 15),
-                ]
-                self.assertEqual(_resolved(pom, effective_pom), expected)
+        managed = dependency_management_element(guava_element("${guava.major}.7.1-jre"))
+        pom = pom_declaring(guava_element(None), properties=properties_element({"guava.major": "33"}), managed=managed)
+        self.assertEqual(_resolved(pom, effective_pom), [(GUAVA, "33.7.1-jre", 10), (GUAVA, "33.7.1-jre", 15)])
 
     @kills.replace(
         pom_xml._effective_artefacts,

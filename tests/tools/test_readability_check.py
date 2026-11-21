@@ -42,6 +42,12 @@ def _cache_text(verdicts: dict[str, str], key: str = "") -> str:
     return json.dumps({"key": key or _cache_key(_Limits()), "verdicts": verdicts})
 
 
+# The snippets of code that `IsCodeTest` names its cases by. Only the first of them parses as it is.
+_ACROSS_LINES = "def test_changes(self):\n    self.assertTrue(matches(name))\n"
+_HEADER_ALONE = 'for name in filter(None, parts.split(".")):'
+_FLATTENED_BLOCK = "if found:\nanchor = getattr(anchor, name)"
+
+
 class IsCodeTest(unittest.TestCase):
     """Unit tests for telling Python source from prose, so a lint rule's test cases are not measured as sentences."""
 
@@ -50,15 +56,42 @@ class IsCodeTest(unittest.TestCase):
         "(source, block):",
         "(source,):",
         "the check measures a snippet as prose when it does not parse on its own, so code reads as a sentence",
+        case=_HEADER_ALONE,
     )
-    def test_code_and_prose(self):
-        """Test that source with a call is code, while prose and a bare word are not."""
+    @kills.replace(
+        readability_check._is_code,
+        r'\n{_INDENT}pass"',
+        r'\n"',
+        "the block lacks the pass that gives a quoted header its body, so the header reads as prose",
+        case=_HEADER_ALONE,
+    )
+    @kills.replace(
+        readability_check._is_code,
+        "{textwrap.indent(body, _INDENT)}",
+        "{body}",
+        "the block leaves a flattened body unindented, so it fails to parse and reads as prose",
+        case=_FLATTENED_BLOCK,
+    )
+    @kills.replace(
+        readability_check._is_code,
+        "for candidate in (source, block):",
+        'for candidate in (source.split("\\n")[0], block):',
+        "a snippet is tried by its first line alone, so a test case across lines reads as prose",
+        case=_ACROSS_LINES,
+    )
+    @kills.replace(
+        readability_check._is_code,
+        "return any(isinstance(node, ast.Call) for node in ast.walk(tree))",
+        "return True",
+        "whatever parses counts as code, so a bare word in prose is left out of the measure",
+        case="code",
+    )
+    def test_only_source_with_a_call_is_code(self):
+        """Test that source with a call is code, even as a snippet that does not parse alone, and a bare word is not."""
         classifications = {
-            'self.assertEqual([Path("/file.txt")], list(glob("*.txt")))': True,  # A lint rule's test case.
-            "def test_changes(self):\n    self.assertTrue(matches(name))\n": True,  # ...and one across lines.
-            'for name in filter(None, parts.split(".")):': True,  # ...and a header a mutation snippet quotes alone.
-            "if found:\nanchor = getattr(anchor, name)": True,  # ...and a block a docstring's cleaning flattened.
-            "Return whether the text reads as prose.": False,  # Prose does not parse as Python.
+            _ACROSS_LINES: True,  # A lint rule's test case.
+            _HEADER_ALONE: True,  # The header of a compound statement, quoted without its body.
+            _FLATTENED_BLOCK: True,  # A block whose indentation the cleaning of a docstring stripped.
             "code": False,  # A bare word parses as a name, with no call in it.
         }
         for text, is_code in classifications.items():
@@ -225,28 +258,57 @@ class FaultsTest(unittest.TestCase):
     # Written as raw strings, which the extractor does not read as prose, so this check does not flag its own
     # fixtures for the fault they are here to measure.
     SPLIT = r"The window the repository is asked about is the one the option sets."
-    JOINED = r"The repository is asked about the window the option sets."
     ASIDE_CLAUSE = r"The repository (the one the option names) is asked about the window."
     PREPOSITION = r"A noun phrase inside an aside starts a clause of its own."
     TO_PHRASE = r"A change to the cooldown reaches every reference in the run."
-    JOINED_SUBJECT = r"The bound and the cooldown are the two constraints on the candidates."
     LISTED_SUBJECT = r"A wildcard, an arbitrary equality, and a combined specifier are read without a version."
 
     @kills.force_false(
         readability_check._subject_is_split,
         "determiners >= _SPLIT_SUBJECT_DETERMINERS",
         "no sentence is reported for splitting its subject from its verb, so the fault goes unreported",
+        case="a clause between the subject and its verb",
     )
     @kills.replace(
         readability_check._faults,
-        "tagged = _tagged(_without_asides(sentence))\n",
-        "tagged = _tagged(sentence)\n",
+        "_without_asides(sentence)",
+        "sentence",
         "an aside's noun phrase reads as a clause wedged into the subject, so plain prose is reported",
+        case="an aside holds the noun phrase",
     )
     @kills.delete(
         readability_check._subject_is_split,
         " and previous not in _BESIDE_THE_SUBJECT",
         "a noun phrase standing beside the subject reads as a clause wedged into it, so plain prose is reported",
+        case="a preposition opens the noun phrase",
+    )
+    @kills.replace(
+        readability_check,
+        'frozenset({"IN", "TO", "CC", ","})',
+        'frozenset({"TO", "CC", ","})',
+        "the check reads the noun phrase after a preposition as a clause in the subject, so it reports plain prose",
+        case="a preposition opens the noun phrase",
+    )
+    @kills.replace(
+        readability_check,
+        'frozenset({"IN", "TO", "CC", ","})',
+        'frozenset({"IN", "CC", ","})',
+        "a noun phrase `to` opens reads as a clause wedged into the subject, so plain prose is reported",
+        case="`to` opens the noun phrase",
+    )
+    @kills.replace(
+        readability_check,
+        'frozenset({"IN", "TO", "CC", ","})',
+        'frozenset({"IN", "TO", ","})',
+        "a subject `and` joins to the first reads as a clause wedged into it, so plain prose is reported",
+        case="a comma lists three subjects",
+    )
+    @kills.replace(
+        readability_check,
+        'frozenset({"IN", "TO", "CC", ","})',
+        'frozenset({"IN", "TO", "CC"})',
+        "the check reads a subject listed after a comma as a clause wedged into the first, so it reports plain prose",
+        case="a comma lists three subjects",
     )
     def test_a_subject_split_from_its_verb_is_reported(self):
         """Test that a sentence starting a second noun phrase before its verb is reported, and the rest are not.
@@ -256,11 +318,9 @@ class FaultsTest(unittest.TestCase):
         """
         cases = {
             "a clause between the subject and its verb": (self.SPLIT, "subject split from its verb"),
-            "a subject that reaches its verb": (self.JOINED, ""),
             "an aside holds the noun phrase": (self.ASIDE_CLAUSE, ""),
             "a preposition opens the noun phrase": (self.PREPOSITION, ""),
             "`to` opens the noun phrase": (self.TO_PHRASE, ""),
-            "`and` joins two subjects": (self.JOINED_SUBJECT, ""),
             "a comma lists three subjects": (self.LISTED_SUBJECT, ""),
         }
         for case, (sentence, expected) in cases.items():
@@ -277,21 +337,32 @@ class FaultsTest(unittest.TestCase):
         readability_check._faults,
         "_negates_a_noun_phrase(tagged)",
         "no sentence is reported for hanging its negation on a noun phrase, so the fault goes unreported",
+        case="a negation hung on an object",
+    )
+    @kills.replace(
+        readability_check._negates_a_noun_phrase,
+        'tag == _DETERMINER and word.lower() == "no"',
+        'word.lower() in {"no", "not"}',
+        "a `not` after the verb counts as a negation in a noun phrase, so the plain way to negate is reported",
+        case="a negation on the verb",
     )
     @kills.delete(
         readability_check._negates_a_noun_phrase,
         "seen_verb and ",
         "a subject opening with the negation is reported, though it carries the negation to the verb",
+        case="a negation opening the subject",
     )
     @kills.delete(
         readability_check._is_plain,
         "_denies_existence(tagged, index) or ",
         "`there is no new version` is reported, though that is how plain prose says it",
+        case="a negation denying that anything exists",
     )
     @kills.delete(
         readability_check._is_plain,
         " or _denies_possession(tagged, index)",
         "`has no message to include` is reported, though that is how plain prose says it",
+        case="a negation denying that the subject has something",
     )
     def test_a_negation_in_a_noun_phrase_is_reported(self):
         """Test that a negation the sentence hangs on a noun phrase is reported, and one on its verb is not."""

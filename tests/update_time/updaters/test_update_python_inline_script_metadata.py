@@ -7,6 +7,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
 from update_time.io.log import Logger
+from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.package_managers.uv import lock, marker_policy
 from update_time.package_managers.uv import uv as uv_module
 from update_time.primitives.command import Command
@@ -203,12 +204,22 @@ class ScriptLockTest(_ScriptLockTestCase):
         "except OSError as error:",
         "a .py file that is not UTF-8 stops the update of every script",
         raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+        case="a .py file that is not UTF-8",
+    )
+    @kills.replace(
+        update_python_inline_script_metadata._scripts,
+        "except (OSError, UnicodeDecodeError) as error:",
+        "except UnicodeDecodeError as error:",
+        "a .py file without read permission stops the update of every script",
+        raises="PermissionError: [Errno 13] Permission denied: '/other.py'",
+        case="a .py file without read permission",
     )
     @kills.replace(
         update_python_inline_script_metadata._scripts,
         "_LOG.unreadable_script(path, error)",
         "_ = error",
         "the run skips an unreadable .py file without a word",
+        case="a .py file without read permission",
     )
     def test_a_py_file_that_cannot_be_read_is_reported_and_skipped(self, run: Mock, get: Mock, glob: Mock):
         """Test that a .py file the run cannot read is reported, and that uv locks the other scripts alone."""
@@ -306,12 +317,21 @@ class ScriptRedundantDirectiveTest(_ScriptLockTestCase):
         marker_policy._unkept_lock_bound_redundancy,
         "if declaration.pins_a_version else Reason.BOUND_DECIDES_NOTHING",
         "a bound on a range in a script without a lock goes unreported, though the run removes its lock",
+        case="specifier bound",
     )
     @kills.replace(
         lock._Member.bounded_declarations,
         "if self.policy.bound_redundancy(declaration) is None]",
         "if declaration.narrowable]",
         "a bound on a range narrows the lock the run removes, and is judged at the version that lock records",
+        case="specifier bound",
+    )
+    @kills.replace(
+        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        "Reason.URL_RATHER_THAN_VERSION",
+        "Reason.BOUND_DECIDES_NOTHING",
+        "a bound on a direct URL in a script is reported as if uv resolved the version",
+        case="bound on a direct URL",
     )
     def test_a_bound_on_a_dependency_without_an_exact_pin_narrows_nothing_and_is_reported_where_the_script_had_no_lock(
         self, run: Mock, get: Mock, glob: Mock

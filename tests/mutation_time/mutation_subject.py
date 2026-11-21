@@ -105,3 +105,10 @@ def is_multiple_of_five(value: int) -> bool:
 
 # What a multiple of five divides by, a module-level constant for a mutation to change.
 _FIVE = 5
+# What a multiple of ten divides by, derived from the constant above when the module is executed.
+_TEN = _FIVE * 2
+
+
+def is_multiple_of_ten(value: int) -> bool:
+    """Return whether the value is a multiple of ten."""
+    return not value % _TEN

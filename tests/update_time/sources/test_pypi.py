@@ -216,12 +216,28 @@ class GetChangesTest(LoggingTestCase):
         "markdown=markdown.is_content_type(content_type) or markdown.is_file(url)",
         "markdown=True",
         "a changelog URL's extension is passed over, so a reStructuredText changelog is read as Markdown",
+        case="CHANGELOG.rst",
     )
     @kills.replace(
         markdown_format.is_file,
         "urlparse(name).path",
         "name",
         "a query or a fragment after a URL's extension hides it, so its Markdown is shown raw",
+        case="CHANGELOG.md#unreleased",
+    )
+    @kills.replace(
+        markdown_format.is_file,
+        "urlparse(name).path",
+        'name.partition("#")[0]',
+        "a query after a URL's extension hides it, so its Markdown is shown raw",
+        case="CHANGELOG.md?token=abc",
+    )
+    @kills.replace(
+        markdown_format.is_file,
+        "urlparse(name).path",
+        'name.partition("?")[0]',
+        "a fragment after a URL's extension hides it, so its Markdown is shown raw",
+        case="CHANGELOG.md#unreleased",
     )
     def test_the_changelog_url_extension_says_whether_the_changes_are_markdown(self, mock_get: Mock):
         """Test that the extension of the changelog URL PyPI publishes says whether its changes are Markdown."""
@@ -337,6 +353,14 @@ class GetChangesTest(LoggingTestCase):
         "markdown=markdown.is_content_type(content_type)",
         "markdown=True",
         "the content type is passed over, so a reStructuredText description is read as Markdown",
+        case="text/x-rst",
+    )
+    @kills.replace(
+        pypi._changelog_from_description,
+        "markdown=markdown.is_content_type(content_type)",
+        "markdown=False",
+        "a Markdown description is read as text, so its markup is shown raw",
+        case="text/markdown; charset=UTF-8; variant=GFM",
     )
     def test_the_content_type_says_whether_the_description_is_markdown(self, mock_get: Mock):
         """Test that the content type PyPI reports for a description says whether its changes are Markdown."""
@@ -378,12 +402,35 @@ class GetChangesTest(LoggingTestCase):
         "normalized_python_name(repository.name) == normalized_python_name(package)",
         "repository.name == package",
         "a package whose repository spells its name with another separator, or in another case, reports no changes",
+        case="python-pillow/Pillow",
     )
     @kills.replace(
         pypi._names_the_package,
         "normalized_python_name(repository.name) == normalized_python_name(package)",
         "normalized_python_name(package) in normalized_python_name(repository.name)",
         "a repository whose name merely contains the package's is read as the package's own",
+        case="chrisjsewell/markdown-it-pyrs",
+    )
+    @kills.replace(
+        pypi._names_the_package,
+        "normalized_python_name(repository.name) == normalized_python_name(package)",
+        'repository.name.lower().replace(".", "-") == package',
+        "a package whose repository spells its name with an underscore does not report changes",
+        case="Ousret/charset_normalizer",
+    )
+    @kills.replace(
+        pypi._names_the_package,
+        "normalized_python_name(repository.name) == normalized_python_name(package)",
+        'repository.name.lower().replace("_", "-") == package',
+        "a package whose repository spells its name with a dot does not report changes",
+        case="zopefoundation/zope.interface",
+    )
+    @kills.replace(
+        pypi._names_the_package,
+        "normalized_python_name(repository.name) == normalized_python_name(package)",
+        'repository.name.replace("_", "-").replace(".", "-") == package',
+        "a package whose repository spells its name in another case does not report changes",
+        case="python-pillow/Pillow",
     )
     def test_which_repository_names_match_the_package_name(self, mock_get: Mock):
         """Test which repository names count as the package's, compared as PyPI normalizes a distribution name."""
@@ -588,18 +635,51 @@ class GetChangesTest(LoggingTestCase):
         github,
         ', "history", "news", "releases"',
         "a repository naming its changelog file `history`, `news`, or `releases` does not report changes",
+        case="history.txt",
+    )
+    @kills.replace(
+        github,
+        '{"changes", ',
+        "{",
+        "a repository naming its changelog file `changes` does not report changes",
+        case="CHANGES.rst",
+    )
+    @kills.delete(
+        github,
+        '"history", ',
+        "a repository naming its changelog file `history` does not report changes",
+        case="history.txt",
+    )
+    @kills.delete(
+        github, '"news", ', "a repository naming its changelog file `news` does not report changes", case="News"
+    )
+    @kills.delete(
+        github,
+        ', "releases"',
+        "a repository naming its changelog file `releases` does not report changes",
+        case="RELEASES.RST",
+    )
+    @kills.delete(
+        github._is_changelog_file,
+        "stem in _CHANGELOG_FILE_NAMES and ",
+        "a repository's README is read as its changelog",
+        case="README.md",
+    )
+    @kills.delete(
+        github._is_changelog_file,
+        " and dot + extension in _CHANGELOG_FILE_EXTENSIONS",
+        "a repository's directory of changelog fragments is read as its changelog",
+        case="changelog.d",
     )
     def test_which_root_entries_count_as_the_changelog(self, mock_get: Mock):
         """Test which names a root entry is read as the changelog under, compared without regard for case."""
         changelog = "1.1\n===\n\n- Fixed foo\n"
         cases = (
             ("CHANGES.rst", True),
-            ("CHANGELOG.md", True),
             ("history.txt", True),
             ("News", True),
             ("RELEASES.RST", True),
             ("README.md", False),
-            ("CHANGELOG.html", False),
             ("changelog.d", False),
         )
         for index, (name, found) in enumerate(cases):
@@ -754,26 +834,38 @@ class ArchivalTest(LoggingTestCase):
         'project_status = metadata.get("project-status", {})',
         "a project status PyPI serves as null ends the run with a traceback rather than reading as active",
         raises="AttributeError: 'NoneType' object has no attribute 'get'",
+        case="project-status-served-as-null",
     )
     @kills.replace(
         pypi._archival,
         'return Archival(archived=archived, reason=project_status.get("reason") or "")',
         'return Archival(archived=archived, reason=project_status.get("reason", ""))',
         "a reason PyPI serves as null is carried as None in the field that holds the words to quote",
+        case="archived-project-with-a-null-reason",
+    )
+    @kills.replace(
+        pypi._archival,
+        'project_status.get("status") == _ARCHIVED_STATUS',
+        'project_status.get("status") is not None',
+        "a project PyPI declares active reads as archived",
+        case="active-project",
+    )
+    @kills.replace(
+        pypi._archival,
+        'reason=project_status.get("reason") or ""',
+        'reason=""',
+        "the reason PyPI publishes beside the archived status is left out of the warning",
+        case="archived-project-with-a-reason",
     )
     @patch("requests.Session.get")
     def test_project_status(self, mock_get: Mock):
         """Test that a project reads as archived exactly when the Index API declares that status for it.
 
-        PyPI serves the status under `status`, where PEP 792's text spells it `state`, so a response spelling it
-        the PEP's way declares no status to read. A `project-status` or a `reason` served as null names none
-        either. Each case names a package of its own, since the Index API response is cached per package.
+        A `project-status` or a `reason` served as null names none. Each case names a package of its own, since the
+        Index API response is cached per package.
         """
         cases: dict[str, tuple[Mapping, Archival]] = {
-            "archived-project": ({"project-status": {"status": "archived"}}, Archival(archived=True)),
             "active-project": ({"project-status": {"status": "active"}}, Archival()),
-            "project-without-a-status": ({}, Archival()),
-            "project-status-spelled-as-a-state": ({"project-status": {"state": "archived"}}, Archival()),
             "archived-project-with-a-reason": (
                 {"project-status": {"status": "archived", "reason": "superseded by humanize2"}},
                 Archival(archived=True, reason="superseded by humanize2"),
@@ -836,24 +928,21 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills.delete(
         pypi._eligible_release, "walk.stop()", "unreachable release metadata lets the walk try the releases in between"
     )
-    def test_release_whose_metadata_cannot_be_fetched_holds_back_the_releases_in_between_whatever_the_cooldown(
+    def test_release_whose_metadata_cannot_be_fetched_holds_back_the_releases_in_between_without_a_cooldown(
         self, mock_get: Mock
     ):
         """Test that a release whose metadata can't be fetched holds back the releases in between, its reason logged."""
         unavailable = mock_response({}, ok=False, status_code=503)
-        for cooldown_days in (COOLDOWN.default, 0):
-            with self.subTest(cooldown_days=cooldown_days):
-                mock_get.reset_mock()
-                mock_get.side_effect = [pypi_index("1.0", "1.1", "1.2"), unavailable, unavailable]
-                self.assertEqual(get_latest_version("unreachable", "1.0", cooldown_days=cooldown_days).version, "1.0")
-                self.assertEqual(mock_get.call_count, 2)  # The index and the newest release's metadata
-                self.assert_error_logged(
-                    message_of(Logger.no_release_metadata),
-                    dependency="unreachable",
-                    candidate="1.2",
-                    current="1.0",
-                    reason="HTTP 503",
-                )
+        mock_get.side_effect = [pypi_index("1.0", "1.1", "1.2"), unavailable, unavailable]
+        self.assertEqual(get_latest_version("unreachable", "1.0", cooldown_days=0).version, "1.0")
+        self.assertEqual(mock_get.call_count, 2)  # The index and the newest release's metadata
+        self.assert_error_logged(
+            message_of(Logger.no_release_metadata),
+            dependency="unreachable",
+            candidate="1.2",
+            current="1.0",
+            reason="HTTP 503",
+        )
 
     def test_new_version(self, mock_get: Mock):
         """Test that the latest version is returned, with its publication date."""

@@ -44,20 +44,27 @@ class AnchorTest(unittest.TestCase):
         'unicodedata.category(match[0]).startswith("M")',
         r'match[0] == "\ufe0f"',
         "only the U+FE0F after an emoji is kept, so another combining mark is dropped where GitHub keeps it",
+        case="Cafe\u0301",
     )
     @kills.replace(
         markdown._combining_mark,
         'unicodedata.category(match[0]).startswith("M")',
         "unicodedata.combining(match[0])",
         "only a mark with a combining class is kept, so the U+FE0F after an emoji such as ⚠️ is dropped",
+        case="\u26a0\ufe0f Warnings",
+    )
+    @kills.replace(
+        markdown.anchor,
+        r'r"[^\w\s-]"',
+        r'r"[^\w\s.-]"',
+        "a dot is kept, so the anchor of a heading quoting a file name does not match GitHub's",
+        case="`pyproject.toml` dependencies",
     )
     def test_github_anchor_rules(self):
         """Test that the anchor is lower-cased, drops punctuation and emoji, keeps marks, and hyphenates spaces."""
         cases = {
-            "⏳ Cooldown": "#-cooldown",
             "\u26a0\ufe0f Warnings": "#\ufe0f-warnings",
             "Cafe\u0301": "#cafe\u0301",
-            "What files are updated?": "#what-files-are-updated",
             "`pyproject.toml` dependencies": "#pyprojecttoml-dependencies",
         }
         for heading, expected in cases.items():

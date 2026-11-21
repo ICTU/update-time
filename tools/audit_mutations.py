@@ -1,10 +1,12 @@
-"""Report the registered mutations that a test other than the registering one kills as well.
+"""Report the registered mutations that another test of the registering test's module kills as well.
 
-Usage: `uv run python -m tools.audit_mutations`. When another test kills a registered mutation as well, the suite
-guards it without the registration, so the registration can go. The audit leaves out the tests of the mutations
-themselves.
+Usage: `uv run python -m tools.audit_mutations`. When another test of its module kills a registered mutation as well,
+the module guards it without the registration, so the registration can go. A test of another module may kill it too,
+as an updater's test reaches the code a unit test registers a mutation of. The audit leaves out the tests of the
+mutations themselves.
 """
 
+import dataclasses
 import io
 import os
 import sys
@@ -32,7 +34,7 @@ _MUTATION_TESTS = "tests.mutation_time."
 
 @dataclass(frozen=True)
 class _Finding:
-    """A registered mutation that other tests kill as well: the test registering it, its regression, and those tests."""
+    """What the audit finds: a registration, its regression, and the other tests of its module killing its mutation."""
 
     registered: str
     regression: str
@@ -51,14 +53,27 @@ class _SuiteRun:
     ids_by_context: Mapping[str, list[str]]
 
     def candidates(self, path: str, lines: range, registered: str) -> list[str]:
-        """Return the ids of the tests that ran any of the lines, other than the registered test in any class."""
+        """Return the ids of the tests of the registered test's modules that ran any of the lines, other than that test.
+
+        A mixin's test runs in the module of each class inheriting it, and its copies count as that test.
+        """
         contexts_by_line = self.contexts_of(path)
         ran = {context for line in lines for context in contexts_by_line.get(line, ())} - {registered, ""}
-        return [test for context in sorted(ran) for test in self.ids_by_context.get(context, [context])]
+        modules = {_module(test) for test in self._ids(registered)}
+        return [test for context in sorted(ran) for test in self._ids(context) if _module(test) in modules]
+
+    def _ids(self, context: str) -> list[str]:
+        """Return the ids of the tests the context names: one, or a copy in each class inheriting a mixin's test."""
+        return self.ids_by_context.get(context, [context])
+
+
+def _module(test: str) -> str:
+    """Return the module of the test that the id names."""
+    return test.rsplit(".", 2)[0]
 
 
 def _audit(registrations: Iterable[tuple[str, Mutation]], run: _SuiteRun) -> list[_Finding]:
-    """Return a finding for each registered mutation that a test other than the registering one kills as well.
+    """Return a finding for each registered mutation that another test of the registering test's module kills as well.
 
     A candidate's own registrations stand aside, so checking it does not check them in turn. A candidate runs against
     the code as it is once, however many registrations it is a candidate for.
@@ -71,11 +86,15 @@ def _audit(registrations: Iterable[tuple[str, Mutation]], run: _SuiteRun) -> lis
 
 
 def _finding(test: str, mutation: Mutation, run: _SuiteRun, passes_unmutated: Callable[[str], bool]) -> _Finding:
-    """Return the registered mutation with the tests besides the registering one that kill it."""
+    """Return the registered mutation with the other tests of the registering test's module that kill it.
+
+    A mutation names a case of the registering test's table, so the audit checks the other tests without the name.
+    """
+    unnamed = dataclasses.replace(mutation, case=None)
     killers = sorted(
         candidate
         for candidate in run.candidates(mutation.path, mutation.lines, test)
-        if passes_unmutated(candidate) and mutation.check(candidate).outcome is Outcome.KILLED
+        if passes_unmutated(candidate) and unnamed.check(candidate).outcome is Outcome.KILLED
     )
     return _Finding(test, mutation.regression, killers)
 
@@ -121,7 +140,7 @@ def _context(test: unittest.TestCase) -> str:
 
 
 def main() -> int:
-    """Report each registered mutation that other tests kill as well, and fail the run where there is one.
+    """Report each registered mutation that other tests of its module kill as well, and fail the run where there is one.
 
     A test module that does not import fails the run before any audit, since its registrations would go unaudited.
     """

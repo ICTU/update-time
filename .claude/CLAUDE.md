@@ -78,8 +78,8 @@ Each cycle has three steps:
    - Update every docstring and comment the change makes untrue. Do that now, not in the refactor step.
    - Probe the new test, whether it failed in Red or passed: break the code it guards the way the regression it names would break it, with `just mutate <file>:<definition>`, and read which tests killed the mutation.
      - None killed it: the test does not guard what its name claims. Fix the test, not the probe.
-     - Only the new test killed it: register the mutation with `@kills` on that test, unless the replacement is longer than its snippet.
-     - Other tests killed it too: leave it unregistered. Where the new test, or a case of its table, does not add a kill of its own, delete it. Reshape what the deletion leaves, such as a table with one case left.
+     - Only the new test of its module killed it: register the mutation with `@kills` on that test, unless the replacement is longer than its snippet. A test of another module killing it as well, such as an updater's test, does not count.
+     - Other tests of the same module killed it too: leave it unregistered. Where the new test, or a case of its table, does not add a kill of its own, delete it. Reshape what the deletion leaves, such as a table with one case left.
      - An earlier test's registration that the new test kills as well comes off. The earlier test stays.
    - When the step adds or changes a check, run that check over the real tree as well. A check that passes its fixtures can still be blind to the real file, which someone wrote without sharing its assumptions. Read what it reports, then mutate that file: `just mutate <that file> just <check>` when `just check` runs the check, plain `just mutate <that file>` when the test suite does.
    - End the step with `just verify`, green. When the smallest change that passes the test leaves a check failing, the step is too small: widen it rather than ending red.

@@ -1,5 +1,4 @@
 ### &nbsp;&nbsp;&nbsp;🚀 Features.
-##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](https://github.com).
 **In an `update-time` field**, for a reference in a file that can hold no comment.
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 A CVSS vector the `cvss` package refuses, since `AV:X` is not a value the metric can take.
@@ -148,7 +147,6 @@ Pin a jsDelivr URL that declares no Subresource Integrity hash, by inserting one
 Pin an image reference that names no tag, such as a Dockerfile's `FROM python` or a Docker Compose `image: redis`, to the version and digest its `latest` tag serves, instead of passing it over in silence.
 Pre-releases, invalid versions, versions the bound rules out, and versions the npm registry has no publication date for (e.g. present on jsDelivr but not yet mirrored) are skipped.
 PyPI answers null for a package that declares no project URLs.
-PyPI serves the status under `status`, where PEP 792's text spells it `state`, so a response spelling it the PEP's way declares no status to read.
 Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it.
 Report an npm package's changes from a changelog file in its repository when no release matches its version, instead of reporting that no changelog is available.
 Report each name the docstring quotes that the code mentions only under the opposite visibility.
@@ -515,10 +513,8 @@ the changelog file of a package a monorepo builds from a directory is looked for
 the content type a changelog URL is served with is passed over, so its Markdown is shown raw.
 the document dates no version, so newest_release returns None.
 the line below declares nothing, so this steers no declaration.
-the lookahead's copy of the pin drifts from the pin itself, so a spelling only one of them accepts matches both patterns and is read twice.
 the repository reports no archival, so a switched-off staleness check skips the pom it reads.
 the second URL's version list; the npm registry document is cached.
-the service beside it tags no build.
 the updater script '' is on disk but registered for no dependency type.
 the updater script 'stray' is on disk but registered for no dependency type.
 uv then rejects the script, and Update-time reads no dependency from that block.

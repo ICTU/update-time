@@ -1001,23 +1001,28 @@ class LoggerTests(TestCase):
 
     @kills.replace(
         log_module.Logger.arguments,
-        "shlex.join(arguments)",
-        '" ".join(arguments)',
+        "shlex",
+        '" "',
         "an argument holding a space is logged as two arguments",
+        case="argument with a space",
+    )
+    @kills.delete(
+        log_module.Logger.arguments,
+        ' or "none"',
+        "a run without arguments logs nothing after the colon",
+        case="no arguments",
     )
     def test_arguments_logged_at_debug(self, mock_log: Mock):
         """Test that the command-line arguments are logged at debug level, quoted as the shell reads them."""
         cases: tuple[tuple[str, list[str], str], ...] = (
-            ("options", ["--log-level", "debug", "--force"], "--log-level debug --force"),
             ("argument with a space", ["my project"], "'my project'"),
             ("no arguments", [], "none"),
         )
         for case, arguments, rendered in cases:
             with self.subTest(case):
                 _new_logger().arguments(arguments)
-                self.assert_message(
-                    mock_log, message_of(Logger.arguments), logging.DEBUG, f"Command-line arguments: {rendered}"
-                )
+                message = message_of(Logger.arguments)
+                self.assert_message(mock_log, message, logging.DEBUG, f"Command-line arguments: {rendered}")
 
     def test_tool_version_logged_at_debug(self, mock_log: Mock):
         """Test that the version a tool reports in a directory is logged at debug level, every line of it."""
@@ -1029,12 +1034,8 @@ class LoggerTests(TestCase):
         ):
             with self.subTest(case):
                 _new_logger().tool_version(executable, directory, output)
-                self.assert_message(
-                    mock_log,
-                    message_of(Logger.tool_version),
-                    logging.DEBUG,
-                    f"Version of {executable} in {at(rendered)}: {output}",
-                )
+                expected = f"Version of {executable} in {at(rendered)}: {output}"
+                self.assert_message(mock_log, message_of(Logger.tool_version), logging.DEBUG, expected)
 
     def test_credentials_logged_at_debug(self, mock_log: Mock):
         """Test that which credential variables are set is logged at debug level, naming each variable."""

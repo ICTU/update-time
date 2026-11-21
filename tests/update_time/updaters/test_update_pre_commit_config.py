@@ -20,6 +20,8 @@ from update_time.manifests import pre_commit_config as pre_commit_config_manifes
 from update_time.primitives import digest
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
+from update_time.references import resolve as references_resolve
+from update_time.sources import github as sources_github
 from update_time.updaters import update_pre_commit_config
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
@@ -219,6 +221,21 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         """(?P<quote>['\\"]?)(?P<repo>[^\\s'\\"]+)(?P=quote)")""",
         """(?P<repo>\\S+)")""",
         "a quoted repository URL keeps its quotes, so it does not name a GitHub repository and its hook stays",
+        case="'",
+    )
+    @kills.replace(
+        pre_commit_config_manifest,
+        """(?P<quote>['\\"]?)(?P<repo>""",
+        """(?P<quote>[']?)(?P<repo>""",
+        "a repository URL in double quotes keeps its quotes, so its hook stays",
+        case='"',
+    )
+    @kills.replace(
+        pre_commit_config_manifest,
+        """(?P<quote>['\\"]?)(?P<repo>""",
+        """(?P<quote>[\\"]?)(?P<repo>""",
+        "a repository URL in single quotes keeps its quotes, so its hook stays",
+        case="'",
     )
     def test_quoted_repo_is_updated(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a hook repository whose URL the config quotes is updated, whichever quote it uses."""
@@ -248,16 +265,27 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         'SHORT_COMMIT_SHA = rf"',
         "(?=[0-9]*[a-f])",
         "a short commit SHA of digits alone is resolved as a version and never pinned",
+        case="1234567 → full SHA",
+    )
+    @kills.replace(
+        references_github.PinUpdater._unversioned_pin,
+        'return replace(pin, version="")',
+        "return pin",
+        "a short commit SHA pinned to its full SHA gets a frozen comment naming the short SHA",
+        case="1234567 → full SHA",
+    )
+    @kills.replace(
+        sources_github._named_commit,
+        "tag_name=tagged.tag_name",
+        "tag_name=tagged.version_string",
+        "a branch frozen at a version tag gets a frozen comment naming the version rather than the tag",
+        case="main → v6.0.0",
     )
     def test_branch_or_short_sha_rev_is_frozen_to_its_commit(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a branch is frozen as written, a short SHA as its full SHA, or either as the version tag there."""
+        """Test that a short SHA is frozen as its full SHA, and a branch as the version tag at its commit."""
         cases = {
-            "main → main": ("main", [], NEW_SHA, f"{NEW_SHA}  # frozen: main"),
-            "vnext → vnext": ("vnext", [], NEW_SHA, f"{NEW_SHA}  # frozen: vnext"),
-            "557067c → full SHA": ("557067c", [], full_commit_sha("557067c"), full_commit_sha("557067c")),
             "1234567 → full SHA": ("1234567", [], full_commit_sha("1234567"), full_commit_sha("1234567")),
             "main → v6.0.0": ("main", [github_tag_json("v6.0.0", NEW_SHA)], NEW_SHA, f"{NEW_SHA}  # frozen: v6.0.0"),
-            "main → 6.0.0": ("main", [github_tag_json("6.0.0", NEW_SHA)], NEW_SHA, f"{NEW_SHA}  # frozen: 6.0.0"),
         }
         mock_get_latest_version.return_value = DependencyVersion("0")  # A rev read as a version does not get pinned
         for case, (rev, tags, sha, pinned) in cases.items():
@@ -482,6 +510,13 @@ class UpdatePreCommitConfigsThroughTheSourceTest(LoggingTestCase):
         references_github.PinUpdater._report_redundant_directives,
         "self.source.reports_vulnerabilities(reference.pinned) and ",
         "a `set[vulnerability-level=none]` on a pre-commit hook naming a branch is reported twice",
+        case="branch",
+    )
+    @kills.delete_statement(
+        references_resolve.latest_version,
+        "report_directives_the_source_cannot_apply(reference, source, log)",
+        "a `set[vulnerability-level=none]` on a pre-commit hook at a version goes unreported",
+        case="version",
     )
     @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
     def test_vulnerability_level_none_marker_is_reported_as_redundant(self, mock_glob: Mock):

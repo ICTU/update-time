@@ -103,22 +103,19 @@ class TagTest(unittest.TestCase):
         r'r"+\1"',
         r'r".\1"',
         "a build number is read as a version component, so 26.0.2_10 sorts above 26.0.2.1_1",
+        case="26.0.2_10-jre below 26.0.2.1_1-jre",
+    )
+    @kills.delete(
+        oci.Tag._sort_key,
+        "len(self.sortable_suffix_version.release),",
+        "a more precise spelling of a suffix's version does not sort above it, so alpine2.3 stays off alpine2.3.0",
+        case="python1.3.0-alpine2.3 below python1.3.0-alpine2.3.0",
     )
     def test_sort_tag(self):
-        """Test that a tag sorts below one with a higher version, or a more precise version of the same release."""
-        lower_and_higher = (
-            ("1", "2"),
-            ("1.3", "1.4"),
-            ("1.3.1", "1.3.2"),
-            ("1.3", "1.3.1"),
-            ("1.3", "1.3.0"),
-            ("python1.3", "python1.3.0"),
-            ("python1.3-alpine2.3", "python1.3.0-alpine2.3"),  # the main version decides
-            ("python1.3.0-alpine2.3", "python1.3.0-alpine2.3.0"),  # ...and the suffix's when the main ones are equal
-            ("26.0.2_10-jre", "26.0.2.1_1-jre"),  # a build number orders the builds within one version
-        )
+        """Test that a tag sorts below one with a more precise suffix version, or with a higher build number."""
+        lower_and_higher = (("python1.3.0-alpine2.3", "python1.3.0-alpine2.3.0"), ("26.0.2_10-jre", "26.0.2.1_1-jre"))
         for lower, higher in lower_and_higher:
-            with self.subTest(lower=lower, higher=higher):
+            with self.subTest(f"{lower} below {higher}"):
                 self.assertLess(Tag(lower), Tag(higher))
 
 
@@ -260,45 +257,58 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         "self._suffix_tag.suffix",
         '""',
         "a suffix's remainder is dropped from its label, so a slim reference drifts onto the fat image",
+        case="a suffix that drops the remainder",
     )
     @kills.replace(
         oci.Tag._date_spelling,
         're.sub(r"\\d", "0", cast("re.Match[str]", self._match).group("version"))',
         '""',
         "every snapshot spells its date the same way, so a reference on a date moves onto a timestamp",
+        case="a dashed date for an undashed one",
     )
     @kills.replace(
         oci.Tag._date_spelling,
         'cast("re.Match[str]", self._match).group("version")',
         "str(self.version)",
         "a snapshot's date spelling is read from its parsed version, so an undashed date moves onto a dashed one",
+        case="a dashed date for an undashed one",
     )
     @kills.replace(
         dependency,
         r'r"(?:-|$)(?P<suffix>',
         r'r"-?(?P<suffix>',
         "a date is read from the first eight of a longer run of digits, so a tag naming an hour moves to another",
+        case="digits running past a date",
     )
     @kills.replace(
         oci,
         r'r"_(\d+)$"',
         r'r"_(\w+)$"',
         "a prerelease label after an underscore is read as a build number, so a reference moves onto a prerelease",
+        case="a prerelease after an underscore",
+    )
+    @kills.replace(
+        oci.Tag.is_candidate_for,
+        "if self.version is None:\n            return False",
+        "if False:\n            return False",
+        "a listed tag without a version ends the run with a traceback",
+        raises="AttributeError: 'NoneType' object has no attribute 'is_prerelease'",
+        case="an unparsable version",
+    )
+    @kills.replace(
+        oci.Tag.suffix_label,
+        "return (self._suffix_tag.prefix, self._suffix_tag.suffix)",
+        'return ("", self._suffix_tag.suffix)',
+        "a suffix's label is dropped from it, so an alpine reference moves onto a debian image",
+        case="another suffix label",
     )
     def test_which_listed_tags_leave_the_reference_as_it_is(self):
         """Test which listed tags leave the reference on the tag it already names."""
         cases = {
-            "a lower version": ("lower", "1.1", "1.0"),
             "an unparsable version": ("invalid-version", "1.3", "1.2.invalid"),
-            "a prerelease": ("prerelease", "1.3", "1.4a1"),
             "a prerelease after an underscore": ("underscored-prerelease", "1.3", "1.4_rc1"),
-            "another suffix": ("other-suffix", "1.3", "1.4-windows"),
-            "a downgraded suffix version": ("suffix-downgrade", "3.14.6-alpine3.23", "3.15.0-alpine3.22"),
             "another suffix label": ("other-suffix-label", "3.14.6-alpine3.23", "3.15.0-debian12"),
             "a suffix that drops the remainder": ("suffix-remainder", "3.14.6-alpine3.19-slim", "3.15.0-alpine3.19"),
-            "another label prefix": ("ghcr.io/astral-sh/uv", "python3.12-bookworm-slim", "pypy3.99-bookworm-slim"),
-            "a timestamp for a date": ("date", "2023-10-20", "2023-10-21-08-00-00"),
-            "a release for a snapshot": ("release-for-snapshot", "2023-10-19", "20240101.1"),
             "a dashed date for an undashed one": ("debian", "bookworm-20240110", "bookworm-2024-01-11"),
             "digits running past a date": ("nightly", "nightly-2026080312", "nightly-2026080412"),
         }
@@ -405,14 +415,11 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         "a timestamp is read as a release, so a release pin moves onto it",
     )
     def test_dated_snapshot_tag_is_no_candidate_for_a_release(self):
-        """Test that a tag naming a date, or a date and a time, loses to a release tag it sorts above."""
-        cases = {"a date": ("dated_snapshot", "20260805"), "a timestamp": ("timestamped", "2026-02-12-23-06-03")}
-        for case, (image, snapshot) in cases.items():
-            with self.subTest(case=case):
-                self.requests.side_effect = mock_docker_registry(
-                    docker_tag(snapshot, DIGEST1), docker_tag("3.25.0", DIGEST2)
-                )
-                self.assertEqual(get_latest_tag(image, "3.24.1").version, "3.25.0")
+        """Test that a tag naming a date and a time loses to a release tag it sorts above."""
+        self.requests.side_effect = mock_docker_registry(
+            docker_tag("2026-02-12-23-06-03", DIGEST1), docker_tag("3.25.0", DIGEST2)
+        )
+        self.assertEqual(get_latest_tag("timestamped", "3.24.1").version, "3.25.0")
 
     def test_eight_digit_version_that_is_no_date_is_a_candidate(self):
         """Test that an eight-digit version reading as no calendar date, such as `20261332`, still updates a release."""
@@ -459,12 +466,9 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             docker_tag("26.0.2_10-jre", DIGEST2),
             docker_tag("26.0.2_9-jre", DIGEST3),
         )
-        cases = {"a version without a build number": "25-jre", "a lower build number": "26.0.2_9-jre"}
-        for case, current_tag in cases.items():
-            with self.subTest(case=case):
-                latest = get_latest_tag("eclipse-temurin", current_tag)
-                self.assertEqual(latest.version, "26.0.2_10-jre")
-                self.assertEqual(latest.sha, DIGEST2)
+        latest = get_latest_tag("eclipse-temurin", "25-jre")
+        self.assertEqual(latest.version, "26.0.2_10-jre")
+        self.assertEqual(latest.sha, DIGEST2)
 
     def test_outside_cooldown(self):
         """Test that tags pushed before the cooldown are considered, with the push date as publication date."""
@@ -520,18 +524,34 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         r'r"(?P<prefix>.+-)(?P<version>\d{8})',
         r'r"(?P<prefix>).+-(?P<version>\d{8})',
         "a snapshot's prefix leaves out its label, so the reference crosses to another line",
+        case="a date",
+    )
+    @kills.replace(
+        dependency,
+        r'(?P<version>\d{8})" + _LABEL_AFTER_A_DATE',
+        r'(?P<version>\d{8})(?P<suffix>)$"',
+        "a date is read only where it ends the tag, so a slim snapshot is not read as one",
+        case="a date with a label after it",
     )
     @kills.replace(
         dependency,
         r'r"(?P<prefix>(?:.+-)?)(?P<version>\d{4}-',
         r'r"(?P<prefix>)(?:.+-)?(?P<version>\d{4}-',
         "a dashed date's prefix leaves out its label, so the reference crosses to another line",
+        case="a labelled dashed date",
     )
     @kills.replace(
         dependency,
         r'(?:-\d{2}-\d{2}-\d{2})?)" + _LABEL_AFTER_A_DATE',
         r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)"',
         "a dashed date is read wherever it starts the tag, so a slim reference drifts onto the fat image",
+        case="a dashed date with a label after it",
+    )
+    @kills.delete(
+        dependency,
+        r"(?:-\d{2}-\d{2}-\d{2})?",
+        "a timestamp is read as a date with a label after it, so the reference moves onto another day's build",
+        case="a timestamp",
     )
     def test_dated_snapshot_moves_to_the_newest_snapshot_under_its_own_labels(self):
         """Test that a dated snapshot moves to the newest snapshot under its own labels, whatever other labels hold."""

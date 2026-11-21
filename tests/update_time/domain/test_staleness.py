@@ -56,11 +56,18 @@ class ReleaseJudgedAlikeTest(unittest.TestCase):
         ") != is_stale(",
         ") or is_stale(",
         "a threshold that warns about the release, as the run does, is never reported as redundant",
+        case="both warn",
+    )
+    @kills.replace(
+        release_judged_alike,
+        "is_stale(newest.published, threshold) != is_stale(",
+        "not is_stale(",
+        "a threshold that is quiet about the release, as the run is, is never reported as redundant",
+        case="neither warns",
     )
     def test_a_release_both_thresholds_judge_alike(self):
         """Test that a release is returned where neither threshold warns about it, and where both do."""
         for case, age in {"neither warns": 30, "both warn": 500}.items():
-            with self.subTest(case=case):
+            with self.subTest(case):
                 newest = Release("4.15.0", days_ago(age))
-                project = Project(newest=newest)
-                self.assertEqual(release_judged_alike(project, 90, STALE_AFTER.default), newest)
+                self.assertEqual(release_judged_alike(Project(newest=newest), 90, STALE_AFTER.default), newest)

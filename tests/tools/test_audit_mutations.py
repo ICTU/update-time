@@ -1,5 +1,6 @@
 """Unit tests for the audit of the mutations the tests register."""
 
+import dataclasses
 import io
 import os
 import sys
@@ -19,6 +20,8 @@ from tests.mutation_time import mutation_subject
 # A registered test that kills a mutation of `is_even`, and another test that kills it as well.
 _REGISTERED = "tests.mutation_time.test_mutation.IsEvenTest.test_an_odd_number"
 _ANOTHER_KILLER = "tests.mutation_time.test_mutation.IsEvenTest.test_an_even_number"
+# A test whose table kills that mutation too, though the table lacks a case named `three`.
+_A_TABLE = "tests.mutation_time.test_mutation.IsEvenTableTest.test_odd_numbers_by_parameters"
 _A_SURVIVOR = "tests.mutation_time.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
 # A test of this module that registers a mutation, so the audit reaches it.
 _OWN_REGISTRATION = "tests.tools.test_audit_mutations.AuditTest.test_a_registration_only_its_own_test_kills"
@@ -45,31 +48,49 @@ def _run_of_lines(contexts_by_line: dict[int, list[str]]) -> _SuiteRun:
 
 
 class CandidatesTest(unittest.TestCase):
-    """Unit tests for the tests that may kill a mutation besides the test registering it."""
+    """Unit tests for the tests of its module that may kill a mutation besides the test registering it."""
 
-    def test_the_other_tests_that_ran_the_mutated_lines(self):
-        """Test that the candidates are the tests that ran a mutated line, other than the registered test."""
+    @kills.append(
+        audit_module._SuiteRun.candidates,
+        "for line in lines",
+        "[:1]",
+        "a test that ran a mutated line other than the first is not checked, so its kill goes unreported",
+    )
+    def test_the_other_tests_of_its_module_that_ran_the_mutated_lines(self):
+        """Test that the candidates are the other tests of the registered test's module that ran a mutated line."""
         run = _run_of_lines(
             {
-                8: ["tests.a.ATest.test_a", "tests.b.BTest.test_b", ""],
-                9: ["tests.c.CTest.test_c"],
-                10: ["tests.d.DTest.test_d"],
+                8: ["tests.a.ATest.test_a", "tests.a.ATest.test_b", "tests.b.BTest.test_b", ""],
+                9: ["tests.a.OtherTest.test_c"],
+                10: ["tests.a.ATest.test_d"],
             }
         )
         self.assertEqual(
             run.candidates("subject.py", range(8, 10), "tests.a.ATest.test_a"),
-            ["tests.b.BTest.test_b", "tests.c.CTest.test_c"],
+            ["tests.a.ATest.test_b", "tests.a.OtherTest.test_c"],
         )
 
+    @kills.replace(
+        audit_module._SuiteRun.candidates,
+        "if _module(test) in modules]",
+        "if _module(context) in modules]",
+        "the audit does not check a mixin's test in the module of a class inheriting it, so its kill goes unreported",
+    )
     def test_a_test_a_mixin_defines_stands_for_its_copy_in_each_class_inheriting_it(self):
-        """Test that a test a mixin defines is a candidate in each class that inherits it."""
-        run = _run_of_lines({8: [_MIXIN_TEST, "tests.b.BTest.test_b"]})
-        self.assertEqual(run.candidates("subject.py", range(8, 9), "tests.b.BTest.test_b"), _COPIES)
+        """Test that a mixin's test is a candidate in each class of the registered test's module inheriting it."""
+        run = _run_of_lines({8: [_MIXIN_TEST, "tests.a.ATest.test_a"]})
+        self.assertEqual(run.candidates("subject.py", range(8, 9), "tests.a.ATest.test_a"), ["tests.a.ATest.test_m"])
 
+    @kills.replace(
+        audit_module._SuiteRun.candidates,
+        "modules = {_module(test) for test in self._ids(registered)}",
+        "modules = {_module(registered)}",
+        "the audit looks for the other killers of a mixin's registration in the mixin's own module, and misses them",
+    )
     def test_a_registered_test_a_mixin_defines_is_no_candidate_in_any_class_inheriting_it(self):
-        """Test that the copies of a registered test a mixin defines do not count as other tests."""
-        run = _run_of_lines({8: [_MIXIN_TEST, "tests.b.BTest.test_b"]})
-        self.assertEqual(run.candidates("subject.py", range(8, 9), _MIXIN_TEST), ["tests.b.BTest.test_b"])
+        """Test that a registered test a mixin defines is audited in its copies' modules, the copies not counting."""
+        run = _run_of_lines({8: [_MIXIN_TEST, "tests.a.ATest.test_a", "tests.b.BTest.test_b"]})
+        self.assertEqual(run.candidates("subject.py", range(8, 9), _MIXIN_TEST), ["tests.a.ATest.test_a"])
 
 
 class PassesUnmutatedTest(unittest.TestCase):
@@ -84,11 +105,23 @@ class PassesUnmutatedTest(unittest.TestCase):
 class AuditTest(unittest.TestCase):
     """Unit tests for checking each registered mutation against the other tests that ran its lines."""
 
+    @kills.replace(
+        audit_module._audit,
+        "return [finding for finding in findings if finding.killers]",
+        "return []",
+        "the audit leaves out a registration whose mutation another test kills as well",
+    )
+    @kills.replace(
+        audit_module._finding,
+        "unnamed.check(candidate)",
+        "mutation.check(candidate)",
+        "a registration naming a case is checked against other tests by that name, so it is stale and goes unreported",
+    )
     def test_a_registration_another_test_kills_too(self):
-        """Test that a registration whose mutation another test kills as well is reported with that test."""
-        run = _run_with(_ANOTHER_KILLER)
-        findings = _audit([(_REGISTERED, _ODD_REPORTED_AS_EVEN)], run)
-        self.assertEqual(findings, [_Finding(_REGISTERED, _ODD_REPORTED_AS_EVEN.regression, [_ANOTHER_KILLER])])
+        """Test that a registration whose mutation another test kills as well is reported, though it names a case."""
+        mutation = dataclasses.replace(_ODD_REPORTED_AS_EVEN, case="three")
+        findings = _audit([(_REGISTERED, mutation)], _run_with(_A_TABLE))
+        self.assertEqual(findings, [_Finding(_REGISTERED, mutation.regression, [_A_TABLE])])
 
     @kills.delete(
         audit_module._finding,

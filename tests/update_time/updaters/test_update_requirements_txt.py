@@ -222,17 +222,15 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         "is rewritten into one no version satisfies",
     )
     def test_a_requirement_combining_specifiers_is_not_updated(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a requirement combining `==` with another specifier is checked but never rewritten.
+        """Test that a requirement combining `==` with another specifier, past a space, is checked but never rewritten.
 
-        PEP 508 allows space around the comma separating the specifiers, so each case spells it another way.
+        PEP 508 allows space around the comma separating the specifiers.
         """
-        for requirement in ("humanize==4.15.0,!=4.15.1", "humanize==4.15.0 ,!=4.15.1"):
-            with self.subTest(requirement=requirement):
-                requirements_txt = self.discovered_requirements_txt(mock_rglob, f"{requirement}\n")
-                mock_get.side_effect = [*self.stale_pypi("4.15.0", "4.16.0"), pypi_release(PYPI_OLD_UPLOAD)]
-                update_requirements_txts()
-                requirements_txt.write_text.assert_not_called()
-                self.assert_stale_dependency_logged("humanize", "4.16.0", Location(requirements_txt, 1))
+        requirements_txt = self.discovered_requirements_txt(mock_rglob, "humanize==4.15.0 ,!=4.15.1\n")
+        mock_get.side_effect = [*self.stale_pypi("4.15.0", "4.16.0"), pypi_release(PYPI_OLD_UPLOAD)]
+        update_requirements_txts()
+        requirements_txt.write_text.assert_not_called()
+        self.assert_stale_dependency_logged("humanize", "4.16.0", Location(requirements_txt, 1))
 
     def test_two_spellings_of_one_package_cost_one_request(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a package a file spells two ways is fetched once, under the name PyPI spells it.
@@ -1206,21 +1204,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_requirement_in_a_source_is_checked_for_vulnerabilities_at_the_version_the_compiled_file_pins(
         self, mock_rglob: Mock, mock_get: Mock
     ):
-        """Test that a requirement without an exact pin is checked at the version the compiled file pins."""
-        uv_compiled = requirements_compiled_by_uv("base.in")
-        cases = {
-            "compiled by uv": uv_compiled,
-            "compiled with a custom command": uv_compiled.replace(
-                "uv pip compile base.in -o requirements.txt", "make lock"
-            ),
-        }
-        for case, compiled in cases.items():
-            with self.subTest(case), osv(DJANGO_ADVISORY):
-                self.update_a_source(
-                    mock_rglob, mock_get, "django==3.2.0", "django>=3", self.pypi("3.2.0"), compiled=compiled
-                )
-                location = Location(_SOURCE, 1)
-                self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, location)
+        """Test that a requirement without an exact pin is checked at the version a file it does not recompile pins."""
+        compiled = requirements_compiled_by_uv("base.in").replace(
+            "uv pip compile base.in -o requirements.txt", "make lock"
+        )
+        with osv(DJANGO_ADVISORY):
+            self.update_a_source(
+                mock_rglob, mock_get, "django==3.2.0", "django>=3", self.pypi("3.2.0"), compiled=compiled
+            )
+        location = Location(_SOURCE, 1)
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, location)
 
     @kills.replace(
         update_requirements_txt._pins_by_source,

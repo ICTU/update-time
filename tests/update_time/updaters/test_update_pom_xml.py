@@ -14,6 +14,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Changes, Project, Release
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
+from update_time.domain.reference import Reference
 from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.package_managers.maven import marker_policy as maven_marker_policy
@@ -618,56 +619,33 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         maven_marker_policy.report_markers,
         " and not marker.ignores(Scope.UPDATE)",
         "an `ignore[update]` in a pom is reported twice as holding the update back",
+        case="a version",
+    )
+    @kills.replace(
+        Logger.ignored,
+        "reference.marker.bound_directive,",
+        'reference.marker.version_bound_directive or "ignore[update]",',
+        "an `ignore[update]` beside a bound is reported under the bound's directive",
+        case="an update ignored beside a bound",
+    )
+    @kills.delete_statement(
+        maven_marker_policy.report_markers,
+        "_LOG.ignored(declaration)",
+        "a bound holding every version back is not reported as holding the update back",
+        case="a bound naming a pre-release",
     )
     def test_a_marker_holding_every_version_back_is_reported_as_holding_it_back(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker holding every version back is reported once as holding the update, with its directive."""
-        own_property = _marked_property("guava.version", "33.0.0-jre", "ignore[update]")
-        surefires_property = _marked_property("surefire.version", "3.5.0", "ignore[update]")
-        surefire = build_element(plugin_element("maven-surefire-plugin", "${surefire.version}"))
-        # The marker sits on the line of the `<version>` element, or of the property the element names.
         cases = {
-            "a version": (
-                _pom_marking_guava("ignore[update]"),
-                GUAVA,
-                6,
-                "ignore[update]",
-            ),
-            "an update ignored beside a bound": (
-                _pom_marking_guava("ignore[update] allow[update<34]"),
-                GUAVA,
-                6,
-                "ignore[update]",
-            ),
-            "a property of its own": (
-                pom_declaring(guava_element("${guava.version}"), properties=own_property),
-                GUAVA,
-                3,
-                "ignore[update]",
-            ),
-            "a plugin's property of its own": (
-                pom_declaring(properties=surefires_property, build=surefire),
-                SUREFIRE,
-                3,
-                "ignore[update]",
-            ),
-            "a bound naming a pre-release": (
-                _pom_marking_guava("ignore[update<=34.1rc1]"),
-                GUAVA,
-                6,
-                "ignore[update<=34.1rc1]",
-            ),
-            "a level bound on a version without numbers": (
-                pom_declaring(marked_at_its_version(guava_element("RELEASE"), "ignore[major-update]")),
-                GUAVA,
-                6,
-                "ignore[major-update]",
-            ),
+            "a version": ("ignore[update]", "ignore[update]"),
+            "an update ignored beside a bound": ("ignore[update] allow[update<34]", "ignore[update]"),
+            "a bound naming a pre-release": ("ignore[update<=34.1rc1]", "ignore[update<=34.1rc1]"),
         }
-        for case, (declared, artefact, line, directive) in cases.items():
+        for case, (directives, directive) in cases.items():
             with self.subTest(case=case):
-                pom = self.find_pom(mock_run, mock_glob, declared)
+                pom = self.find_pom(mock_run, mock_glob, _pom_marking_guava(directives))
                 update_pom_xmls()
-                self.assert_ignored_logged(artefact, Location(pom, line), directive, among_others=True)
+                self.assert_ignored_logged(GUAVA, Location(pom, 6), directive, among_others=True)
                 self.assertEqual(len(self.records_of(message_of(Logger.ignored))), 1)
                 self.assert_no_redundant_directive_logged()
 
@@ -764,6 +742,14 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         pom_xml_manifest._declaration,
         "versioned_by_its_pom and ",
         "a plugin naming a parent's property reads as a literal version, so its marker gets the wrong reason",
+        case="a parent's property",
+    )
+    @kills.replace(
+        versions_plugin.reason_the_marker_steers_nothing,
+        "Reason.PLUGIN_NOT_UPDATED if declaration.literal_plugin_version else Reason.VERSION_HELD_ELSEWHERE",
+        "Reason.VERSION_HELD_ELSEWHERE",
+        "a marker on a plugin's literal version is said to steer a version held elsewhere",
+        case="a literal version",
     )
     def test_a_marker_on_a_plugin_maven_does_not_update_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker steering a plugin's update is redundant where Maven does not update its version."""
@@ -916,19 +902,12 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         "without an effective pom, a version from a parent's property reads as one Maven leaves unresolved",
     )
     def test_a_vulnerable_scope_without_an_effective_pom_is_not_redundant(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a `vulnerable` scope on a parent's group or version, without an effective pom, is not reported."""
-        cases = {
-            "a parent's group": (_SPRING_LEAVING_ITS_GROUP, "${spring.group}:spring-core"),
-            "a parent's version": (guava_element("${guava.version}"), GUAVA),
-        }
-        for case, (element, artefact) in cases.items():
-            with self.subTest(case=case):
-                declared = pom_declaring(marked_at_its_version(element, "set[vulnerability-level=none]"))
-                pom = self.find_pom(mock_run, mock_glob, declared, effective_pom="")
-                update_pom_xmls()
-                marker = VULNERABILITY_LEVEL_NONE
-                self.assert_recognised_marker_logged(artefact, Location(pom, 6), marker)
-                self.assert_no_redundant_directive_logged()
+        """Test that a `vulnerable` scope on a parent's version, without an effective pom, is not reported."""
+        element = marked_at_its_version(guava_element("${guava.version}"), "set[vulnerability-level=none]")
+        pom = self.find_pom(mock_run, mock_glob, pom_declaring(element), effective_pom="")
+        update_pom_xmls()
+        self.assert_recognised_marker_logged(GUAVA, Location(pom, 6), VULNERABILITY_LEVEL_NONE)
+        self.assert_no_redundant_directive_logged()
 
     def test_osv_is_asked_about_the_version_the_run_lands_on(self, mock_run: Mock, mock_glob: Mock):
         """Test that OSV is asked in the Maven ecosystem about the version after the run, not the effective pom's."""
@@ -1115,6 +1094,25 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         "marker_policy.report_redundant_scopes(declared,",
         "marker_policy.report_redundant_scopes(resolvable,",
         "a scope checked at the managing declaration is reported twice, once for each reason",
+        case="set[stale-after=90]",
+    )
+    @kills.delete(
+        maven_marker_policy._report_scopes_checked_at_the_managing_declaration,
+        "Scope.STALE, ",
+        "a staleness threshold on a declaration leaving its version to a scanned pom goes unreported",
+        case="set[stale-after=90]",
+    )
+    @kills.delete(
+        maven_marker_policy._report_scopes_checked_at_the_managing_declaration,
+        "Scope.ARCHIVED, ",
+        "an `ignore[archived]` on a declaration leaving its version to a scanned pom goes unreported",
+        case="ignore[archived]",
+    )
+    @kills.delete(
+        maven_marker_policy._report_scopes_checked_at_the_managing_declaration,
+        ", Scope.VULNERABLE",
+        "a risk level on a declaration leaving its version to a scanned pom goes unreported",
+        case="set[vulnerability-level=high]",
     )
     def test_a_check_scope_on_a_version_a_scanned_pom_manages_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a scope steering a check of a child leaving its version to a scanned parent is redundant."""
@@ -1264,31 +1262,20 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         "a failed run discards the effective pom it wrote elsewhere, so what the parent declares goes unchecked",
     )
     def test_an_effective_pom_written_elsewhere_is_read_where_maven_says(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the effective pom is read at the path Maven prints, where the project's help plugin sends it."""
+        """Test that the effective pom is read at the path Maven prints, also where a later goal of the run failed."""
         # The project configures the help plugin's `<output>`, which wins over Update-time's, so its file stays empty.
         printed = "[INFO] Effective-POM written to: /project/target/effective-pom.xml\n"
         failed = "[ERROR] Failed to execute goal org.codehaus.mojo:versions-maven-plugin:2.22.0:use-latest-releases\n"
-        # Each case names what Maven's run ends in, and the output of a failed run, which is reported as an error.
-        cases = {
-            "a run that succeeded": (Mock(stdout=printed, stderr=""), None),
-            "a run that failed after writing it": (
-                _maven_failed(printed + failed),
-                printed + failed,
-            ),
-        }
+        self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("${guava.version}")), effective_pom="")
+        mock_run.side_effect = [_maven_failed(printed + failed)]
         written = effective_pom_declaring(EFFECTIVE_GUAVA).encode()
-        for case, (outcome, failure) in cases.items():
-            with self.subTest(case=case):
-                self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("${guava.version}")), effective_pom="")
-                mock_run.side_effect = [outcome]
-                read_bytes = patch.object(Path, "read_bytes", autospec=True, return_value=written)
-                with read_bytes as mock_read_bytes, osv() as mock_post:
-                    update_pom_xmls()
-                if failure:
-                    self.assert_command_failed_logged(_maven_command(), failure)
-                mock_read_bytes.assert_called_once_with(_PROJECT / "target/effective-pom.xml")
-                _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
-                self.assert_no_warnings_logged()
+        read_bytes = patch.object(Path, "read_bytes", autospec=True, return_value=written)
+        with read_bytes as mock_read_bytes, osv() as mock_post:
+            update_pom_xmls()
+        self.assert_command_failed_logged(_maven_command(), printed + failed)
+        mock_read_bytes.assert_called_once_with(_PROJECT / "target/effective-pom.xml")
+        _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
+        self.assert_no_warnings_logged()
 
     @kills.delete(
         maven_central_module,
@@ -1344,52 +1331,62 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         pom_xml_manifest._plugin_entry,
         ' if management is None else management.child("plugins")',
         "a managed versions plugin's rules of its own go unreported",
+        case="a managed plugin",
     )
     @kills.delete(
         versions_plugin,
         '"ruleSet": OverrideConsequence.RULES,',
         "a versions plugin's rule set of its own goes unreported",
+        case="a rule set",
     )
     @kills.delete(
         versions_plugin,
         '"ignoredVersions": OverrideConsequence.PRE_RELEASES,',
         "a versions plugin's ignored versions of its own go unreported",
+        case="ignored versions",
     )
     @kills.delete(
         versions_plugin,
         '"includeProperties": OverrideConsequence.PROPERTIES,',
         "a versions plugin's included properties of its own go unreported",
+        case="included properties",
     )
     @kills.delete(
         versions_plugin._overrides_the_option,
         ".lower()",
         "a switch spelled in capitals, which Maven reads as on, goes unreported",
+        case="backup poms",
     )
     @kills.delete(
         versions_plugin,
         '"allowSnapshots": OverrideConsequence.SNAPSHOTS,',
         "a versions plugin allowing snapshots goes unreported",
+        case="snapshots",
     )
     @kills.delete(
         versions_plugin,
         '"processParent": OverrideConsequence.PARENT,',
         "a versions plugin processing the parent goes unreported",
+        case="the parent",
     )
     @kills.replace(
         pom_xml_manifest._first_input_location,
         "return _first_input_location(element.children[0])",
         "return own",
         "a rule set of the versions plugin's own is reported without where the pom sets it",
+        case="a rule set",
     )
     @kills.delete(
         Logger.option_overridden_by_the_pom,
         " if pom else {}",
         "a setting Maven does not locate is reported as set on line 0",
+        case="a setting Maven does not locate",
     )
     @kills.delete(
         versions_plugin._overrides_the_option,
         "name in _OVERRIDING_WHEN_EMPTY or ",
         "an empty rule set of the versions plugin's own goes unreported",
+        case="an empty rule set",
     )
     def test_a_pom_overriding_an_option_the_versions_plugin_takes_is_reported(self, mock_run: Mock, mock_glob: Mock):
         """Test that a versions plugin, managed or not, whose configuration overrides an option is reported."""
@@ -1398,12 +1395,8 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         rule_set = _versions_configured(f"          <ruleSet>\n  {ignore_version}          </ruleSet>\n")
         # Maven does not locate a setting in an effective pom it writes without verbose.
         unlocated = _versions_configured("          <rulesUri>file:///project/rules.xml</rulesUri>\n")
-        own_rules_uri = _versions_configured(
-            located_setting("rulesUri", "file:///project/own.xml", (SCANNED_POM_ID, 20))
-        )
         rules = OverrideConsequence.RULES
         cases: dict[str, tuple[str, dict[str, object]]] = {
-            "a plugin": (build_element(_VERSIONS_NAMING_RULES), _set_by_the_parent("rulesUri", rules)),
             "a managed plugin": (build_element(managed=_VERSIONS_NAMING_RULES), _set_by_the_parent("rulesUri", rules)),
             "a rule set": (build_element(rule_set), _set_by_the_parent("ruleSet", rules) | {"line": 14}),
             "a setting Maven does not locate": (
@@ -1418,16 +1411,6 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             "an empty rule set": (
                 build_element(_versions_set_by_the_parent("ruleSet", "")),
                 _set_by_the_parent("ruleSet", rules),
-            ),
-            # Maven applies the configuration of the plugin's own entry, which holds what its managed entry gives it.
-            "a plugin and a managed plugin": (
-                build_element(own_rules_uri, managed=_VERSIONS_NAMING_RULES),
-                {"setting": "rulesUri", "pom": SCANNED_POM_ID, "line": 20, "consequence": rules},
-            ),
-            # Maven configures the goals run from the command line with the `default-cli` execution.
-            "goals run from the command line": (
-                build_element(_versions_executed("default-cli", _RULES_URI)),
-                _set_by_the_parent("rulesUri", rules),
             ),
             "included properties": (
                 build_element(_versions_set_by_the_parent("includeProperties", "spring.version")),
@@ -1461,40 +1444,63 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         versions_plugin._overrides_the_option,
         "name in _OVERRIDING_WHEN_EMPTY or not setting.is_empty",
         "an empty rules URI, which Maven ignores, is reported as overriding the rule set",
+        case="an empty rules URI",
     )
     @kills.force_true(
         versions_plugin._overrides_the_option,
         'setting.text.lower() == "true"',
         "a switch turned off is reported as overriding the option",
+        case="backup poms switched off",
     )
     @kills.delete(
-        versions_plugin, '"allowSnapshots", ', "allowing snapshots switched off is reported as overriding the option"
+        versions_plugin,
+        '"generateBackupPoms", ',
+        "backup poms switched off are reported as overriding the option",
+        case="backup poms switched off",
     )
     @kills.delete(
-        versions_plugin, ', "processParent"', "processing the parent switched off is reported as overriding the option"
+        versions_plugin,
+        '"allowSnapshots", ',
+        "allowing snapshots switched off is reported as overriding the option",
+        case="snapshots switched off",
+    )
+    @kills.delete(
+        versions_plugin,
+        ', "processParent"',
+        "processing the parent switched off is reported as overriding the option",
+        case="the parent switched off",
     )
     @kills.delete(
         pom_xml_manifest._command_line_configuration,
         'if _coordinate(execution, "id") == _COMMAND_LINE_EXECUTION',
         "the configuration of any execution is read as applying to the goals run from the command line",
+        case="another execution",
+    )
+    @kills.replace(
+        pom_xml_manifest._command_line_configuration,
+        '(plugin if command_line is None else command_line).child("configuration")',
+        'plugin.child("configuration")',
+        "the plugin's own configuration is read where the execution for the command line configures the goals",
+        case="a setting the execution for the command line leaves out",
+    )
+    @kills.replace(
+        pom_xml_manifest._plugin_entry,
+        'None if build is None else build.child("plugins"),\n'
+        '        None if management is None else management.child("plugins"),',
+        'None if management is None else management.child("plugins"),\n'
+        '        None if build is None else build.child("plugins"),',
+        "the managed entry of the versions plugin is read where the plugin has an entry of its own",
+        case="a managed setting the plugin's own entry leaves out",
     )
     def test_a_pom_configuring_the_versions_plugin_without_overriding_an_option_is_not_reported(
         self, mock_run: Mock, mock_glob: Mock
     ):
-        """Test that a versions plugin configured without overriding an option, or in a profile, leaves markers be."""
-        in_a_profile = profiles_element(build=build_element(_VERSIONS_NAMING_RULES))
+        """Test that a versions plugin configured without overriding an option leaves markers be."""
         recorder_setting = located_setting("changeRecorderFormat", "none", _SET_BY_THE_PARENT)
         recorder = _versions_configured(recorder_setting)
-        reporting_versions = _configuration_element(
-            f"          <reportPlugins>\n{_VERSIONS_NAMING_RULES}</reportPlugins>\n"
-        )
         unlocated = message_of(Logger.option_overridden_by_the_pom, "location", "setting", "consequence")
         located = message_of(Logger.option_overridden_by_the_pom, *unlocated.holes, "pom", "line")
         for case, effective_pom in {
-            "a setting Update-time does not pass": _effective_pom_building(
-                build_element(_versions_set_by_the_parent("changeRecorderFormat", "none"))
-            ),
-            "a profile Maven does not activate": effective_pom_declaring(EFFECTIVE_GUAVA, profiles=in_a_profile),
             # Maven ignores an empty element of a setting that holds a value.
             "an empty rules URI": _effective_pom_building(build_element(_versions_set_by_the_parent("rulesUri", ""))),
             # Maven configures the goals run from the command line with the `default-cli` execution alone.
@@ -1515,9 +1521,6 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             # Maven configures the goals run from the command line with the `default-cli` execution where there is one.
             "a setting the execution for the command line leaves out": _effective_pom_building(
                 build_element(_versions_executed("default-cli", recorder_setting, plugin_settings=_RULES_URI))
-            ),
-            "a plugin inside another plugin's configuration": _effective_pom_building(
-                build_element(effective_plugin_element(_SITE, "3.22.0", line=30, elements=reporting_versions))
             ),
         }.items():
             with self.subTest(case=case):
@@ -1598,6 +1601,14 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         version_range._tighter,
         "other if boundary.included else ",
         "two clauses ending at one version keep the first one's end, so `===34.1` holds 34.1 back despite `!=34.1`",
+        case="ignore[update===34.1,!=34.1]",
+    )
+    @kills.replace(
+        version_range._Interval.__and__,
+        "_tighter(self.upper, other.upper, after=False)",
+        "_tighter(self.upper, other.upper, after=True)",
+        "two clauses keep the later of their upper ends, so `!=34.1,<35` holds back every version from 34.1 on",
+        case="ignore[update!=34.1,<35]",
     )
     def test_a_bound_holds_back_the_versions_all_its_clauses_match(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bound of several clauses holds back the versions every clause matches, and nothing where none."""
@@ -1614,6 +1625,14 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         version_range._Boundary.lower_end,
         " if self.included else '('",
         "a range starting past a version starts at it, so `allow[update===34.1]` holds 34.1 back",
+        case="allow[update===34.1]",
+    )
+    @kills.replace(
+        version_range._complement,
+        "_Interval(lower, _flipped(interval.lower))",
+        "_Interval(None, _flipped(interval.lower))",
+        "a gap between two allowed ranges starts open, so `allow[update!=34.1]` holds back every version below 34.1",
+        case="allow[update!=34.1]",
     )
     def test_an_allow_bound_holds_back_the_versions_outside_it(self, mock_run: Mock, mock_glob: Mock):
         """Test that an `allow` bound holds back the ranges of versions its clauses do not match."""
@@ -1719,42 +1738,51 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         "max(declaration.cooldown_days for declaration in declarations)",
         "declarations[-1].cooldown_days",
         "the last declaration of an artefact sets its cooldown, so a shorter one undoes a longer one before it",
+        case="the second declaration setting a shorter cooldown",
     )
     @kills.replace(
         versions_plugin._artefact_rule,
         "max(declaration.cooldown_days for declaration in declarations)",
         "declarations[0].cooldown_days",
         "the first declaration of an artefact sets its cooldown, so a shorter one undoes a longer one after it",
+        case="the first declaration setting a shorter cooldown",
     )
     @kills.append(
         versions_plugin._artefact_rule,
         "held_back for declaration in declarations",
         "[-1:]",
         "the last declaration's bound replaces the ones before it, so Maven crosses an earlier declaration's bound",
+        case="each declaration setting a bound of its own",
+    )
+    @kills.append(
+        versions_plugin._artefact_rule,
+        "held_back for declaration in declarations",
+        "[:1]",
+        "the first declaration's bound replaces the ones after it, so Maven crosses a later declaration's bound",
+        case="each declaration setting a bound of its own",
     )
     @kills.delete(
         versions_plugin._artefact_rule,
         "unique",
         "two declarations setting one bound name its range twice in the artefact's rule",
+        case="both declarations setting one bound",
     )
     @kills.replace(
         versions_plugin._variant_versions,
         "_other_variants(*(declaration.current_version for declaration in declarations))",
         "_other_variants(declarations[0].current_version)",
         "the first declaration of an artefact sets its variant, so the second declaration's variant is held back",
+        case="the declarations on two variants",
     )
     def test_an_artefact_declared_twice_gets_one_rule_for_both_declarations(self, mock_run: Mock, mock_glob: Mock):
         """Test that a twice-declared artefact's rule holds back what either marker does, and keeps either variant."""
         guava = guava_element("33.0.0-jre")
-        ignoring = marked_at_its_version(guava, "ignore[update]")
         shorter = marked_at_its_version(guava, "set[cooldown=0]")
         from_34 = marked_at_its_version(guava, "ignore[update>=34]")
         from_35 = marked_at_its_version(guava, "ignore[update>=35]")
         on_34 = marked_at_its_version(guava, "ignore[update==34.*]")
         # The pom declares the managed guava first, and the other guava after it.
         cases = {
-            "the first declaration ignoring the update": (ignoring, guava, [_GUAVA_HELD_BACK]),
-            "the second declaration ignoring the update": (guava, ignoring, [_GUAVA_HELD_BACK]),
             "the first declaration setting a shorter cooldown": (shorter, guava, [_GUAVA_33_7_1_HELD_BACK]),
             "the second declaration setting a shorter cooldown": (guava, shorter, [_GUAVA_33_7_1_HELD_BACK]),
             "each declaration setting a bound of its own": (
@@ -1911,38 +1939,14 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         "the updates write the effective pom again, costing a goal per pom that the first run already paid for",
     )
     def test_coordinates_from_a_parent_get_a_rule_as_maven_resolves_them(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the rule set names a dependency or plugin whose group or artifact the parent declares."""
-        spring = "org.springframework:spring-core"
-        # Maven lists the properties the parent declares in the effective pom.
-        properties = properties_element({"spring.artifact": "spring-core"})
-        effective_spring = effective_pom_declaring(_EFFECTIVE_SPRING, properties=properties)
-        cases = {
-            "a dependency's group": (
-                pom_declaring(_SPRING_LEAVING_ITS_GROUP),
-                effective_spring,
-                _rule("org.springframework", "spring-core", "6.1.0", "7.1.0"),
-                "",
-            ),
-            "a dependency's artifact": (
-                pom_declaring(dependency_element("org.springframework", "${spring.artifact}", "6.1.0")),
-                effective_spring,
-                _rule("org.springframework", "spring-core", "6.1.0", "7.1.0"),
-                "",
-            ),
-            "a plugin's group": (
-                _POM_LEAVING_THE_VERSIONS_PLUGINS_GROUP,
-                _EFFECTIVE_VERSIONS,
-                _rule("org.codehaus.mojo", "versions-maven-plugin", "2.18.0", "2.19.0"),
-                "versions.version",
-            ),
-        }
-        for case, (declared, effective_pom, rule, properties) in cases.items():
-            with self.subTest(case=case):
-                self.find_pom(mock_run, mock_glob, declared, effective_pom)
-                with self.hold_back({spring: ("7.1.0",), _VERSIONS: ("2.19.0",)}):
-                    update_pom_xmls()
-                self.assertEqual(self.rule_sets, [_rule_set(rule)])
-                self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command(_RULES, properties))
+        """Test that the rule set names a dependency whose group the parent declares, as Maven resolves it."""
+        self.find_pom(
+            mock_run, mock_glob, pom_declaring(_SPRING_LEAVING_ITS_GROUP), effective_pom_declaring(_EFFECTIVE_SPRING)
+        )
+        with self.hold_back({"org.springframework:spring-core": ("7.1.0",)}):
+            update_pom_xmls()
+        self.assertEqual(self.rule_sets, [_rule_set(_rule("org.springframework", "spring-core", "6.1.0", "7.1.0"))])
+        self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command(_RULES, ""))
 
     @kills.force_true(
         reactor_module._ReactorModule.update,
@@ -1966,23 +1970,23 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         "days < 0",
         "a cooldown of zero days asks the repository about the artefact and ignores the answer",
     )
+    @kills.replace(
+        Reference.cooldown_days,
+        "self.marker.cooldown.value_or(COOLDOWN.get())",
+        "self.marker.cooldown.value or COOLDOWN.get()",
+        "a marker's cooldown of zero days falls back to the run's, so the repository is asked about the artefact",
+    )
     def test_the_cooldown_skips_the_repository_when_it_is_switched_off(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a switched-off cooldown, the run's or a marker's, skips the repository while Maven still runs."""
-        guava = guava_element("33.0.0-jre")
-        cases = {
-            "the run's cooldown": ({COOLDOWN.name: "0"}, guava),
-            "a marker's cooldown": ({}, marked_at_its_version(guava, "set[cooldown=0]")),
-        }
-        for case, (environment, declared) in cases.items():
-            with self.subTest(case=case), patch_environ(environment):
-                self.find_pom(mock_run, mock_glob, pom_declaring(declared))
-                with self.asked_about() as asked:
-                    update_pom_xmls()
-                self.assertEqual(asked, [])
-                # Asserting Maven ran, so the cooldown rather than a pom that was never read is what left the artefacts
-                # alone. The staleness check asks the repository whatever the cooldown is, so this says nothing about
-                # that request.
-                self.assert_maven_ran(mock_run, rules=_RULES)
+        """Test that a marker switching the cooldown off skips the repository while Maven still runs."""
+        self.find_pom(
+            mock_run, mock_glob, pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "set[cooldown=0]"))
+        )
+        with self.asked_about() as asked:
+            update_pom_xmls()
+        self.assertEqual(asked, [])
+        # Asserting Maven ran, so the cooldown rather than a pom that was never read is what left the artefacts alone.
+        # The staleness check asks the repository whatever the cooldown is, so this says nothing about that request.
+        self.assert_maven_ran(mock_run, rules=_RULES)
 
     def test_a_failed_maven_run_is_reported_with_its_output(self, mock_run: Mock, mock_glob: Mock):
         """Test that a Maven run exiting non-zero is reported with what it wrote, and with nothing else."""

@@ -72,12 +72,6 @@ class RecordRenderingTests(TestCase):
         """Report that `pkg` was pinned to a version."""
         log.pinned_version(reference("pkg", create_location("requirements.txt", 3)), DependencyVersion("1.2.0"))
 
-    @classmethod
-    def report_new_version_twice(cls, log: Logger) -> None:
-        """Report the same new version of `pkg` twice, so the second report suppresses the changelog."""
-        cls.report_new_version(log)
-        cls.report_new_version(log)
-
     def rendered_changes(self, changes: Changes, level: str = "INFO", *, styles: bool = False) -> str:
         """Return what the console shows at the level when a new version of `pkg` reports the changes."""
         return self.rendered(lambda log: self.report_new_version(log, changes), level, styles=styles)
@@ -173,23 +167,33 @@ class RecordRenderingTests(TestCase):
         "{index - 1, index, index + 1} & tags_alone",
         "{index} & tags_alone",
         "an HTML anchor above a heading still shows as a blank line, its paragraph kept without its text",
+        case="between headings",
     )
     @kills.replace(
         console_module._ChangelogMarkdown._without_blank_blocks,
         "all(",
         "any(",
         "a line of changes that opens with an HTML anchor is dropped, its text with it",
+        case="beside text",
+    )
+    @kills.replace(
+        console_module._ChangelogMarkdown._without_blank_blocks,
+        "{index - 1, index, index + 1} & tags_alone",
+        "{index - 1, index} & tags_alone",
+        "an HTML anchor alone in a quote or a list item closes that block early, so the changes after it lose the "
+        "quote or vanish",
+        case="in a quote",
     )
     def test_an_html_anchor_takes_no_line(self):
-        """Test that an HTML anchor stays hidden, alone on its line or before text, the box closing up around it."""
+        """Test that an HTML anchor stays hidden, alone on its line, in a quote, or before text, the box closing up."""
         anchor = '<a name="release-1-2-0-fixed"></a>'
         cases = {
-            "opening the changes": (f"{anchor}\n\n### Fixed\n\n- A fix\n", ["Fixed", "", "• A fix"]),
             "between headings": (
                 f"## 1.2.0\n\n{anchor}\n\n### Fixed\n\n- A fix\n",
                 ["1.2.0", "", "Fixed", "", "• A fix"],
             ),
             "beside text": (f"{anchor}A fix\n", ["A fix"]),
+            "in a quote": (f"## 1.2.0\n\n> {anchor}\n>\n> A fix\n", ["1.2.0", "", "▌ A fix"]),
         }
         for case, (markup, contents) in cases.items():
             with self.subTest(case=case):
@@ -217,17 +221,9 @@ class RecordRenderingTests(TestCase):
         "index or segment != Segment.line()",
         "the list, quote, or table that opens a changelog gets a line break above it",
     )
-    def test_changes_opening_with_a_list_a_quote_or_a_table_get_no_leading_line_break(self):
-        """Test that the box starts with the list, quote, or table that opens the changes."""
-        cases = {
-            "bullet list": ("- A fix\n", ["• A fix"]),
-            "ordered list": ("1. A fix\n", ["1 A fix"]),
-            "blockquote": ("> A fix\n", ["▌ A fix"]),
-            "table": ("| Fix |\n|---|\n| A |\n", ["", "Fix", "───", "A", ""]),  # the blank lines are the table's edges
-        }
-        for case, (markup, contents) in cases.items():
-            with self.subTest(case=case):
-                self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True, url="")), contents)
+    def test_changes_opening_with_a_list_get_no_leading_line_break(self):
+        """Test that the box starts with the list that opens the changes."""
+        self.assert_boxed(self.rendered_changes(Changes("- A fix\n", markdown=True, url="")), ["• A fix"])
 
     @kills.replace(
         console_module._ChangelogMarkdown._without_blank_blocks,
@@ -236,14 +232,12 @@ class RecordRenderingTests(TestCase):
         "a table cell holding nothing is dropped, moving the cells after it a column to the left",
     )
     def test_a_table_cell_without_text_keeps_the_cells_after_it_in_their_columns(self):
-        """Test that a table cell holding nothing, or an HTML tag alone, leaves the next cell under its heading."""
-        for case, cell in {"empty": " ", "tag alone": "<br>"}.items():
-            with self.subTest(case=case):
-                rendered = self.rendered_changes(
-                    Changes(f"| a | b | c |\n|---|---|---|\n| 1 |{cell}| 3 |\n", markdown=True, url="")
-                )
-                header, row = (next(line for line in rendered.splitlines() if text in line) for text in (" a ", " 1 "))
-                self.assertEqual(row.index("3"), header.index("c"), rendered)
+        """Test that a table cell holding an HTML tag alone leaves the next cell under its heading."""
+        rendered = self.rendered_changes(
+            Changes("| a | b | c |\n|---|---|---|\n| 1 |<br>| 3 |\n", markdown=True, url="")
+        )
+        header, row = (next(line for line in rendered.splitlines() if text in line) for text in (" a ", " 1 "))
+        self.assertEqual(row.index("3"), header.index("c"), rendered)
 
     @kills.delete(
         console_module.configure_logging,
@@ -268,23 +262,25 @@ class RecordRenderingTests(TestCase):
         console_module._ChangelogMarkdown._unindent_headings,
         ".lstrip()",
         "a heading opening with non-breaking spaces is indented by them",
+        case="text",
     )
     @kills.delete(
         console_module._ChangelogMarkdown._unindent_headings,
         ' and title.children[0].type == "text"',
         "a code span opening a heading loses the spaces the project wrote in it",
+        case="code",
     )
     @kills.replace(
         console_module._ChangelogMarkdown._unindent_headings,
         "lstrip()",
         'replace("\\xa0", "")',
         "a heading loses the non-breaking spaces inside its title, running its words together",
+        case="inside",
     )
     def test_a_heading_drops_only_the_non_breaking_spaces_opening_its_text(self):
         """Test that a heading keeps its spaces, in code or out, except the non-breaking ones opening its title."""
         cases = {
             "text": ("### &nbsp;&nbsp;&nbsp;🚀 Features", "🚀 Features"),
-            "link": ("##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](https://github.com)", "View changes"),
             "code": ("### `  indented()`", "  indented()"),
             "inside": ("### &nbsp;A&nbsp;B", "A\xa0B"),
         }
@@ -327,15 +323,9 @@ class RecordRenderingTests(TestCase):
     )
     def test_a_note_about_the_changelog_is_not_boxed(self):
         """Test that Update-time's own note about a changelog renders as a bare line, the box holding changes alone."""
-        notes = [
-            (Logger._NO_CHANGELOG, self.report_new_version),
-            (Logger._SUPPRESSING_CHANGELOG, self.report_new_version_twice),
-        ]
-        for note, report in notes:
-            with self.subTest(note=note):
-                rendered = self.rendered(report)
-                self.assertEqual([line.strip() for line in rendered.splitlines()][-1], note)
-                self.assertNotIn(_BOX_TOP_LEFT, rendered)
+        rendered = self.rendered(self.report_new_version)
+        self.assertEqual([line.strip() for line in rendered.splitlines()][-1], Logger._NO_CHANGELOG)
+        self.assertNotIn(_BOX_TOP_LEFT, rendered)
 
     def test_changes_that_are_not_markdown_keep_their_lines_and_a_dash_as_written(self):
         """Test that a changelog that is not Markdown is boxed too, keeping its lines and a dash as written."""

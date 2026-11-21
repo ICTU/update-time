@@ -149,21 +149,15 @@ class DebugLogTests(LoggingTestCase):
         "the debug log leaves out the variables a command adds to its environment, such as yarn's cooldown",
     )
     def test_the_command_is_logged_with_its_arguments_and_the_directory_it_runs_in(self, mock_run: Mock):
-        """Test that each command is logged with its arguments, the variables it adds, and the directory it runs in."""
+        """Test that a command is logged with its arguments, the variables it adds, and the directory it runs in."""
         command = Command("npm", "update", "--save", "--min-release-age=7")
-        gate = {"YARN_NPM_MINIMAL_AGE_GATE": "10080"}
-        cases: dict[str, tuple[Path | None, Path, dict[str, str], str]] = {
-            "in a directory": (_PROJECT, _PROJECT, {}, str(command)),
-            "in no directory": (None, Path.cwd(), {}, str(command)),
-            "with a variable added": (_PROJECT, _PROJECT, gate, f"YARN_NPM_MINIMAL_AGE_GATE=10080 {command}"),
-        }
-        for case, (cwd, directory, environment, line) in cases.items():
-            with self.subTest(case):
-                mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
-                run(command, cwd=cwd, environment=environment)
-                self.assert_logged_among_others(
-                    message_of(Logger.command_run), command=line, directory=Location(directory)
-                )
+        mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
+        run(command, cwd=_PROJECT, environment={"YARN_NPM_MINIMAL_AGE_GATE": "10080"})
+        self.assert_logged_among_others(
+            message_of(Logger.command_run),
+            command=f"YARN_NPM_MINIMAL_AGE_GATE=10080 {command}",
+            directory=Location(_PROJECT),
+        )
 
     def test_version_is_logged_with_the_directory_the_command_runs_in(self, mock_run: Mock):
         """Test that the version of the executable is logged with the directory the command runs in."""
