@@ -215,7 +215,10 @@ class IsMultipleOfFiveTest(unittest.TestCase):
 
 
 class IsOddTest(unittest.TestCase):
-    """Unit tests for deciding whether a number is odd, whose answers are cached, which a cached anchor targets."""
+    """Unit tests for deciding whether a number is odd, whose answers are cached, which a cached anchor targets.
+
+    An anchor on this class targets them too, so that a mutation changes the module holding the test it breaks.
+    """
 
     def test_an_odd_number(self):
         """Test that three is odd."""
@@ -465,11 +468,6 @@ class CheckTest(unittest.TestCase):
             with self.subTest(case):
                 self.assertEqual(_checked(mutation, test_name), (Result(Outcome.KILLED), 1))
 
-    @kills.delete_statement(
-        checker._executed_module,
-        "executed.__path__ = module.__path__",
-        "a mutated package is not a package, so a test importing a submodule of it ends the check as broken",
-    )
     def test_a_mutation_of_a_package_importing_its_own_submodule_is_killed(self):
         """Test that a mutation of a package whose module imports a submodule of its own reaches the test it breaks."""
         mutation = Mutation(mutation_subject_package, "start = 0", "start = 1", _ANY_REGRESSION)
@@ -501,6 +499,11 @@ class CheckTest(unittest.TestCase):
             tests.mutation_time.mutation_subject_package.limit, "value = 10", "value = 11", _ANY_REGRESSION
         )
         self.assertEqual(_checked(mutation, _LIMIT_TEST_NAME), (Result(Outcome.KILLED), 1))
+
+    def test_a_mutation_of_the_module_holding_the_test_is_killed(self):
+        """Test that a mutation reaches the test it breaks where the mutated module holds that test."""
+        mutation = Mutation(IsOddTest, "is_odd(3)", "is_odd(4)", _ANY_REGRESSION)
+        self.assertEqual(_checked(mutation, _ODD_TEST_NAME), (Result(Outcome.KILLED), 1))
 
     @kills.force_false(
         checker._bind_on_parent,
@@ -665,16 +668,31 @@ class CheckTest(unittest.TestCase):
                 RuntimeError, Mutation(mutation_subject.is_even, _EVEN, _ODD, _ANY_REGRESSION).check, _SUBJECT_TEST_NAME
             )
 
+    @kills.delete_statement(
+        checker.Mutation._run_test_afresh,
+        "sys.modules.clear()",
+        "the check leaves behind a module that the mutated source adds",
+    )
     def test_the_modules_are_left_as_they_were(self):
-        """Test that a check restores sys.modules, whether the mutated source ran or raised instead.
+        """Test that a check restores sys.modules, whether the mutated source ran, raised, or added a module.
 
         The outcome is asserted as well, since a check that returned before touching `sys.modules` would leave it
         alone too, and pass on that alone.
         """
-        for case, new, outcome in (("ran", _ODD, Outcome.KILLED), ("raised", "number %", Outcome.BROKEN)):
+        functools_import = "from functools import cache, cached_property"
+        module_addition = "import sys, types\nsys.modules['added'] = types.ModuleType('added')\n"
+        for case, mutation, outcome in (
+            ("ran", Mutation(mutation_subject.is_even, _EVEN, _ODD, _ANY_REGRESSION), Outcome.KILLED),
+            ("raised", Mutation(mutation_subject.is_even, _EVEN, _UNPARSABLE, _ANY_REGRESSION), Outcome.BROKEN),
+            (
+                "added a module",
+                Mutation(mutation_subject, functools_import, module_addition + functools_import, _ANY_REGRESSION),
+                Outcome.SURVIVED,
+            ),
+        ):
             with self.subTest(case=case):
                 imported = dict(sys.modules)
-                result = Mutation(mutation_subject.is_even, _EVEN, new, _ANY_REGRESSION).check(_SUBJECT_TEST_NAME)
+                result = mutation.check(_SUBJECT_TEST_NAME)
                 self.assertEqual(result.outcome, outcome)
                 names = sys.modules.keys() | imported.keys()
                 changed = [name for name in names if sys.modules.get(name) is not imported.get(name)]
