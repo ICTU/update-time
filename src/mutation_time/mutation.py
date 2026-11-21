@@ -10,6 +10,8 @@ mutation is applied in memory, so no file on disk is touched and an interrupted 
 import ast
 import functools
 import importlib
+import importlib.machinery
+import importlib.util
 import inspect
 import os
 import re
@@ -492,12 +494,10 @@ def _executed_module(source: str, module: types.ModuleType) -> types.ModuleType:
     """Return the module the source holds, installed under the name it replaces before the source runs.
 
     An import installs a module before running it as well, so a module the source imports that imports this one back
-    gets the mutated module.
+    gets the mutated module. The module carries the spec of the one it replaces, so a test it holds loads by name.
     """
-    executed = types.ModuleType(module.__name__)
-    executed.__file__ = module.__file__
-    if hasattr(module, "__path__"):
-        executed.__path__ = module.__path__
+    # An imported module has a spec.
+    executed = importlib.util.module_from_spec(cast("importlib.machinery.ModuleSpec", module.__spec__))
     sys.modules[module.__name__] = executed
     try:
         exec(compile(source, executed.__file__ or "", "exec"), executed.__dict__)  # noqa: S102 # nosec
