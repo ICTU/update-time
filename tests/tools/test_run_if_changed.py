@@ -48,6 +48,16 @@ def _files_listed(paths: list[Path], command_exit_status: int = 0) -> Mock:
     return Mock(side_effect=run)
 
 
+def _rerun_after(edited: str) -> tuple[int, bool]:
+    """Return the exit status of a run after the module was edited, and whether that run rewrote the fingerprint."""
+    files = FakeFiles({_ANSWER: _MODULE})
+    with _patched(_files_listed([_ANSWER]), files):
+        run_if_changed.main()
+        fingerprint = files[_RECORD_FILE]
+        files[_ANSWER] = edited
+        return run_if_changed.main(), files[_RECORD_FILE] != fingerprint
+
+
 def _git_failing(failure: subprocess.CompletedProcess[str] | OSError) -> Mock:
     """Return a stub for `subprocess.run` whose git fails as given, while any other command succeeds."""
 
@@ -233,6 +243,14 @@ class MainTest(unittest.TestCase):
         run_if_changed.main,
         "not status and ",
         "a failing run leaves its fingerprint, so the next run skips the command although it still fails",
+        case="another status",
+    )
+    @kills.replace(
+        run_if_changed.main,
+        "return 1 if status == arguments.skipped_status else status",
+        "return status",
+        "a command exiting with the skip status reads as skipped, so its failure passes unseen",
+        case="the skip status",
     )
     def test_a_command_that_fails_leaves_no_fingerprint_and_gives_a_failing_exit_status(self):
         """Test that a failing command does not leave a fingerprint, and gives its status, or 1 for the skip status."""
@@ -248,48 +266,37 @@ class MainTest(unittest.TestCase):
         run_if_changed._fingerprint,
         "node.body = node.body[1:] or [ast.Pass()]",
         "an edit to a docstring alone reads as a change to the code, so the tests run all the same",
+        case="its docstrings",
     )
     @kills.append(
         run_if_changed._fingerprint,
         "ast.dump(tree",
         ", include_attributes=True",
         "code that moves to another line reads as changed, so a comment above it runs the tests all the same",
+        case="a comment",
     )
     @kills.replace(
         run_if_changed._fingerprint,
         '"pragma" in token.string]',
         '"never" in token.string]',
         "a coverage pragma removed alone reads as unchanged, so the coverage gate never sees the line it exposed",
+        case="a coverage pragma",
     )
     def test_an_edit_to_docstrings_or_comments_alone_skips_the_command(self):
         """Test that editing docstrings or comments alone skips the command, and editing a coverage pragma does not."""
+        # An edit to the code runs the command, so a fingerprint that never changes fails the test
+        self.assertEqual(_rerun_after(_MODULE.replace("return 42", "return 43")), (0, True))
         edits = {
-            "its docstrings": (
-                _MODULE.replace("Answer questions.", "Answer every question.").replace(
-                    "Return the answer.", "Return the answer to everything."
-                ),
-                _SKIPPED,
-                False,
+            "its docstrings": _MODULE.replace("Answer questions.", "Answer every question.").replace(
+                "Return the answer.", "Return the answer to everything."
             ),
-            "a comment": (
-                _MODULE.replace("    return 42", "    # The answer to everything.\n    return 42"),
-                _SKIPPED,
-                False,
-            ),
-            "a coverage pragma": (_MODULE.replace("-> int:", "-> int:  # pragma: no cover"), 0, True),
-            "its code": (_MODULE.replace("return 42", "return 43"), 0, True),
+            "a comment": _MODULE.replace("    return 42", "    # The answer to everything.\n    return 42"),
         }
-        for edit, (edited, exit_status, rewritten) in edits.items():
-            files = FakeFiles({_ANSWER: _MODULE})
-            with (
-                self.subTest(edit=edit),
-                _patched(_files_listed([_ANSWER]), files),
-            ):
-                run_if_changed.main()
-                fingerprint = files[_RECORD_FILE]
-                files[_ANSWER] = edited
-                self.assertEqual(run_if_changed.main(), exit_status)
-                self.assertEqual(files[_RECORD_FILE] != fingerprint, rewritten)
+        for edit, edited in edits.items():
+            with self.subTest(edit=edit):
+                self.assertEqual(_rerun_after(edited), (_SKIPPED, False))
+        with self.subTest(edit="a coverage pragma"):
+            self.assertEqual(_rerun_after(_MODULE.replace("-> int:", "-> int:  # pragma: no cover")), (0, True))
 
     @kills.replace(
         run_if_changed._source,
@@ -298,24 +305,15 @@ class MainTest(unittest.TestCase):
         "a file removed but not yet committed ends the run with a traceback, which reads as unchanged code",
         raises="FileNotFoundError: [Errno 2] No such file or directory: 'src/other.py'",
     )
-    def test_a_python_file_added_or_removed_since_the_fingerprint_is_a_code_change(self):
-        """Test that, after a first run, a file added or removed is reported as a code change."""
+    def test_a_python_file_removed_since_the_fingerprint_is_a_code_change(self):
+        """Test that, after a first run, a file removed is reported as a code change."""
+        files = FakeFiles({_ANSWER: _MODULE, _OTHER: _MODULE})
         # Git keeps listing a tracked file removed from the working tree until the removal is committed, so the
         # listing keeps it.
-        edits = {"a file removed": ({_OTHER}, {}), "a file added": (set(), {Path("src/new.py"): _MODULE})}
-        for edit, (removed, added) in edits.items():
-            files = FakeFiles({_ANSWER: _MODULE, _OTHER: _MODULE})
-            listed = [_ANSWER, _OTHER]
-            with (
-                self.subTest(edit=edit),
-                _patched(_files_listed(listed), files),
-            ):
-                run_if_changed.main()
-                for path in removed:
-                    del files[path]
-                files.update(added)
-                listed.extend(added)
-                self.assertEqual(run_if_changed.main(), 0)
+        with _patched(_files_listed([_ANSWER, _OTHER]), files):
+            run_if_changed.main()
+            del files[_OTHER]
+            self.assertEqual(run_if_changed.main(), 0)
 
     @kills.replace(
         run_if_changed._fingerprints,
@@ -357,6 +355,7 @@ class MainTest(unittest.TestCase):
         run_if_changed._paths,
         "result.returncode",
         "a git that exits with an error lists nothing, which reads as an unchanged tree",
+        case="git exits with an error",
     )
     @kills.replace(
         run_if_changed._paths,
@@ -364,6 +363,7 @@ class MainTest(unittest.TestCase):
         "except ValueError as error:",
         "a missing git ends the run with a traceback rather than running the tests",
         raises="FileNotFoundError: [Errno 2] No such file or directory: 'git'",
+        case="git is not installed",
     )
     def test_a_git_that_fails_is_reported_as_a_change_and_says_why(self):
         """Test that a git that fails or is missing is reported as a change, and that stderr says why."""

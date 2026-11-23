@@ -18,6 +18,43 @@ class ReportNetworkSettingsTest(unittest.TestCase):
         '":".join(_REDACTED for part',
         '":".join(part for part',
         "a proxy's user and password are written to the log",
+        case="user and password",
+    )
+    @kills.replace(
+        network_module._redacted_url,
+        "if part is not None",
+        "if parts.password is not None",
+        "a proxy's user without a password is written to the log",
+        case="user only",
+    )
+    @kills.replace(
+        network_module._redacted_url,
+        'return f"{parts.scheme}://',
+        'return f"http://',
+        "a SOCKS proxy is logged as an HTTP one",
+        case="another scheme",
+    )
+    @kills.replace(
+        network_module._redacted_url,
+        'urlsplit(url if "://" in url else f"http://{url}")',
+        "urlsplit(url)",
+        "a proxy written without a scheme is logged with its host as the scheme",
+        case="no scheme",
+    )
+    @kills.replace(
+        network_module._redacted_url,
+        'address = parts.netloc.rpartition("@")[2]',
+        'address = f"{parts.hostname}:{parts.port}"',
+        "a proxy whose port is not a number ends the run",
+        raises="ValueError: Port could not be cast to integer value as 'abc'",
+        case="port that is not a number",
+    )
+    @kills.replace(
+        network_module._redacted_url,
+        "return _UNREADABLE",
+        "return url",
+        "a proxy URL that does not split is logged as it is, its password included",
+        case="URL that does not split",
     )
     def test_a_proxy_is_logged_with_its_user_and_password_redacted(self):
         """Test that a proxy is logged as its URL with a user and a password each redacted, or as unreadable."""
@@ -28,14 +65,8 @@ class ReportNetworkSettingsTest(unittest.TestCase):
                 "http://<redacted>:<redacted>@proxy.acme.com:3128",
             ),
             ("user only", "http://joe@proxy.acme.com:3128", "http://<redacted>@proxy.acme.com:3128"),
-            ("neither", "http://proxy.acme.com:3128", "http://proxy.acme.com:3128"),
             ("another scheme", "socks5://proxy.acme.com:1080", "socks5://proxy.acme.com:1080"),
             ("no scheme", "proxy.acme.com:3128", "http://proxy.acme.com:3128"),
-            (
-                "no scheme, user and password",
-                "joe:s3cret@proxy.acme.com:3128",
-                "http://<redacted>:<redacted>@proxy.acme.com:3128",
-            ),
             ("port that is not a number", "http://proxy.acme.com:abc", "http://proxy.acme.com:abc"),
             ("URL that does not split", "http://joe:s3cret@[::1", "<unreadable>"),
         ):
@@ -48,12 +79,14 @@ class ReportNetworkSettingsTest(unittest.TestCase):
         network_module.report_network_settings,
         ' os.environ.get("CURL_CA_BUNDLE") or',
         "a CA bundle CURL_CA_BUNDLE names is logged as the default one, though requests uses it",
+        case="curl only",
     )
     @kills.replace(
         network_module.report_network_settings,
         'os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")',
         'os.environ.get("CURL_CA_BUNDLE") or os.environ.get("REQUESTS_CA_BUNDLE")',
         "the CA bundle CURL_CA_BUNDLE names is logged, though requests uses the one REQUESTS_CA_BUNDLE names",
+        case="both",
     )
     def test_the_ca_bundle_is_read_from_requests_ca_bundle_first_and_curl_ca_bundle_second(self):
         """Test that REQUESTS_CA_BUNDLE wins over CURL_CA_BUNDLE, and that CURL_CA_BUNDLE is read without it."""

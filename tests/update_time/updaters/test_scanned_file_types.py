@@ -50,6 +50,11 @@ _SCANS = (
 _WALKERS = ("glob_for", "update_yaml_files")
 
 
+def _script(module: ModuleType) -> str:
+    """Return the name of the updater script the module holds."""
+    return module.__name__.rpartition(".")[2]
+
+
 def _walker(module: ModuleType) -> str:
     """Return the name the module hands its file type to, so the test patches the one that module uses."""
     return next(name for name in _WALKERS if hasattr(module, name))
@@ -58,18 +63,23 @@ def _walker(module: ModuleType) -> str:
 class ScannedFileTypesTest(unittest.TestCase):
     """Unit tests for which file type each updater script scans."""
 
-    # Aliasing the import swaps the file type without changing its shape, so no other test can notice.
-    @kills.append(
-        update_pom_xml,
-        "from update_time.domain.file_type import ",
-        "PYPROJECT_TOML as ",
-        "a script walks another file type than the one whose files it updates",
+    # Aliasing the import swaps the file type without changing its shape, so no other test can notice. The script
+    # walking pyproject.toml files gets the pom.xml files instead.
+    @kills.each(
+        _SCANS,
+        lambda scan: kills.append(
+            scan[0],
+            "from update_time.domain.file_type import ",
+            "POM_XML as " if scan[2] is file_type.PYPROJECT_TOML else "PYPROJECT_TOML as ",
+            "a script walks another file type than the one whose files it updates",
+            case=_script(scan[0]),
+        ),
     )
     def test_each_script_scans_its_own_file_type(self):
         """Test that each updater walks the file type declared for the files it updates."""
         self.assertNotEqual(_SCANS, ())  # An empty table would pass the assertion below without examining anything
         for module, function, expected in _SCANS:
-            with self.subTest(script=module.__name__.rpartition(".")[2]):
+            with self.subTest(script=_script(module)):
                 with patch(f"{module.__name__}.{_walker(module)}", return_value=[]) as walk:
                     getattr(module, function)()
                 walk.assert_called_once()

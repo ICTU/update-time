@@ -183,7 +183,8 @@ class _ChangelogMarkdown(Markdown):
     def _without_blank_blocks(tokens: list[Token]) -> list[Token]:
         """Return the tokens without the blocks that show as a blank line, such as an anchor or a comment.
 
-        A paragraph of HTML tags alone drops its opening and closing tokens with it.
+        A paragraph of HTML tags alone drops its opening and closing tokens with it. Rich reads a closing token left on
+        its own as the end of the quote or list item holding the paragraph.
         """
         tags_alone = {
             index

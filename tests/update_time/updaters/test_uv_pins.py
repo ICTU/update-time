@@ -93,18 +93,13 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         raises="tomlkit.exceptions.TOMLKitError: Redefinition of an existing table",
     )
     def test_a_script_whose_block_does_not_parse_leaves_the_other_files_checked(self, get: Mock):
-        """Test that a script whose metadata block is not valid TOML leaves the files after it checked."""
+        """Test that a script whose metadata block redefines a table leaves the files after it checked."""
         get.return_value = dated_pypi_index("1.0")
-        cases = {
-            "unterminated array": "# dependencies = [\n",
-            "redefined table": "# [tool]\n# uv.sources = {}\n#\n# [tool.uv]\n# x = 1\n",
-        }
-        for case, block in cases.items():
-            with self.subTest(case=case):
-                malformed = InlineScript(mock_path(f"# /// script\n{block}# ///\n", parent=SCAN_ROOT))
-                file = self.dependency_toml_file("package>=1.0")
-                warn_about_pins([malformed, file], _LOG, {})
-                self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
+        block = "# [tool]\n# uv.sources = {}\n#\n# [tool.uv]\n# x = 1\n"
+        malformed = InlineScript(mock_path(f"# /// script\n{block}# ///\n", parent=SCAN_ROOT))
+        file = self.dependency_toml_file("package>=1.0")
+        warn_about_pins([malformed, file], _LOG, {})
+        self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_dependency_without_an_exact_pin_the_index_lists_no_release_for(self, get: Mock):
         """Test that a dependency whose package the index lists no release for is not warned about."""

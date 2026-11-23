@@ -32,11 +32,11 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
             update_circle_ci_config()
 
     def test_multiple_files(self):
-        """Test that images are updated in all YAML files under the CircleCI directory, not just config.yml."""
+        """Test that images are updated in every file the walk finds, not just in the first."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.26.2", DIGEST2))
         config_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
         next_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
-        with patch("pathlib.Path.glob", side_effect=[[config_yml], [next_yml]]):
+        with patch("update_time.references.file.glob_for", return_value=[config_yml, next_yml]):
             update_circle_ci_config()
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         next_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")

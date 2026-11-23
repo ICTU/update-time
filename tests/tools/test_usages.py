@@ -196,6 +196,14 @@ class MainTest(unittest.TestCase):
         usages_module._assigned_names,
         "target.elts if isinstance(target, ast.Tuple) else ",
         "the report says nothing defines a name that an assignment to a tuple binds",
+        case="FIRST",
+    )
+    @kills.replace(
+        usages_module._named,
+        "Position(path, name.lineno - 1, name.col_offset)",
+        "Position(path, name.lineno - 1, target.col_offset)",
+        "each name of a tuple is looked up at the position of the first, so the report counts that name's usages",
+        case="SECOND",
     )
     def test_each_name_of_a_tuple_target_is_looked_up_where_it_is_written(self):
         """Test that each name an assignment to a tuple defines is looked up at its own position."""

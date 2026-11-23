@@ -23,7 +23,6 @@ _TEXT_FILES_IN_HIDDEN_EXAMPLE = FileType("text files", ("*.txt",), start=".examp
 _HIDDEN_TEXT_FILES = FileType("hidden text files", (".*.txt",), case_sensitive=False)
 _YAML_FILES = FileType("YAML files", ("*.yml", "*.yaml"))
 _DEVCONTAINER_IN_FOLDER = FileType("devcontainer configs", (".devcontainer/devcontainer.json",))
-_DEVCONTAINER_AT_ROOT = FileType("devcontainer configs", (".devcontainer.json",))
 _CASE_INSENSITIVE_FILES = FileType("Dockerfiles", ("Dockerfile",), case_sensitive=False)
 _TEXT_FILES_AT_ROOT = FileType("text files", ("*.txt",), recursive=False)
 
@@ -89,17 +88,32 @@ class GlobForTest(unittest.TestCase):
         "_is_skipped(path.relative_to(start)",
         "_is_skipped(path.relative_to(root)",
         "a file under a hidden start folder, such as `.github`, is skipped as hidden",
+        case="a hidden start folder, such as .github",
+    )
+    @kills.replace(
+        filesystem_module._holds_unnamed_hidden_part,
+        "_hidden(relative_path.parts)",
+        "_hidden(relative_path.parts[:-1])",
+        "the walk returns a hidden file that the pattern does not name, such as `.env.txt`",
+        case="a hidden file outside the pattern",
+    )
+    @kills.replace(
+        filesystem_module._holds_unnamed_hidden_part,
+        "segment, case_sensitive=case_sensitive)",
+        "segment, case_sensitive=True)",
+        "a hidden file that a case-insensitive pattern names is skipped where its case differs, as `.NOTES.TXT` is",
+        case="a hidden file a wildcard matches, in any case",
+    )
+    @kills.replace(
+        filesystem_module._holds_unnamed_hidden_part,
+        "_hidden(relative_path.parts)",
+        "_hidden(relative_path.parts[-1:])",
+        "the walk returns a file in a hidden folder that the pattern does not name, such as `.git`",
+        case="a hidden folder outside the pattern",
     )
     def test_hidden_folders_and_files_are_skipped_unless_named(self, mock_glob: Mock):
         """Test that the walk skips a hidden folder or file, except one the pattern or the start folder names."""
         cases: tuple[tuple[str, FileType, list[str], list[str]], ...] = (
-            (
-                "a hidden folder the pattern names",
-                _DEVCONTAINER_IN_FOLDER,
-                [],
-                [".devcontainer/devcontainer.json", "pkg/.devcontainer/devcontainer.json"],
-            ),
-            ("a hidden file the pattern names", _DEVCONTAINER_AT_ROOT, [], [".devcontainer.json"]),
             ("a hidden file outside the pattern", _TEXT_FILES, [".env.txt"], ["file.txt"]),
             ("a hidden file a wildcard matches, in any case", _HIDDEN_TEXT_FILES, [], [".NOTES.TXT"]),
             (

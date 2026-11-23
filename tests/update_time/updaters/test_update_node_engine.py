@@ -115,14 +115,22 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         package_json_manifest.PackageJson.declares_a_node_engine,
         "return isinstance(engines, dict)",
         "return engines is not None",
-        "a section that is a string or a list is read as one naming the engine, so the file is opened for it",
+        "a section that is a string is read as one naming the engine, so the file is opened for it",
+        case="an engines section that is a string",
+    )
+    @kills.replace(
+        package_json_manifest.PackageJson.declares_a_node_engine,
+        "self.contents.get(_ENGINES)",
+        "self.contents[_ENGINES]",
+        "a package.json without an engines section stops the run",
+        raises="KeyError: 'engines'",
+        case="no engines section",
     )
     def test_no_node_engine(self, mock_glob: Mock):
         """Test that a package.json whose `engines` section declares no Node version is skipped."""
         for case, contents in (
             ("no engines section", "{}"),
             ("an engines section that is a string", '{"engines": "node >=18"}'),
-            ("an engines section that is a list", '{"engines": ["node"]}'),
         ):
             with self.subTest(case=case):
                 mock_package_json = self.update_engine(mock_glob, contents)
@@ -224,12 +232,38 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         "name)), spelling=_field_spelling(contents))",
         "name)))",
         "no Recognised line names a field of the wrong shape",
+        case="a section that is not an object",
     )
     @kills.replace(
         Logger.recognised_marker,
         "if not str(marker := reference.marker):",
         "if not (marker := reference.marker).raw:",
         "no Recognised line names a marker spelled without directive text",
+        case="a field that is not an object",
+    )
+    @kills.replace(
+        package_json_manifest._object_at,
+        "level.get(key, {}) if isinstance(level, dict) else None",
+        "level.get(key, {})",
+        "an `update-time` field that is not an object stops the run",
+        raises="AttributeError: 'str' object has no attribute 'get'",
+        case="a field that is not an object",
+    )
+    @kills.replace(
+        package_json_manifest._object_at,
+        "return level if isinstance(level, dict) else None",
+        "return level",
+        "a section of the `update-time` field that is not an object stops the run",
+        raises="AttributeError: 'str' object has no attribute 'get'",
+        case="a section that is not an object",
+    )
+    @kills.replace(
+        package_json_manifest._marker,
+        "if not isinstance(directives, str):",
+        "if directives is None:",
+        "an engine's marker that is not a string stops the run",
+        raises="TypeError: expected string or bytes-like object, got 'list'",
+        case="directives that are not a string",
     )
     def test_a_field_of_the_wrong_shape_is_warned_about_and_recognised_and_the_engine_updates(self, mock_glob: Mock):
         """Test that an `update-time` field of the wrong shape is warned about and quoted, and the engine updates."""

@@ -109,19 +109,12 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         "an entry its marker holds back is logged as held back by the `requires-python` as well",
     )
     def test_a_requires_python_that_holds_nothing_back_is_not_logged(self, mock_glob: Mock):
-        """Test that a `requires-python` is not logged as holding an entry back where it holds nothing back."""
-        for case, requires_python, contents, written in (
-            ("it admits every version above the entry's", ">=3.10", "3.10\n", "3.15.1\n"),
-            ("the entry's marker holds the update back", ">=3.10,<3.12", "3.10  # update-time: ignore[update]\n", ""),
-        ):
-            with self.subTest(case):
-                self.write_pyproject_toml(requires_python)
-                version_file = self.update_version_file(mock_glob, contents, latest=("3.11.9", "3.15.1"))
-                if written:
-                    version_file.write_text.assert_called_once_with(written)
-                else:
-                    version_file.write_text.assert_not_called()
-                self.assertEqual(self.records_of(message_of(Logger.held_back_by_requires_python)), [])
+        """Test that a `requires-python` is not logged as holding back an entry whose marker holds the update back."""
+        self.write_pyproject_toml(">=3.10,<3.12")
+        contents = "3.10  # update-time: ignore[update]\n"
+        version_file = self.update_version_file(mock_glob, contents, latest=("3.11.9", "3.15.1"))
+        version_file.write_text.assert_not_called()
+        self.assertEqual(self.records_of(message_of(Logger.held_back_by_requires_python)), [])
 
     def test_requires_python_above_the_file_bounds_the_update(self, mock_glob: Mock):
         """Test that the `requires-python` of the nearest `pyproject.toml` above the file bounds the entry's update."""
@@ -202,22 +195,17 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     )
     def test_an_entry_outside_the_requires_python_is_warned_about(self, mock_glob: Mock):
         """Test that an entry the `requires-python` excludes, and the run leaves there, is warned about."""
-        for case, entry in (
-            ("an entry without a marker", "3.13.2\n"),
-            ("an entry its marker holds back", "3.13.2  # update-time: ignore[update]\n"),
-        ):
-            with self.subTest(case):
-                self.write_pyproject_toml(">=3.10,<3.12")
-                version_file = self.update_version_file(mock_glob, entry, latest=("3.11.9", "3.13.2", "3.15.1"))
-                version_file.write_text.assert_not_called()
-                self.assert_logged(
-                    message_of(Logger.python_version_outside_requires_python),
-                    dependency="python",
-                    location=Location(version_file, 1),
-                    version="3.13.2",
-                    requires_python=">=3.10,<3.12",
-                    pyproject_toml=Location(PYPROJECT_TOML, 2),
-                )
+        self.write_pyproject_toml(">=3.10,<3.12")
+        version_file = self.update_version_file(mock_glob, "3.13.2\n", latest=("3.11.9", "3.13.2", "3.15.1"))
+        version_file.write_text.assert_not_called()
+        self.assert_logged(
+            message_of(Logger.python_version_outside_requires_python),
+            dependency="python",
+            location=Location(version_file, 1),
+            version="3.13.2",
+            requires_python=">=3.10,<3.12",
+            pyproject_toml=Location(PYPROJECT_TOML, 2),
+        )
 
     def test_a_requires_python_that_is_not_a_version_specifier_is_warned_about(self, mock_glob: Mock):
         """Test that a `requires-python` that is not a version specifier is warned about and ignored."""
@@ -232,6 +220,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         "except UnicodeDecodeError as error:",
         "a `pyproject.toml` that cannot be read stops the run for every `.python-version` file",
         raises="PermissionError: [Errno 13] Permission denied: '/pyproject.toml'",
+        case="a file it may not read",
     )
     @kills.replace(
         update_python_version_file._requires_python,
@@ -239,11 +228,13 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         "except OSError as error:",
         "a `pyproject.toml` that is not UTF-8 stops the run for every `.python-version` file",
         raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+        case="a file that is not UTF-8",
     )
     @kills.delete(
         update_python_version_file._requires_python,
         "_LOG.unreadable_requires_python(pyproject_toml, error)",
         "a `pyproject.toml` that cannot be read goes unreported, so its `requires-python` drops out silently",
+        case="a file it may not read",
     )
     def test_a_pyproject_toml_that_cannot_be_read_is_warned_about_and_bounds_nothing(self, mock_glob: Mock):
         """Test that a `pyproject.toml` that cannot be read is warned about, and the entry updates as without it."""

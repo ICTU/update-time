@@ -257,17 +257,25 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename(defines.format("old"), old="file0.old", new="new"), 0)
         self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(defines.format("new"))])
 
-    @kills.replace(
+    @kills.force_true(
         rename_module._ReferenceFinder.visit_Name,
-        "refers = self._read_through_an_import(parent)",
-        "refers = True",
+        "self._read_through_an_import(parent)",
         "a method of the renamed name on another object reads as the module-level name left behind",
+        case="a parameter",
+    )
+    @kills.replace(
+        rename_module._ReferenceFinder._read_through_an_import,
+        "any(isinstance(assignment, ImportAssignment) for assignment in scope[root.value])",
+        "bool(scope[root.value])",
+        "a method of the renamed name on a parameter reads as the module-level name left behind",
+        case="a parameter",
     )
     @kills.replace(
         rename_module._ReferenceFinder._read_through_an_import,
         "return False",
         "return True",
         "a method of the renamed name on what a call returns reads as the module-level name left behind",
+        case="a call's result",
     )
     def test_a_method_of_the_name_on_another_object_does_not_stop_the_rename(self):
         """Test that a module-level name is renamed where a call on another object reads a method of that name."""

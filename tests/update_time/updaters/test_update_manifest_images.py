@@ -122,30 +122,37 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         raises="AttributeError: 'NoneType' object has no attribute 'partition'",
     )
     def test_image_the_file_does_not_build_is_updated(self):
-        """Test that an image a service pulls is updated, whatever the service beside it builds."""
-        builders = {
-            "the service beside it tags its build": "  api:\n    build: .\n    image: acme/api:1.2.3\n",
-            "the service beside it tags no build": "  api:\n    build: .\n",
-        }
-        for case, builder in builders.items():
-            with self.subTest(case=case):
-                self.requests.side_effect = mock_docker_registry(docker_tag("17", DIGEST))
-                compose = f"services:\n{builder}  db:\n    image: postgres:16\n"
-                mock_manifest = mock_path(compose)
-                self.run_compose_updater(mock_manifest)
-                expected = compose.replace("postgres:16", f"postgres:17@{DIGEST}")
-                mock_manifest.write_text.assert_called_once_with(expected)
-                postgres_line = len(compose.splitlines())  # The `db` service's image is the file's last line.
-                self.assert_new_version_logged(
-                    "postgres", docker_hub_version("17"), Location(mock_manifest, postgres_line)
-                )
-                self.assert_no_warnings_logged()
+        """Test that an image a service pulls is updated beside a service that builds without tagging its build."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("17", DIGEST))
+        compose = "services:\n  api:\n    build: .\n  db:\n    image: postgres:16\n"
+        mock_manifest = mock_path(compose)
+        self.run_compose_updater(mock_manifest)
+        mock_manifest.write_text.assert_called_once_with(compose.replace("postgres:16", f"postgres:17@{DIGEST}"))
+        self.assert_new_version_logged("postgres", docker_hub_version("17"), Location(mock_manifest, 5))
+        self.assert_no_warnings_logged()
 
     @kills.delete(
         yaml_format.Document.__contains__,
         "isinstance(self._value, dict) and ",
         "a service declared with no body is read as a mapping, ending the run",
         raises="TypeError: argument of type 'NoneType' is not a container or iterable",
+        case="a service has no body",
+    )
+    @kills.replace(
+        yaml_format.Document.__getitem__,
+        "Document(self._value.get(key)) if isinstance(self._value, dict) else Document()",
+        "Document(self._value.get(key))",
+        "a Compose file that is a list rather than a mapping ends the run",
+        raises="AttributeError: 'list' object has no attribute 'get'",
+        case="the document is a list",
+    )
+    @kills.replace(
+        yaml_format.Document.values,
+        "[Document(value) for value in self._value.values()] if isinstance(self._value, dict) else []",
+        "[Document(value) for value in self._value.values()]",
+        "a Compose file listing its services rather than mapping them ends the run",
+        raises="AttributeError: 'list' object has no attribute 'values'",
+        case="the services are a list",
     )
     def test_a_malformed_compose_file_is_updated(self):
         """Test that Update-time updates the images in a malformed Compose file instead of ending the run."""
@@ -204,25 +211,19 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         "    ",
         "the warning names a pin that does not float, where it should name the image the file does not pull",
     )
-    def test_an_opt_in_on_a_built_image_names_why_the_image_is_not_pulled(self):
-        """Test that an opt-in on an image the Compose file builds is reported as redundant, naming the build."""
-        cases = {
-            "allow[floating-pin]": ("dev", Consequence.TAG_NEVER_PINNED),
-            "allow[hash-drift]": ("1.2.3", Consequence.DIGEST_NEVER_CHECKED),
-        }
-        for directive, (tag, consequence) in cases.items():
-            with self.subTest(directive=directive):
-                self.requests.side_effect = mock_docker_registry(docker_tag("1.3.0", DIGEST))
-                marker = f"# update-time: {directive}"
-                mock_manifest = mock_path(f"services:\n  api:\n    build: .\n    image: acme/api:{tag}  {marker}\n")
-                self.run_compose_updater(mock_manifest)
-                mock_manifest.write_text.assert_not_called()
-                self.assert_redundant_directive_logged(
-                    ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, consequence),
-                    "acme/api",
-                    Location(mock_manifest, 4),
-                    directive,
-                )
+    def test_a_floating_pin_opt_in_on_a_built_image_names_why_the_image_is_not_pulled(self):
+        """Test that `allow[floating-pin]` on an image the Compose file builds is reported as redundant, naming why."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.3.0", DIGEST))
+        marker = "# update-time: allow[floating-pin]"
+        mock_manifest = mock_path(f"services:\n  api:\n    build: .\n    image: acme/api:dev  {marker}\n")
+        self.run_compose_updater(mock_manifest)
+        mock_manifest.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.TAG_NEVER_PINNED),
+            "acme/api",
+            Location(mock_manifest, 4),
+            "allow[floating-pin]",
+        )
 
     def test_a_drift_opt_in_beside_a_hold_back_on_a_built_image_names_the_build(self):
         """Test that `allow[hash-drift]` beside `ignore[update]` on a built image is redundant because of the build."""

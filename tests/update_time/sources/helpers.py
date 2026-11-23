@@ -144,16 +144,11 @@ def github_commits_json(
 
 
 def _listing_page(commits: list, url: str) -> Mock:
-    """Return the page of the listing that the URL asks for, linking to the next page while the listing goes on.
-
-    A response among the commits answers for the page holding it, so a page after the first can fail.
-    """
+    """Return the page of the listing that the URL asks for, linking to the next page while the listing goes on."""
     parsed = urlparse(url)
     query = {name: values[0] for name, values in parse_qs(parsed.query).items()}
     size, page = int(query["per_page"]), int(query.get("page", 1))
     start = (page - 1) * size
-    if failed := [response for response in commits[start : start + size] if isinstance(response, Mock)]:
-        return failed[0]
     next_url = urlunparse(parsed._replace(query=urlencode({**query, "page": page + 1})))
     links = {"next": {"url": next_url, "rel": "next"}} if start + size < len(commits) else {}
     return mock_response(commits[start : start + size], ok=True, status_code=200, url=url, links=links)
@@ -189,9 +184,8 @@ def _github_api(  # noqa: PLR0913 — what each endpoint answers
     commits a page at a time, or else that commit alone. The compare endpoint answers every comparison of two commits
     with the comparison status. Pass a Mock as the commit, the listed commits, or the comparison status to serve a
     whole response rather than JSON, such as a non-OK one with an error body, or an exception as the commit to fail the
-    request itself. A Mock among the listed commits answers for the page holding it. The tags are listed a page at a
-    time too, and the lookup of a single tag finds any of them, unless a Mock or an exception given as the tag ref
-    answers it.
+    request itself. The tags are listed a page at a time too, and the lookup of a single tag finds any of them, unless
+    a Mock or an exception given as the tag ref answers it.
     """
 
     def answer(url: str) -> Mapping | list | Mock | Exception | None:

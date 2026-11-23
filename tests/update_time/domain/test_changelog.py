@@ -52,12 +52,14 @@ class VersionAnchorTest(unittest.TestCase):
         "index > 0 and _heading_level(lines, index - 1) == lines[index][:1]",
         "a changelog underlining its headings with backticks or tildes reports no changes at all, its file read "
         "as one fenced code block",
+        case="`",
     )
     @kills.replace(
         changelog._find_version_index,
         "if _heading_level(lines, index):",
         'if line.startswith("#"):',
         "a version named in a newer entry's prose anchors the changes reported for it",
+        case="=",
     )
     @kills.replace(
         restructured_text,
@@ -65,6 +67,18 @@ class VersionAnchorTest(unittest.TestCase):
         '_ADORNMENT_CHARACTERS = frozenset("=-~")',
         "a changelog underlining its headings with a character reStructuredText allows but does not recommend "
         "reports the changes from where a newer entry's prose names the version",
+        case="!",
+    )
+    @kills.each(
+        _SPEC_ADORNMENT_CHARACTERS,
+        lambda adornment: kills.replace(
+            restructured_text,
+            "_ADORNMENT_CHARACTERS = frozenset(string.punctuation)",
+            f"_ADORNMENT_CHARACTERS = frozenset(string.punctuation) - {{{adornment!r}}}",
+            f"a changelog underlining its headings with {adornment} reports the changes from where a newer entry's "
+            "prose names the version, though reStructuredText allows that underline",
+            case=adornment,
+        ),
     )
     def test_underlined_heading_anchors_parsing_rather_than_a_prose_mention(self):
         """Test that a prose mention doesn't anchor parsing when a heading names the version, whatever underlines it."""
@@ -87,13 +101,11 @@ class VersionAnchorTest(unittest.TestCase):
         "a changelog naming a longer version that ends with this one reports the longer version's changes",
     )
     def test_longer_version_does_not_anchor_parsing(self):
-        """Test that a version spelled inside a longer version doesn't anchor parsing at the longer one."""
-        for version, longer_version in (("1.0.0", "1.0.0.post0"), ("1.0", "11.0")):
-            with self.subTest(longer_version=longer_version):
-                v2_change = f"## {longer_version}\n\n- Fixed the packaging."
-                v1_change = f"## {version}\n\n- Fixed ...\n- Changed ..."
-                text = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n\n## 0.9.0\n\n- Fixed ...\n"
-                self.assertEqual(get_version_changes_from_changelog(text, version), v1_change)
+        """Test that a version spelled at the end of a longer version doesn't anchor parsing at the longer one."""
+        v2_change = "## 11.0\n\n- Fixed the packaging."
+        v1_change = "## 1.0\n\n- Fixed ...\n- Changed ..."
+        text = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n\n## 0.9.0\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.replace(
         changelog._find_anchor,
@@ -245,13 +257,11 @@ class SectionEndTest(unittest.TestCase):
         "a changelog fencing a code block with tildes reports the fence as the end of the version's changes",
     )
     def test_heading_inside_a_fenced_code_block_does_not_end_the_section(self):
-        """Test that a heading marker inside a fenced code block, which is code rather than a heading, ends none."""
-        for fence in ("```", "~~~"):
-            with self.subTest(fence=fence):
-                code_block = f"{fence}sh\n# install the parser\npip install parser\n{fence}"
-                v1_change = f"## 1.0\n\n- Fixed the parser. Install it with:\n\n{code_block}"
-                text = f"# Changelog\n\n{v1_change}\n\n## 0.9\n\n- Changed ...\n"
-                self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+        """Test that a heading marker inside a code block fenced with tildes is code, so it does not end the section."""
+        code_block = "~~~sh\n# install the parser\npip install parser\n~~~"
+        v1_change = f"## 1.0\n\n- Fixed the parser. Install it with:\n\n{code_block}"
+        text = f"# Changelog\n\n{v1_change}\n\n## 0.9\n\n- Changed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     def test_shallower_heading_ends_the_section(self):
         """Test that a section ends at a heading shallower than the version's, such as a footer's."""
@@ -269,11 +279,13 @@ class SectionEndTest(unittest.TestCase):
         restructured_text.is_label,
         "_LABEL.fullmatch(line) is not None",
         "a reStructuredText changelog's changes end with the label of the next version's section",
+        case="reStructuredText label",
     )
     @kills.force_false(
         html.is_anchor,
         "_ANCHOR.fullmatch(line) is not None",
         "a towncrier changelog's changes end with the HTML anchor of the next version's section",
+        case="HTML anchor",
     )
     def test_changes_end_before_the_anchor_of_the_next_section(self):
         """Test that the changes leave out the anchor a changelog puts above the next version's heading."""
@@ -290,11 +302,20 @@ class SectionEndTest(unittest.TestCase):
         changelog.get_version_changes_from_changelog,
         "not entries",
         "a version whose section holds its heading alone is reported with the heading as its changes",
+        case="Markdown heading",
+    )
+    @kills.replace(
+        changelog._heading_length,
+        "return 1 if markdown.heading",
+        "return 0 if markdown.heading",
+        "a version whose section holds its Markdown heading alone is reported with the heading as its changes",
+        case="Markdown heading",
     )
     @kills.delete(
         changelog._heading_length,
         " if markdown.heading(lines[index]) else 2",
         "a version whose section holds its underlined heading alone is reported with the underline as its changes",
+        case="underlined heading",
     )
     def test_section_holding_only_its_heading_has_no_changes(self):
         """Test that a section holding nothing but its heading has no changes, whether Markdown or underlined."""

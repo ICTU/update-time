@@ -229,12 +229,14 @@ class DeclarationsTest(unittest.TestCase):
         "requirement.name",
         "a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked "
         "about a name it has no release for",
+        case="a dependency with an underscore",
     )
     @kills.delete(
         pyproject_config._UvTable.from_mapping,
         "normalized_python_name(name) for name in ",
         "a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about "
         "a name it has no release for",
+        case="a source key with an underscore",
     )
     def test_a_uv_source_spelled_another_way_is_read(self):
         """Test that a `sources` entry naming the dependency another way is matched, as uv matches it.
@@ -242,8 +244,11 @@ class DeclarationsTest(unittest.TestCase):
         uv resolves a `sources` key to a dependency by the normalised name, so the two are matched whichever of
         them spells the separator which way.
         """
-        for declared, sourced in (("local-pkg", "local_pkg"), ("local_pkg", "local-pkg")):
-            with self.subTest(declared=declared, sourced=sourced):
+        for case, declared, sourced in (
+            ("a source key with an underscore", "local-pkg", "local_pkg"),
+            ("a dependency with an underscore", "local_pkg", "local-pkg"),
+        ):
+            with self.subTest(case):
                 contents = f'[project]\ndependencies = ["{declared}==1.0"]\n' + uv_path_source(sourced)
                 path = mock_path(contents)
                 self.assertEqual(self.references(path), [declaration(declared, "1.0", path, 2, 1, uv_sourced=True)])

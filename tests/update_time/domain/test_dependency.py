@@ -47,15 +47,13 @@ class ReleaseTest(unittest.TestCase):
         "releases published at one moment order by the order the source listed them in",
     )
     def test_a_tie_is_broken_by_version(self):
-        """Test that two releases published at the same moment are ordered by version, in either listing order.
+        """Test that two releases published at one moment are ordered by version, though the newest is listed first.
 
         The versions compare as versions rather than as strings, so `10.0.0` is the newer of the two.
         """
         moment = datetime(2026, 8, 24, tzinfo=UTC)
         older, newer = Release("9.9.4", moment), Release("10.0.0", moment)
-        for case, releases in (("newest listed last", [older, newer]), ("newest listed first", [newer, older])):
-            with self.subTest(case=case):
-                self.assertEqual(Release.newest(releases), newer)
+        self.assertEqual(Release.newest([newer, older]), newer)
 
 
 class DependencyVersionTest(unittest.TestCase):

@@ -6,6 +6,7 @@ from unittest.mock import ANY, Mock, patch
 
 from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
+from update_time.formats import toml
 from update_time.io.log import Logger
 from update_time.manifests import pyproject_config
 from update_time.manifests.pyproject_config import UvWorkspace
@@ -238,6 +239,15 @@ class WorkspaceTableTest(unittest.TestCase):
         '"workspace"), bool',
         "a pyproject.toml whose workspace is not a table stops the walk up the tree with a traceback",
         raises="AttributeError: 'str' object has no attribute 'get'",
+        case="a workspace that is not a table",
+    )
+    @kills.replace(
+        toml.read,
+        "except OSError, ValueError:",
+        "except OSError:",
+        "a pyproject.toml that is not valid TOML stops the walk up the tree with a traceback",
+        raises="tomllib.TOMLDecodeError: Expected '=' after a key in a key/value pair (at line 1, column 6)",
+        case="not valid TOML",
     )
     def test_malformed_pyproject_toml(self):
         """Test that an unrelated, malformed pyproject.toml up the tree yields None instead of crashing."""
@@ -266,16 +276,19 @@ class ByWorkspaceTest(LoggingTestCase):
         "_sourcing_files(project.path)",
         "[project.path]",
         "the order passes over the path sources of a workspace root, which its members inherit",
+        case="a member inheriting the source of its workspace root",
     )
     @kills.delete(
         uv._path_sourced_projects,
         "if source.dependency in declared",
         "the order counts a source that uv passes over, so it finds a cycle uv does not have",
+        case="a project sourcing a dependency it does not declare",
     )
     @kills.delete(
         uv._ordered_workspaces,
         "_LOG.path_source_cycle(root for root in workspaces if root in cycle)",
         "a cycle of path sources has its workspaces updated together without saying why",
+        case="projects sourcing each other",
     )
     def test_a_workspace_comes_after_the_workspaces_it_sources_by_path(self):
         """Test that each group comes after the groups it sources by path, and that a cycle forms one group."""

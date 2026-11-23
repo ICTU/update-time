@@ -107,6 +107,7 @@ class GitHubRepositoryTest(unittest.TestCase):
         github.github_repository,
         " and path_parts[0] != _GITHUB_SPONSORS_PATH",
         "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
+        case="https://github.com/sponsors/ICTU",
     )
     def test_github_sponsors_url(self):
         """Test that a GitHub sponsors URL does not name a repository."""
@@ -568,6 +569,7 @@ class GetReleaseTest(LoggingTestCase):
         ' if name == package or joiner != "/"',
         "a monorepo joining the unscoped name and the version with a slash has no changelog reported",
         raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
+        case="gizmo/7.0.0",
     )
     @patch_get(
         [
@@ -579,14 +581,8 @@ class GetReleaseTest(LoggingTestCase):
         ]
     )
     def test_scoped_tag_without_its_scope_match(self):
-        """Test finding a scoped npm package's release, however the monorepo joins its unscoped name and version."""
-        cases = [
-            ("@vitejs/plugin-react", "6.1.1", "plugin-react@6.1.1"),
-            ("@scope/widget", "1.2.3", "widget-v1.2.3"),
-            ("@scope/gadget", "4.5.6", "gadget-4.5.6"),
-            ("@scope/gizmo", "7.0.0", "gizmo/7.0.0"),
-        ]
-        self.assert_releases("monorepo tagging without the scope", cases)
+        """Test finding a scoped npm package's release where the monorepo joins its unscoped name and version by `/`."""
+        self.assert_releases("monorepo tagging without the scope", [("@scope/gizmo", "7.0.0", "gizmo/7.0.0")])
 
     @kills.replace(
         github._package_names,
@@ -772,11 +768,19 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         'markdown=markdown.is_file(entry["name"])',
         "markdown=False",
         "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
+        case="CHANGELOG.md",
+    )
+    @kills.replace(
+        github._changes_from_files,
+        'markdown=markdown.is_file(entry["name"])',
+        "markdown=True",
+        "a changelog in a repository's root that is not Markdown is rendered as Markdown",
+        case="CHANGELOG.rst",
     )
     @patch("requests.Session.get")
     def test_the_changes_link_the_files_page_in_the_markup_its_extension_names(self, mock_get: Mock):
         """Test that a changelog file's changes link its page, and that its extension says whether they're Markdown."""
-        for name, markdown in {"CHANGELOG.md": True, "CHANGELOG.rst": False, "CHANGELOG": False}.items():
+        for name, markdown in {"CHANGELOG.md": True, "CHANGELOG.rst": False}.items():
             with self.subTest(changelog=name):
                 responses = {
                     contents_url(self.MONOREPO): mock_response(contents_json(name)),
@@ -803,6 +807,14 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         github._list_contents,
         "(HTTPStatus.NOT_FOUND,) if directory else ",
         "a package whose registry metadata names a directory that moved warns on every run",
+        case="not served",
+    )
+    @kills.replace(
+        github._list_contents,
+        "(HTTPStatus.NOT_FOUND,) if directory else ",
+        "tuple(HTTPStatus) if directory else ",
+        "GitHub refusing to list a package's directory goes unreported",
+        case="refused",
     )
     @patch("requests.Session.get")
     def test_directory_that_cannot_be_listed_leaves_the_root_to_supply_the_changes(self, mock_get: Mock):

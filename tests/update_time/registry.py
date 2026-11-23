@@ -330,11 +330,18 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         "declares_archival=is_docker_hub_image",
         "declares_archival=bool",
         "an `ignore[archived]` on an image off Docker Hub decides nothing without being reported",
+        case="ignore[archived]",
+    )
+    @kills.replace(
+        directive_module,
+        "Reason.NO_STALENESS_DATES,",
+        "Reason.NO_COOLDOWN_DATES,",
+        "a staleness threshold on an image off Docker Hub is reported as a cooldown that has no dates",
+        case="set[stale-after=90]",
     )
     def test_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
-        """Test that a cooldown, staleness threshold, or `ignore[archived]` on an image off Docker Hub is redundant."""
+        """Test that a staleness threshold or `ignore[archived]` on an image off Docker Hub is redundant."""
         cases = {
-            "set[cooldown=30]": Reason.NO_COOLDOWN_DATES,
             "set[stale-after=90]": Reason.NO_STALENESS_DATES,
             "ignore[archived]": Reason.NO_ARCHIVAL_SIGNAL,
         }
@@ -441,40 +448,14 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         "a tag naming neither a version nor a channel adopts a digest re-pushed inside the cooldown",
     )
     def test_drift_inside_the_cooldown_is_held_back_silently(self) -> None:
-        """Test that a tag re-pushed or re-pointed inside the cooldown is left as it is, unreported, though opted in."""
-        cases = {
-            "version tag": ("python", "3.14", [docker_tag("3.14", DIGEST2, tag_last_pushed=FRESH_DATE)]),
-            "floating tag a version tag serves": (
-                "python",
-                "latest",
-                [
-                    docker_tag("latest", DIGEST2, tag_last_pushed=FRESH_DATE),
-                    docker_tag("3.14.7", DIGEST2, tag_last_pushed=FRESH_DATE),
-                ],
-            ),
-            "floating tag only floating tags serve": (
-                "acme/api",
-                "dev",
-                [
-                    docker_tag("dev", DIGEST2, tag_last_pushed=FRESH_DATE),
-                    docker_tag("prod", DIGEST2, tag_last_pushed=FRESH_DATE),
-                ],
-            ),
-            "tag naming neither a version nor a channel": (
-                "debian",
-                "dev-2024",
-                [docker_tag("dev-2024", DIGEST2, tag_last_pushed=FRESH_DATE)],
-            ),
-        }
-        for case, (image, tag, tags) in cases.items():
-            with self.subTest(case):
-                self.requests.side_effect = mock_docker_registry(*tags)
-                mock_file = mock_path(self.reference_adopting_drift(self.reference(f"{image}:{tag}@{DIGEST1}")))
-                self.run_updater(mock_file)
-                mock_file.write_text.assert_not_called()
-                self.assertTrue(self.requests.called)
-                self.assert_no_warnings_logged()
-                self.assert_no_info_logged()
+        """Test that a tag naming neither a version nor a channel, re-pushed inside the cooldown, is left unreported."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("dev-2024", DIGEST2, tag_last_pushed=FRESH_DATE))
+        mock_file = mock_path(self.reference_adopting_drift(self.reference(f"debian:dev-2024@{DIGEST1}")))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assertTrue(self.requests.called)
+        self.assert_no_warnings_logged()
+        self.assert_no_info_logged()
 
     def test_digest_drift_whose_push_date_cannot_be_fetched_is_held_back_with_the_reason(self) -> None:
         """Test that a re-pushed tag whose push date cannot be fetched is left as it is, the failure logged."""
@@ -614,39 +595,61 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         docker_hub._listing_page,
         "HTTPStatus.NOT_FOUND,",
         "a repository Docker Hub does not serve is warned about, and its floating tag reported as not listed",
+        case="[Docker Hub] (tag='latest')",
     )
     @kills.force_false(
         oci._walked_floating_tag,
         "names.absent",
         "a floating tag of a repository another registry does not serve is warned about as missing a manifest",
+        case="[another registry] (tag='latest')",
     )
     @kills.force_false(
         rewrite._Rewriter._report_why_the_source_left_it,
         "latest.unserved is Unserved.REPOSITORY",
         "leaves a version tag of a repository the registry does not serve as it is without saying why",
+        case="[an anonymous registry] (tag='3.5.1')",
     )
     @kills.append(
         oci._resolved_tag,
         "if names.absent",
         " and current.version is not None",
         "warns about the manifest of a dev-2024 tag of a repository the registry does not serve",
+        case="[Docker Hub] (tag='dev-2024')",
+    )
+    @kills.append(
+        oci._resolved_tag,
+        "if names.absent",
+        " and current.version is None",
+        "looks for newer versions of a version tag of a repository the registry does not serve",
+        case="[an anonymous registry] (tag='3.5.1')",
+    )
+    @kills.force_false(
+        oci._refuses_the_repository,
+        "response.status_code == HTTPStatus.NOT_FOUND",
+        "the check takes the 404 of a registry without a challenge for a repository the registry serves",
+        case="[an anonymous registry] (tag='3.5.1')",
     )
     def test_tag_whose_repository_the_registry_does_not_serve(self) -> None:
         """Test that a floating, versioned, or other tag of a repository not served is reported at DEBUG alone."""
-        for case, (image, challenge) in _UNSERVED_REPOSITORIES.items():
-            for tag in ("latest", "3.5.1", "dev-2024"):
-                with self.subTest(case, tag=tag):
-                    self.requests.side_effect = mock_docker_registry(repository_served=False, challenge=challenge)
-                    mock_file = mock_path(self.reference(f"{image}:{tag}"))
-                    self.run_updater(mock_file)
-                    mock_file.write_text.assert_not_called()
-                    self.assert_logged_among_others(
-                        message_of(Logger.repository_not_served),
-                        dependency=image,
-                        tag=f":{tag}",
-                        location=Location(mock_file, 1),
-                    )
-                    self.assert_no_warnings_logged()
+        for case, tag in (
+            ("Docker Hub", "latest"),
+            ("another registry", "latest"),
+            ("an anonymous registry", "3.5.1"),
+            ("Docker Hub", "dev-2024"),
+        ):
+            image, challenge = _UNSERVED_REPOSITORIES[case]
+            with self.subTest(case, tag=tag):
+                self.requests.side_effect = mock_docker_registry(repository_served=False, challenge=challenge)
+                mock_file = mock_path(self.reference(f"{image}:{tag}"))
+                self.run_updater(mock_file)
+                mock_file.write_text.assert_not_called()
+                self.assert_logged_among_others(
+                    message_of(Logger.repository_not_served),
+                    dependency=image,
+                    tag=f":{tag}",
+                    location=Location(mock_file, 1),
+                )
+                self.assert_no_warnings_logged()
 
     def test_pinned_floating_tag(self) -> None:
         """Test that a floating tag pinned to the digest it still serves keeps it and gains the version."""
@@ -779,33 +782,41 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         "(marker.scope_directive(Scope.UPDATE), marker.version_bound_directive)",
         "(marker.version_bound_directive,)",
         "an `ignore[update]` on an image never looked up is not reported, though it holds nothing back",
+        case="ignore[update]",
     )
     @kills.delete(
         resolve.latest_version,
         " and never_updated is None",
         "an `ignore[update]` on an image never looked up hides why the image is left as it is",
+        case="ignore[update]",
     )
     @kills.delete(
         directive_module,
         "consequence=Consequence.ARCHIVAL_NEVER_CHECKED,",
         "an `ignore[archived]` on an image never looked up is blamed on its source rather than on the variable",
+        case="ignore[archived]",
     )
     @kills.delete(
         Source.reports_archival,
         "and self.why_image_not_looked_up(pinned) is None",
         "an `ignore[archived]` on an image never looked up decides nothing without being reported",
+        case="ignore[archived]",
+    )
+    @kills.delete(
+        directive_module,
+        "consequence=Consequence.NEVER_UPDATED,",
+        "a cooldown on an image never looked up is blamed on its source rather than on the variable",
+        case="set[cooldown=30]",
     )
     def test_markers_on_a_reference_through_a_variable_are_redundant_because_of_it(self) -> None:
-        """Test that a staleness threshold, `ignore[archived]`, cooldown, bound, or `ignore[update]` is redundant.
+        """Test that an `ignore[archived]`, a cooldown, or an `ignore[update]` is redundant.
 
         None of them holds anything back: the reference is reported as left alone, as it is without a marker.
         """
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         cases = {
-            "set[stale-after=90]": Consequence.STALENESS_NEVER_CHECKED,
             "ignore[archived]": Consequence.ARCHIVAL_NEVER_CHECKED,
             "set[cooldown=30]": Consequence.NEVER_UPDATED,
-            "allow[update<5]": Consequence.NEVER_UPDATED,
             "ignore[update]": Consequence.NEVER_UPDATED,
         }
         for directive, consequence in cases.items():

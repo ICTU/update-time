@@ -18,15 +18,16 @@ import re
 import sys
 import types
 import unittest
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, TypeVar, Unpack, cast
 from unittest.mock import patch
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Sequence
 
 # Holds the id of the test being re-run against its own mutation. That test must run its body and stop there:
 # checking its mutations again would check them against themselves, without end. Only the test it names stands
@@ -44,6 +45,7 @@ CHECKS_OFF = "_MUTATION_TIME_CHECKS_OFF"
 _REGISTERED = "_registered_mutations"
 
 _Method = TypeVar("_Method", bound="Callable[..., object]")
+_Value = TypeVar("_Value")
 
 
 class _Function(Protocol):
@@ -57,6 +59,18 @@ class _Function(Protocol):
 type _Anchor = types.ModuleType | _Function | types.MethodType | property | functools.cached_property[Any]
 
 
+class _Outside(Enum):
+    """What a test checks outside its table, for a mutation to name in place of a case."""
+
+    OUTSIDE = "the checks outside the table"
+
+
+OUTSIDE = _Outside.OUTSIDE
+
+# A mutation names a case of the test's table, or what the test checks outside it.
+type _CaseName = str | _Outside
+
+
 class Outcome(StrEnum):
     """What checking a mutation showed.
 
@@ -64,7 +78,8 @@ class Outcome(StrEnum):
     mutation instead, and call for rewriting the mutation rather than the test. Stale means it was never applied:
     reading or parsing the file failed, the source lacks the anchor, the anchor holds the snippet other than once,
     the replacement equals the snippet, the two open on the same indentation, or the anchor is a module while one
-    function holds the snippet.
+    function holds the snippet. Stale also means the mutation names a case that the test has more than once, or
+    not at all.
     Broken means the mutated source did not import, or the test errored with an error other than the one the
     mutation declares.
     """
@@ -76,15 +91,29 @@ class Outcome(StrEnum):
 
 
 @dataclass(frozen=True)
+class Case:
+    """A case of a test's table, known by the message and the parameters its subTest was given."""
+
+    message: str | None
+    params: dict[str, object]
+    description: str  # What unittest prints for a case that fails: its message and its parameters
+
+    def is_named(self, name: str) -> bool:
+        """Return whether the name is the case's message, its description, or the value of its only parameter."""
+        return name in (self.message, self.description) or list(self.params.values()) == [name]
+
+
+@dataclass(frozen=True)
 class Result:
     """What checking a mutation showed, and what went wrong where the outcome does not say.
 
     Stale and broken each have several causes, so a result of either carries the one that applied. Killed and
-    survived speak for themselves.
+    survived speak for themselves. A killed result carries the cases the test's table ran.
     """
 
     outcome: Outcome
     reason: str = ""
+    cases: tuple[Case, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -98,6 +127,9 @@ class Mutation:
     scaffolding. Naming the error in `raises` tells the two apart: the test kills the mutation by raising that
     error, while any other error is reported as broken.
 
+    A mutation that names a case of the test's table is judged on that case alone, whatever the other cases report.
+    One that names `OUTSIDE` is judged on what the test checks outside its table.
+
     The anchor names the code to change: a module, or a class, function, method, classmethod, property or cached
     property the module holds. The qualified name reaches a member through its class, and only the source of the
     definition is changed. A module anchor is for a snippet that spans several definitions or lies outside them. A
@@ -109,6 +141,7 @@ class Mutation:
     new: str
     regression: str
     raises: str = ""
+    case: _CaseName | None = None
 
     @property
     def _unwrapped(self) -> types.ModuleType | _Function | types.MethodType:
@@ -168,7 +201,7 @@ class Mutation:
         return range(first, first + self.old.count("\n") + 1)
 
     def check(self, test_name: str) -> Result:
-        """Return what checking the mutation showed: whether the test fails against it, or the file has moved on.
+        """Return what checking the mutation showed: whether the test or its case fails, or the file has moved on.
 
         Whatever the mutation is at fault for comes back as an outcome to report: a source it cannot be applied to,
         one that will not import. Anything else raises, since a defect in the checking is not the mutation's to
@@ -180,13 +213,48 @@ class Mutation:
         except StaleError as error:
             return Result(Outcome.STALE, str(error))
         try:
-            test_result = self._run_test(test_name, source, mutated)
+            run = self._run_test(test_name, source, mutated)
         except _SourceError as error:
             return Result(Outcome.BROKEN, str(error))
-        if test_result.errors:
-            raised = _raised(test_result.errors)
-            return Result(Outcome.KILLED) if raised == self.raises else Result(Outcome.BROKEN, raised)
-        return Result(Outcome.KILLED if test_result.failures else Outcome.SURVIVED)
+        try:
+            failures, errors = self._reports(run)
+        except StaleError as error:
+            return Result(Outcome.STALE, str(error))
+        if errors:
+            raised = _raised(errors)
+            if raised != self.raises:
+                return Result(Outcome.BROKEN, raised)
+        if not failures and not errors:
+            return Result(Outcome.SURVIVED)
+        return Result(Outcome.KILLED, cases=tuple(run.cases))
+
+    def _reports(self, run: _RecordedRun) -> tuple[_Reports, _Reports]:
+        """Return the failures and the errors to judge the mutation on: those of the case it names, or of the test.
+
+        A test that stopped before its table is judged on what it reported outside the table. Where the test has no
+        case of the name, or more than one, the name is stale.
+        """
+        if not isinstance(self.case, str):
+            return run.reports(self.case)
+        count = run.cases_named(self.case)
+        if count > 1:
+            message = f"the test has {count} cases named {self.case!r}"
+            raise StaleError(message)
+        if count:
+            return run.reports(self.case)
+        outside_failures, outside_errors = run.reports(OUTSIDE)
+        if not run.cases and (outside_failures or outside_errors):
+            return outside_failures, outside_errors
+        message = f"the test has no case named {self.case!r}"
+        raise StaleError(message)
+
+    def _failed_in(self, run: _RecordedRun) -> bool:
+        """Return whether what the mutation is judged on failed in the run, without raising."""
+        try:
+            failures, errors = self._reports(run)
+        except StaleError:
+            return False
+        return bool(failures) and not errors
 
     def _function(self) -> types.FunctionType | None:
         """Return the function whose code the mutation changes, or None for a module or a class anchor.
@@ -241,20 +309,20 @@ class Mutation:
             return None
         return {name: namespace[name] for assigned in names if assigned for name in assigned}
 
-    def _run_test(self, test_name: str, source: str, mutated: str) -> unittest.TestResult:
+    def _run_test(self, test_name: str, source: str, mutated: str) -> _RecordedRun:
         """Run the test against the mutated source, with the anchored function's definition swapped in place.
 
-        A module anchor on module-level assignments has the names they bind swapped instead. A test that does not fail
-        against them, or raises, is run against the module executed afresh as well, since a constant computed from
-        the mutated one, or a name another module imported, still holds the original value. The module is executed
-        afresh where neither can be swapped: for any other module or a class anchor, for a function of this module,
-        and for a mutated definition that does not parse, raises when executed, defines another name, or needs other
-        free variables than the function has.
+        A module anchor on module-level assignments has the names they bind swapped instead. The test runs against the
+        module executed afresh as well where what the mutation is judged on raises or does not fail against them. A
+        constant computed from the mutated one, or a name another module imported, still holds the original value. The
+        module is executed afresh where neither can be swapped: for any other module or a class anchor, for a function
+        of this module, and for a mutated definition that does not parse, raises when executed, defines another name,
+        or needs other free variables than the function has.
         """
         function = self._function()
         if function is None and (assignments := self._mutated_assignments(source, mutated)) is not None:
             result = self._run_test_with_names_bound(test_name, assignments)
-            if result.failures and not result.errors:
+            if self._failed_in(result):
                 return result
             return self._run_test_afresh(test_name, mutated)
         mutated_function = None if function is None else self._mutated_function(source, mutated)
@@ -270,7 +338,7 @@ class Mutation:
         finally:
             _define(function, original)
 
-    def _run_test_with_names_bound(self, test_name: str, names: dict[str, object]) -> unittest.TestResult:
+    def _run_test_with_names_bound(self, test_name: str, names: dict[str, object]) -> _RecordedRun:
         """Run the test with the module's names bound to the mutated values, binding the original values again after."""
         namespace = vars(self.module)
         originals = {name: namespace[name] for name in names if name in namespace}
@@ -282,22 +350,20 @@ class Mutation:
             for name in names.keys() - originals.keys():
                 del namespace[name]
 
-    def _run_test_in_place(self, test_name: str) -> unittest.TestResult:
+    def _run_test_in_place(self, test_name: str) -> _RecordedRun:
         """Run the test with its modules loaded as they are, a cached anchor forgetting its answers before and after."""
         self._clear_cache()
         try:
-            result = unittest.TestResult()
-            _loaded_test(test_name).run(result)
+            return _recorded_run(test_name)
         finally:
             self._clear_cache()
-        return result
 
     def _clear_cache(self) -> None:
         """Forget the answers a cached anchor remembers, so the test is not served one the other code gave."""
         if cache_clear := getattr(self._unwrapped, "cache_clear", None):
             cache_clear()
 
-    def _run_test_afresh(self, test_name: str, mutated: str) -> unittest.TestResult:
+    def _run_test_afresh(self, test_name: str, mutated: str) -> _RecordedRun:
         """Run the test with the mutated source installed under the module's name, and bound on its parent package.
 
         The module is read before the purge drops it, and `sys.modules` is put back however the run ends, so a mutated
@@ -308,12 +374,10 @@ class Mutation:
         try:
             self._purge(test_name)
             _bind_on_parent(_executed_module(mutated, module))
-            result = unittest.TestResult()
-            _loaded_test(test_name).run(result)
+            return _recorded_run(test_name)
         finally:
             sys.modules.clear()
             sys.modules.update(imported)
-        return result
 
     def _purge(self, test_name: str) -> None:
         """Drop the packages of the mutated module and of the test from `sys.modules`, so the test is imported again.
@@ -533,8 +597,68 @@ def _loaded_test(test_name: str) -> unittest.TestSuite:
         raise _SourceError(_reason(error)) from error
 
 
-def _raised(errors: list[tuple[unittest.TestCase, str]]) -> str:
-    """Return the last line of the first error a test run reported, which is what the test raised."""
+# The failures, or the errors, of a test run: pairs of a failing test or case and its traceback.
+type _Reports = list[tuple[unittest.TestCase, str]]
+
+
+def _reports_of(reports: _Reports, name: _CaseName) -> _Reports:
+    """Return the failures or errors of the case with the name, or of the test outside its table."""
+    if name is OUTSIDE:
+        return [(test, traceback) for test, traceback in reports if _case_of(test) is None]
+    return [(test, traceback) for test, traceback in reports if (case := _case_of(test)) and case.is_named(name)]
+
+
+class _RecordedRun(unittest.TestResult):
+    """What a test run recorded: its failures and errors, and every case of its table, whether it passed or not."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cases: list[Case] = []
+        self._groups: list[Mapping[str, object]] = []  # The parameters of the cases that hold cases of their own
+
+    def addSubTest(self, test: unittest.TestCase, subtest: unittest.TestCase, err: Any) -> None:  # noqa: N802, ANN401
+        """Record the case, unless it is a group of a nested table, then what it reported.
+
+        unittest reports a group after the cases it holds, whose parameters chain the group's own parameters.
+        """
+        params = cast("Any", subtest).params  # unittest hands each case in as the subtest
+        if not any(params.maps[0] is group for group in self._groups):
+            self.cases.append(cast("Case", _case_of(subtest)))
+            self._groups.extend(params.maps[1:])
+        super().addSubTest(test, subtest, err)
+
+    def cases_named(self, name: str) -> int:
+        """Return how many of the run's cases have the name, counting a case the test ran twice once."""
+        return len({case.description for case in self.cases if case.is_named(name)})
+
+    def reports(self, name: _CaseName | None) -> tuple[_Reports, _Reports]:
+        """Return the failures and the errors of the case with the name, of the test outside its table, or of all."""
+        if name is None:
+            return self.failures, self.errors
+        return _reports_of(self.failures, name), _reports_of(self.errors, name)
+
+
+def _recorded_run(test_name: str) -> _RecordedRun:
+    """Return what running the named test, loaded by name, recorded."""
+    result = _RecordedRun()
+    _loaded_test(test_name).run(result)
+    return result
+
+
+def _case_of(test: unittest.TestCase) -> Case | None:
+    """Return the case of a table that the test stands for, or None for a test that stands for itself."""
+    # unittest runs a case as a test of its own, which carries the case's parameters, and its message where it has
+    # one: a case without a message carries a placeholder of unittest's.
+    params = getattr(test, "params", None)
+    if not isinstance(params, Mapping):
+        return None
+    message = getattr(test, "_message", None)
+    description = cast("Any", test)._subDescription()  # noqa: SLF001 — unittest does not export the case's type
+    return Case(message if isinstance(message, str) else None, dict(params), description)
+
+
+def _raised(errors: _Reports) -> str:
+    """Return the last line of the first of the errors, which is what the test or its case raised."""
     return errors[0][1].strip().splitlines()[-1]
 
 
@@ -546,12 +670,22 @@ def _reason(error: Exception) -> str:
 def _failure(mutation: Mutation, result: Result) -> str:
     """Return the message a mutation the test did not kill fails that test with, leading with the regression.
 
-    A survivor is one the test ran against and passed. A stale or broken mutation is one the check could not judge,
-    and its message carries why, which says whether the mutation needs rewriting or the code moved.
+    A survivor is one the test, or the case the mutation names, ran against and passed. A stale or broken mutation
+    is one the check could not judge, and its message carries why, which says whether the mutation needs rewriting
+    or the code moved.
     """
     if result.outcome == Outcome.SURVIVED:
-        return f"{mutation.regression} — the test did not kill this mutation of {mutation.anchor_name}"
+        return f"{mutation.regression} — {_killer(mutation)} did not kill this mutation of {mutation.anchor_name}"
     return f"{mutation.regression} — this mutation of {mutation.anchor_name} is {result.outcome}: {result.reason}"
+
+
+def _killer(mutation: Mutation) -> str:
+    """Return what was to kill the mutation: the test, the case the mutation names, or the checks outside the table."""
+    if mutation.case is None:
+        return "the test"
+    if mutation.case is OUTSIDE:
+        return OUTSIDE.value
+    return f"the case {mutation.case!r}"
 
 
 # Where a survived registration is recorded, so how often the mechanism catches a test that stopped guarding can
@@ -606,16 +740,45 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
     Checking re-runs the very test this is called from, so the sentinel names that test for the duration, telling
     the re-run to run its body and stop there. The re-run loads the test afresh by name, since the running test case
     belongs to a class the unmutated module was imported into. Each check is a subTest of `unittest`'s own, since a
-    test class that overrides `subTest` does so for its own subTests.
+    test class that overrides `subTest` does so for its own subTests. Where every mutation was killed, the test case
+    fails as well for each case of its table that none of them names. Where the test has a table and a mutation names
+    neither a case nor `OUTSIDE`, the test case fails for that mutation instead.
     """
     test_name = test_case.id()
+    results = []
     with patch.dict(os.environ, {_CHECKED_TEST: test_name}):
         for mutation in mutations:
             with unittest.TestCase.subTest(test_case, regression=mutation.regression):
                 result = mutation.check(test_name)
+                results.append(result)
                 if result.outcome is Outcome.SURVIVED:
                     _record_survival(test_name, mutation)
                 test_case.assertEqual(result.outcome, Outcome.KILLED, _failure(mutation, result))
+    if any(result.outcome is not Outcome.KILLED for result in results):
+        return  # The mutation that was not killed fails the test case already.
+    names = [mutation.case for mutation in mutations if mutation.case is not None]
+    if len(names) == len(mutations):
+        _fail_for_unnamed_cases(test_case, names, results)
+    elif any(result.cases for result in results):
+        _fail_for_unnamed_registrations(test_case, mutations)
+
+
+def _fail_for_unnamed_cases(test_case: unittest.TestCase, names: list[_CaseName], results: list[Result]) -> None:
+    """Fail the test case once for each case in the results that none of the names matches."""
+    cases = {case.description: case for result in results for case in result.cases}
+    case_names = [name for name in names if isinstance(name, str)]
+    for case in cases.values():
+        if not any(case.is_named(name) for name in case_names):
+            with unittest.TestCase.subTest(test_case, case.description):
+                test_case.fail("no registration names this case")
+
+
+def _fail_for_unnamed_registrations(test_case: unittest.TestCase, mutations: tuple[Mutation, ...]) -> None:
+    """Fail the test case once for each mutation that names neither a case nor `OUTSIDE`."""
+    for mutation in mutations:
+        if mutation.case is None:
+            with unittest.TestCase.subTest(test_case, regression=mutation.regression):
+                test_case.fail("this registration does not name a case of the test's table")
 
 
 def _registration(mutation: Mutation) -> Callable[[_Method], _Method]:
@@ -659,64 +822,89 @@ def _register_above(method: Callable[..., object], mutation: Mutation) -> None:
         layer = getattr(layer, "__wrapped__", None)
 
 
+class _Kill(TypedDict, total=False):
+    """How the test is to kill a mutation: by raising which error, and in which case of its table."""
+
+    raises: str
+    case: _CaseName | None
+
+
 class _Kills:
-    """The decorators making a test kill a mutation, one for each change a mutation makes."""
+    """The decorators making a test kill a mutation: one per change a mutation makes, and `each` to repeat one."""
 
     def replace(
-        self, anchor: _Anchor, old: str, new: str, regression: str, raises: str = ""
+        self, anchor: _Anchor, old: str, new: str, regression: str, **kill: Unpack[_Kill]
     ) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that replaces the snippet with the new code."""
-        return _registration(Mutation(anchor, old, new, regression, raises))
+        return _registration(Mutation(anchor, old, new, regression, **kill))
 
-    def delete(self, anchor: _Anchor, old: str, regression: str, raises: str = "") -> Callable[[_Method], _Method]:
+    def delete(self, anchor: _Anchor, old: str, regression: str, **kill: Unpack[_Kill]) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that deletes the snippet."""
-        return _registration(Mutation(anchor, old, "", regression, raises))
+        return _registration(Mutation(anchor, old, "", regression, **kill))
 
     def prepend(
-        self, anchor: _Anchor, old: str, new: str, regression: str, raises: str = ""
+        self, anchor: _Anchor, old: str, new: str, regression: str, **kill: Unpack[_Kill]
     ) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that inserts the new code before the snippet."""
-        return _registration(Mutation(anchor, old, new + old, regression, raises))
+        return _registration(Mutation(anchor, old, new + old, regression, **kill))
 
     def append(
-        self, anchor: _Anchor, old: str, new: str, regression: str, raises: str = ""
+        self, anchor: _Anchor, old: str, new: str, regression: str, **kill: Unpack[_Kill]
     ) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that inserts the new code after the snippet."""
-        return _registration(Mutation(anchor, old, old + new, regression, raises))
+        return _registration(Mutation(anchor, old, old + new, regression, **kill))
 
     def force_true(
-        self, anchor: _Anchor, condition: str, regression: str, raises: str = ""
+        self, anchor: _Anchor, condition: str, regression: str, **kill: Unpack[_Kill]
     ) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that replaces the condition with `True`."""
-        return _registration(Mutation(anchor, condition, "True", regression, raises))
+        return _registration(Mutation(anchor, condition, "True", regression, **kill))
 
     def force_false(
-        self, anchor: _Anchor, condition: str, regression: str, raises: str = ""
+        self, anchor: _Anchor, condition: str, regression: str, **kill: Unpack[_Kill]
     ) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that replaces the condition with `False`."""
-        return _registration(Mutation(anchor, condition, "False", regression, raises))
+        return _registration(Mutation(anchor, condition, "False", regression, **kill))
 
     def force_none(
-        self, anchor: _Anchor, expression: str, regression: str, raises: str = ""
+        self, anchor: _Anchor, expression: str, regression: str, **kill: Unpack[_Kill]
     ) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that replaces the expression with `None`."""
-        return _registration(Mutation(anchor, expression, "None", regression, raises))
+        return _registration(Mutation(anchor, expression, "None", regression, **kill))
 
-    def delete_statement(self, anchor: _Anchor, statement: str, regression: str) -> Callable[[_Method], _Method]:
+    def delete_statement(
+        self, anchor: _Anchor, statement: str, regression: str, **kill: Unpack[_Kill]
+    ) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that deletes the statement.
 
         The mutation leaves `pass` where the statement was, so a block that held the statement alone still parses.
         """
-        return _registration(Mutation(anchor, statement, "pass", regression))
+        return _registration(Mutation(anchor, statement, "pass", regression, **kill))
 
-    def uncache(self, function: _Function, regression: str) -> Callable[[_Method], _Method]:
+    def uncache(self, function: _Function, regression: str, **kill: Unpack[_Kill]) -> Callable[[_Method], _Method]:
         """Return a decorator registering the mutation that removes the function's cache decorator.
 
         The mutation is anchored on the function's module, since the decorator lies outside the function's span.
         """
         definition = f"def {function.__qualname__}("
         module = sys.modules[function.__module__]
-        return _registration(Mutation(module, f"@cache\n{definition}", definition, regression))
+        return _registration(Mutation(module, f"@cache\n{definition}", definition, regression, **kill))
+
+    def each(
+        self, values: Iterable[_Value], registration: Callable[[_Value], Callable[[_Method], _Method]]
+    ) -> Callable[[_Method], _Method]:
+        """Return a decorator registering the mutation the registration makes for each of the values, in their order.
+
+        A registration applied to a registered test puts its mutation in front, so the values are applied in reverse.
+        """
+        registrations = [registration(value) for value in values]
+
+        def decorate(method: _Method) -> _Method:
+            for register in reversed(registrations):
+                method = register(method)
+            return method
+
+        return decorate
 
 
 kills = _Kills()

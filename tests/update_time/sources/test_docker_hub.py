@@ -82,16 +82,19 @@ class DockerHubHeadersTest(LoggingTestCase):
         "_LOG, headers=api_headers())",
         "_LOG, params=api_headers())",
         "a push-date request spends Docker Hub's anonymous rate limit although credentials are set",
+        case="push date",
     )
     @kills.delete(
         docker_hub._listing_page,
         "headers=api_headers(), ",
         "a listing request spends Docker Hub's anonymous rate limit although credentials are set",
+        case="listing",
     )
     @kills.delete(
         docker_hub.archival,
         "headers=api_headers(), ",
         "an archival request spends Docker Hub's anonymous rate limit although credentials are set",
+        case="archival",
     )
     @patch("requests.Session.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
     @patch("requests.Session.get")
@@ -144,12 +147,14 @@ class ArchivalTest(LoggingTestCase):
         docker_hub.archival,
         "HTTPStatus.NOT_FOUND,",
         "a repository Docker Hub does not serve is warned about as a failed request",
+        case="unserved",
     )
     @kills.replace(
         docker_hub.archival,
         "statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)",
         "statuses_meaning_absent=tuple(HTTPStatus)",
         "a request Docker Hub fails reads as a repository it does not serve, without a warning",
+        case="unreachable",
     )
     @patch("requests.Session.get")
     def test_a_repository_docker_hub_does_not_answer_for_leaves_the_archival_unknown(self, mock_get: Mock):

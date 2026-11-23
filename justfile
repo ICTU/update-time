@@ -195,9 +195,12 @@ mutate-help:
     @echo "list rather than the outcome alone: a case of a table missing from it guards nothing its neighbours"
     @echo "don't, and two tests in it for a one-line change say one of them guards nothing the other doesn't."
     @echo "\nThat list judges the registration as much as the suite, so register a mutation with @kills only"
-    @echo "where the tests it is registered on are the ones that kill it. One the rest of the suite kills as well"
-    @echo "shows the suite reacting rather than that guard, so re-aim it at what the test's own name claims, or"
-    @echo "leave it unregistered."
+    @echo "where the tests it is registered on are the ones that kill it. One another test of the same module kills"
+    @echo "as well guards nothing that test does not, so re-aim it at what the test's own name claims, or leave it"
+    @echo "unregistered."
+    @echo "\nOn a test with a table, a registration names the case that kills its mutation, as in case=\"five\", or"
+    @echo "OUTSIDE for what the test checks outside its table. A registration that names neither fails the test, and"
+    @echo "so does a case that no registration names."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [no-cd]
@@ -218,7 +221,7 @@ py-help:
     @echo "the scan should start in, change to it and name this justfile:"
     @echo "\n    cd \"\$TMPDIR/probe\" && just --justfile {{ justfile() }} py - <<'EOF'"
 
-# Report the registered mutations that tests besides the registering one kill as well. See `just help audit-mutations`.
+# Report the registered mutations that other tests of the registering test's module kill as well. See `just help audit-mutations`.
 [env("PYTHONPATH", "src")]
 audit-mutations: install-py-dependencies install-nltk-data
     {{ python_m }} tools.audit_mutations
@@ -226,13 +229,14 @@ audit-mutations: install-py-dependencies install-nltk-data
 [private]
 audit-mutations-help:
     @echo "\nRun the suite once under coverage, to learn which tests run each line. Then check every mutation a kills"
-    @echo "decorator registers against the other tests that run its lines, and report each mutation one of them kills"
-    @echo "as well. Such a registration guards nothing the suite does not, so it can go. The run fails when it reports"
-    @echo "one. It also fails, before it audits anything, when a test module does not import, and prints the error."
-    @echo "A test that fails without the mutation is not counted. Such a test can fail on state the tests before"
-    @echo "it left behind. The checks run in UTC, so a test that reads the local time gives the same verdict in every"
-    @echo "zone. The tests of the mutations themselves, in tests/mutation_time/, are left out: they all run the"
-    @echo "checker, so they kill each other's mutations by design."
+    @echo "decorator registers against the other tests of its module that run its lines, and report each mutation one"
+    @echo "of them kills as well. Such a registration guards nothing its module does not, so it can go. A test of"
+    @echo "another module may kill it too, as an updater's test reaches the code a unit test registers a mutation of."
+    @echo "The run fails when it reports one. It also fails, before it audits anything, when a test module does not"
+    @echo "import, and prints the error. A test that fails without the mutation is not counted. Such a test can fail"
+    @echo "on state the tests before it left behind. The checks run in UTC, so a test that reads the local time gives"
+    @echo "the same verdict in every zone. The tests of the mutations themselves, in tests/mutation_time/, are left"
+    @echo "out: they all run the checker, so they kill each other's mutations by design."
 
 # Report where a name is used, and how many usages it has. See `just help usages`.
 usages name: install-py-dependencies

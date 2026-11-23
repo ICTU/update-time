@@ -94,15 +94,17 @@ class SetToolKeyTest(unittest.TestCase):
         "table = last",
         "return last",
         "a comment above the next table ends up above a table inserted after a nested tool table",
+        case="[tool.ruff.lint]",
     )
     @kills.delete_statement(
         toml._last_table,
         "last = last.body[-1]",
         "a comment above the next table ends up above a table inserted after an array of tool tables",
+        case="[[tool.foo]]",
     )
     def test_keeps_a_comment_above_the_next_table(self):
         """Test that a comment above the table after the tool tables stays above that table."""
-        for header in ("[tool.ruff]", "[tool.ruff.lint]", "[[tool.foo]]"):
+        for header in ("[tool.ruff.lint]", "[[tool.foo]]"):
             with self.subTest(header=header):
                 written = self.written(f"{header}\nx = 1\n\n# groups\n{_NEXT_TABLE}")
                 self.assertEqual(written, f"{header}\nx = 1\n\n{_UV_TABLE}\n# groups\n{_NEXT_TABLE}")
@@ -111,15 +113,20 @@ class SetToolKeyTest(unittest.TestCase):
         toml._remove_root_key,
         "return",
         "removing an inline tool table drops the blank line between the root keys before it and the first table",
+        case="inline tool after a root key",
     )
     @kills.delete(
-        toml._expand_inline_tables, ", expanding=table", "an inline uv table inside an inline tool table stays inline"
+        toml._expand_inline_tables,
+        ", expanding=table",
+        "an inline uv table inside an inline tool table stays inline",
+        case="inline uv in inline tool",
     )
     @kills.replace(
         toml._expand_inline_tables,
         "del parent[table]\n        _add_table(document, super_table, table, _table_from(child))",
         "parent[table] = _table_from(child)",
         "an inline uv table turned into a table runs into the table after it",
+        case="inline uv under tool",
     )
     def test_turns_inline_tool_tables_into_tables(self):
         """Test that an inline `[tool]` or `[tool.uv]` becomes a table, leaving the other tools as they were."""

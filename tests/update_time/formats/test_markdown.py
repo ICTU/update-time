@@ -20,11 +20,13 @@ class MarkupTest(unittest.TestCase):
         markdown.is_content_type,
         ".strip()",
         "a content type padded with spaces matches nothing, so its Markdown is shown raw",
+        case=" text/markdown ; charset=UTF-8",
     )
     @kills.delete(
         markdown.is_content_type,
         ".lower()",
         "a content type spelled in another case matches nothing, so its Markdown is shown raw",
+        case="Text/Markdown",
     )
     def test_a_content_type_is_read_past_its_case_and_spacing(self):
         """Test that a content type is read past the case it is spelled in and the spaces around its parameters."""

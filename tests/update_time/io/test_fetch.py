@@ -131,10 +131,8 @@ class FailureReasonTest(unittest.TestCase):
         raises="AttributeError: 'list' object has no attribute 'get'",
     )
     def test_a_json_body_other_than_an_object_gives_the_status_alone(self):
-        """Test that a JSON body other than an object gives the status code alone, since it does not hold a message."""
-        for body in (["x"], "Too Many Requests"):
-            with self.subTest(body=body):
-                self.assertEqual(failure_reason(mock_response(body, ok=False, status_code=429)), "HTTP 429")
+        """Test that a JSON body that is a list rather than an object gives the status code alone."""
+        self.assertEqual(failure_reason(mock_response(["x"], ok=False, status_code=429)), "HTTP 429")
 
     @kills.delete(
         failure_reason,

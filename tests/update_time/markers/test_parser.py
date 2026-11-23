@@ -172,23 +172,48 @@ class ParseMarkerSetTest(unittest.TestCase):
 
     @kills.replace(
         parser_module,
+        r"{_COOLDOWN})=(?P<days>\d+)",
+        r"{_COOLDOWN})=?(?P<days>\d*)",
+        "a `set` item without a value ends the run",
+        raises="ValueError: invalid literal for int() with base 10: ''",
+        case="a key without a value",
+    )
+    @kills.replace(
+        parser_module,
         "(?P<key>{_STALE_AFTER}|{_COOLDOWN})",
         r"(?P<key>[\w-]+)",
         "a `set` item takes any key, so one naming a scope rather than an option sets a value",
+        case="a key naming a scope",
     )
-    @kills.append(parser_module, r"=(?P<days>", r"-?", "a `set` item takes a negative day count")
+    @kills.append(
+        parser_module, r"=(?P<days>", r"-?", "a `set` item takes a negative day count", case="a negative day count"
+    )
+    @kills.replace(
+        parser_module._parse_setting_item,
+        "_SETTING_DAY_COUNT_ITEM.fullmatch(item)",
+        "_SETTING_DAY_COUNT_ITEM.match(item)",
+        "a `set` item takes a fractional day count, rounded down to the whole days in front of the point",
+        case="a fractional day count",
+    )
     @kills.replace(
         parser_module,
         "(?P<level>{'|'.join([*RISK_LEVELS, NO_RISK_LEVEL])})",
         r"(?P<level>\w+)",
         "a `set` item takes any word as a risk level",
+        case="a misspelled risk level",
+    )
+    @kills.replace(
+        parser_module,
+        "{_COOLDOWN})=(?P<days>",
+        "{_COOLDOWN}).(?P<days>",
+        "a `set` item takes a comparison for its `=`, so `cooldown<30` sets a cooldown of 30 days",
+        case="a comparison",
     )
     def test_an_unreadable_item_is_rejected(self):
         """Test that a `set` item Update-time cannot read is reported as an invalid item."""
         cases = {
             "a key without a value": "cooldown",
             "a key naming a scope": "stale=90",
-            "a key naming a bound": "update=3.13",
             "a negative day count": "cooldown=-5",
             "a fractional day count": "stale-after=1.5",
             "a misspelled risk level": "vulnerability-level=hgih",

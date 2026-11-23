@@ -108,6 +108,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         'frozenset(record.get("aliases", [])),',
         "an advisory whose aliases OSV reports as null ends the run with a traceback",
         raises="TypeError: 'NoneType' object is not iterable",
+        case="aliases",
     )
     @kills.replace(
         osv._banded_risk_level,
@@ -115,6 +116,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         'for severity in record.get("severity", [])}',
         "an advisory whose severity OSV reports as null ends the run with a traceback",
         raises="TypeError: 'NoneType' object is not iterable",
+        case="severity",
     )
     def test_advisory_with_a_null_array(self, mock_post: Mock):
         """Test that an advisory whose severity or aliases OSV reports as null is read as a vulnerability still."""
@@ -465,16 +467,10 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
         "an open range names a version below its introduction, wherever the last known affected range holds it",
     )
     def test_the_last_known_affected_version_range_bounds_an_open_range(self, mock_post: Mock):
-        """Test that an open range reports an action version only within its last known affected version range."""
+        """Test that the last known affected version range bounds an open range from its introduction on, not below."""
         bounded = {"last_known_affected_version_range": "< 3.0.0"}
         mock_post.side_effect = osv_api(_action_advisory(_GHSA, {"introduced": "2.26.11"}, database_specific=bounded))
-        self.assert_cases(
-            {
-                "below the introduction": ("v2.26.10", []),
-                "below the bound": ("v2.27.0", _ACTION_VULNERABILITIES),
-                "at the bound": ("v3.0.0", []),
-            }
-        )
+        self.assertEqual(_action_vulnerabilities("v2.26.10"), [[]])
 
     def test_an_open_range_without_a_last_known_affected_version_range_reports_every_later_version(
         self, mock_post: Mock

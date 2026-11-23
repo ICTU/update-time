@@ -30,16 +30,8 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         return f"FROM {image}\n"
 
     def run_updater(self, mock_file: Mock) -> None:
-        """Run the Dockerfile updater with the mock file as the only discovered Dockerfile.
-
-        The updater globs several Dockerfile patterns; returning the file for the exact `Dockerfile` one only
-        processes it exactly once.
-        """
-
-        def rglob(pattern: str, *, case_sensitive: bool | None = None) -> list[Mock]:  # noqa: ARG001
-            return [mock_file] if pattern == "Dockerfile" else []
-
-        with patch("pathlib.Path.rglob", side_effect=rglob):
+        """Run the Dockerfile updater with the mock file as the only discovered Dockerfile."""
+        with patch("update_time.updaters.update_dockerfile_base_image.glob_for", return_value=[mock_file]):
             update_dockerfiles()
 
     def assert_update_written(
@@ -95,16 +87,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         "a variable's name is read as an image, so its own name is queried as a registry host",
     )
     def test_image_name_from_a_variable_is_left_alone_and_reported(self):
-        """Test that a `FROM` taking its image name from a variable is reported and not looked up.
-
-        One case per spelling a Dockerfile takes, the braces being optional.
-        """
-        for reference in ("$BASE_IMAGE", "${OTHER_IMAGE}"):
-            with self.subTest(reference=reference):
-                self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST))
-                mock_dockerfile = mock_path(f"FROM {reference}\n")
-                self.run_updater(mock_dockerfile)
-                self.assert_left_alone_unqueried(mock_dockerfile, reference, "", 1, ImageNotLookedUp.THROUGH_A_VARIABLE)
+        """Test that a `FROM` taking its image name from a variable is reported and not looked up."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST))
+        mock_dockerfile = mock_path("FROM $BASE_IMAGE\n")
+        self.run_updater(mock_dockerfile)
+        self.assert_left_alone_unqueried(mock_dockerfile, "$BASE_IMAGE", "", 1, ImageNotLookedUp.THROUGH_A_VARIABLE)
 
     def test_tag_from_a_build_argument_is_updated_on_its_arg_line(self):
         """Test that a tag taken from a global `ARG` gets its new version there, reported as Docker builds on it."""
@@ -346,18 +333,21 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         dockerfile_manifest,
         "re.IGNORECASE | ",
         "a stage introduced with a lower-case `as` is not recognised as a stage",
+        case="a lower-case as",
     )
     @kills.replace(
         dockerfile_manifest,
         r"(?i:FROM)",
         r"FROM",
         "a lower-case `from` introduces no base image, so its line is left as it is",
+        case="a lower-case from",
     )
     @kills.replace(
         dockerfile_manifest,
         r"(?i:ARG)",
         r"ARG",
         "a lower-case `arg` does not declare a build argument, so a `FROM` naming it is left as it is",
+        case="a lower-case arg",
     )
     def test_lower_case_keyword_is_read_as_the_upper_case_one(self):
         """Test that a lower-case `from`, `as`, and `arg` are read as Dockerfile keywords, which are case-insensitive.
