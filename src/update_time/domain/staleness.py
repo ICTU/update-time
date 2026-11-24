@@ -23,7 +23,7 @@ def staleness_is_checked(threshold: int) -> bool:
     return threshold != _NO_STALENESS_CHECK
 
 
-def is_stale(published: datetime, threshold: int) -> bool:
+def _is_stale(published: datetime, threshold: int) -> bool:
     """Return whether a version published on the given date is stale (older than the threshold in days).
 
     A threshold that switches the check off makes nothing stale. Whole days are compared (via `days_since`), so a
@@ -37,12 +37,12 @@ def is_stale(published: datetime, threshold: int) -> bool:
 def stale_release(project: Project, threshold: int) -> Release | None:
     """Return the project's newest release when it is old enough to warn about, or None when it is not."""
     newest = project.newest
-    return newest if newest is not None and is_stale(newest.published, threshold) else None
+    return newest if newest is not None and _is_stale(newest.published, threshold) else None
 
 
 def release_judged_alike(project: Project, threshold: int, run_threshold: int) -> Release | None:
     """Return the project's newest release when both thresholds judge its staleness alike, or None otherwise."""
     newest = project.newest
-    if newest is None or is_stale(newest.published, threshold) != is_stale(newest.published, run_threshold):
+    if newest is None or _is_stale(newest.published, threshold) != _is_stale(newest.published, run_threshold):
         return None
     return newest

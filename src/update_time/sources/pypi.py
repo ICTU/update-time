@@ -112,7 +112,7 @@ class _Info(TypedDict):
     yanked: NotRequired[bool]
 
 
-class ReleaseMetadata(TypedDict):
+class _ReleaseMetadata(TypedDict):
     """PyPI release metadata."""
 
     info: _Info
@@ -120,7 +120,7 @@ class ReleaseMetadata(TypedDict):
 
 
 @cache
-def release_metadata(package: str, version: str) -> LookedUp[ReleaseMetadata]:
+def _release_metadata(package: str, version: str) -> LookedUp[_ReleaseMetadata]:
     """Get the release metadata from PyPI, or why it can't be fetched."""
     return fetch_json(f"{_PYPI}/pypi/{package}/{version}/json", _LOG)
 
@@ -210,7 +210,7 @@ def _release_datetime(urls: list[_Distribution]) -> datetime | None:
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
 
-def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
+def _get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown.
 
     Returns the current version unchanged when it is invalid or already the latest eligible version.
@@ -231,10 +231,10 @@ def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, co
         current_version,
         cooldown_days,
     )
-    return with_yank_state(latest, current_version, partial(yank_state, package))
+    return with_yank_state(latest, current_version, partial(_yank_state, package))
 
 
-def yank_state(package: str, version: str) -> Yank | None:
+def _yank_state(package: str, version: str) -> Yank | None:
     """Return the version's yank state (PEP 592), or None where the Index API can't be read or doesn't list it.
 
     The Index API lists each distribution file's yank state (`false`, `true`, or the reason string); a version is
@@ -269,7 +269,7 @@ def _eligible_release(
     A release whose metadata can't be fetched can't be checked for a yank, so it stops the walk. A release without
     distribution files can't be installed, so it is skipped.
     """
-    found = release_metadata(package, str(version))
+    found = _release_metadata(package, str(version))
     if (metadata := found.value) is None:
         walk.stop()
         _LOG.no_release_metadata(package, str(version), current_version, found.reason)
@@ -280,10 +280,10 @@ def _eligible_release(
     if publication.value is None or walk.holds_back(str(version), publication.value):
         return None
     latest = str(version)
-    return DependencyVersion(latest, changes=get_changes(package, latest), publication=publication)
+    return DependencyVersion(latest, changes=_get_changes(package, latest), publication=publication)
 
 
-def get_changes(package: str, version: str) -> Changes:
+def _get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the PyPI package and version.
 
     Since there's no standardized way that PyPI packages refer to a changelog, apply several heuristics to find it:
@@ -295,7 +295,7 @@ def get_changes(package: str, version: str) -> Changes:
       use that to find GitHub releases.
     - Check the root of each project URL that points at GitHub for a changelog file.
     """
-    metadata = release_metadata(package, version).value
+    metadata = _release_metadata(package, version).value
     if metadata is None:
         return NO_CHANGES
     info = metadata["info"]
@@ -315,9 +315,9 @@ def get_changes(package: str, version: str) -> Changes:
     return NO_CHANGES
 
 
-def get_publication_datetime(package: str, version: str) -> datetime | None:
+def _get_publication_datetime(package: str, version: str) -> datetime | None:
     """Return the datetime the version was published, or None if it can't be fetched or has no distribution files."""
-    metadata = release_metadata(package, version).value
+    metadata = _release_metadata(package, version).value
     return _release_datetime(metadata["urls"]) if metadata is not None else None
 
 
@@ -382,10 +382,10 @@ def _changelog_from_repository_root(url: str, version: str) -> Changes:
 
 SOURCE = Source(
     project=project,
-    yank=yank_state,
-    changes=get_changes,
-    publication_date=get_publication_datetime,
+    yank=_yank_state,
+    changes=_get_changes,
+    publication_date=_get_publication_datetime,
     ecosystem=Ecosystem.PYPI,
-    new_version=get_latest_version,
+    new_version=_get_latest_version,
     dates_versions_of=every_dependency,
 )

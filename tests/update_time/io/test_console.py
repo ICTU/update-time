@@ -18,7 +18,7 @@ from update_time.io.console import (
     _MARKDOWN_PARSER,
     LOG_THEME,
     MESSAGE_NAME,
-    LogHighlighter,
+    _LogHighlighter,
     configure_logging,
 )
 from update_time.io.log import Logger, get_logger
@@ -414,14 +414,14 @@ class LogHighlighterTests(TestCase):
     def highlighted(message: str) -> tuple[str, list[tuple[str, str | Style]]]:
         """Return the highlighted message: the text it reads as, and the styled run each of its spans covers."""
         text = Text(message)
-        LogHighlighter().highlight(text)
+        _LogHighlighter().highlight(text)
         return text.plain, [(text.plain[span.start : span.end], span.style) for span in text.spans]
 
     def test_digest_highlighted_as_one_token(self):
         """Test that the full digest gets a single `repr.digest` span and no leftover fragment sub-spans inside it."""
         digest = f"sha256:{'a4fde3b2' + 'c' * 56}"  # a realistic 64-hex-character digest
         text = Text(f"pinned to {digest} but the registry now serves {DIGEST2}")
-        LogHighlighter().highlight(text)
+        _LogHighlighter().highlight(text)
         start = text.plain.index(digest)
         spans_in_digest = [span for span in text.spans if span.start >= start and span.end <= start + len(digest)]
         self.assertEqual(spans_in_digest, [(start, start + len(digest), "repr.digest")])
@@ -455,7 +455,7 @@ class LogHighlighterTests(TestCase):
 
     def test_no_colour_output_is_plain_text(self):
         """Test that with colour disabled the styled name renders as the same plain text, markers and all removed."""
-        highlighted = LogHighlighter()(Text(f"Pinned {dependency('python')} in Dockerfile"))
+        highlighted = _LogHighlighter()(Text(f"Pinned {dependency('python')} in Dockerfile"))
         console = Console(no_color=True, force_terminal=False)
         with console.capture() as capture:
             console.print(highlighted, end="")

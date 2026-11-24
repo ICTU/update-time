@@ -29,8 +29,8 @@ _RANKS = (
     ("primitives",),
     ("formats",),
     ("domain",),
-    ("markers",),
     ("io",),
+    ("markers",),
     ("manifests",),
     ("lock_files",),
     ("sources",),
@@ -233,8 +233,9 @@ class LayeringTest(unittest.TestCase):
     - `formats` read, write, and rewrite the text formats Update-time reads, such as the format of a manifest or a
       changelog, knowing nothing of dependencies.
     - `domain` is the pure, I/O-free core.
-    - `markers` parse the `# update-time:` language into the marker that `domain` defines.
     - `io` wraps file, process, log, network, and command-line I/O.
+    - `markers` parse the `# update-time:` language into the marker that `domain` defines, and warn about a directive
+      that decides nothing.
     - `manifests` read, write, and parse the files that declare dependencies. They rank before `sources` because a
       registry serves such a file too: Maven Central serves the pom an artefact was published with.
     - `lock_files` read the files that record which versions a package manager resolved the dependencies to. They rank
@@ -310,16 +311,22 @@ class LayeringTest(unittest.TestCase):
         assert_passes(updaters.should_not().depend_on_files().with_name("fetch.py"))
         assert_passes(updaters.should_not().depend_on_files().in_path(_package_init("io")))
 
-    def test_manifests_use_no_io_but_reading_a_file(self):
-        """Test that the manifests use `io/file.py` alone of io, so a manifest does not log, fetch, or run a process."""
-        manifests = project_files("src/").in_folder("manifests")
-        modules = sorted(
-            path.name for path in pathlib.Path("src/update_time/io").glob("*.py") if path.name != "file.py"
-        )
-        self.assertIn("log.py", modules)  # An empty list would pass the check below without checking anything.
+    def assert_uses_one_io_module(self, layer: str, allowed: str) -> None:
+        """Assert that the allowed module is the one module of io the layer uses."""
+        files = project_files("src/").in_folder(layer)
+        modules = sorted(path.name for path in pathlib.Path("src/update_time/io").glob("*.py") if path.name != allowed)
+        self.assertIn("process.py", modules)  # An empty list would pass the check below without checking anything.
         for module in modules:
             with self.subTest(module=module):
-                assert_passes(manifests.should_not().depend_on_files().in_path(f"*/update_time/io/{module}"))
+                assert_passes(files.should_not().depend_on_files().in_path(f"*/update_time/io/{module}"))
+
+    def test_manifests_use_no_io_but_reading_a_file(self):
+        """Test that the manifests use `io/file.py` alone of io, so a manifest does not log, fetch, or run a process."""
+        self.assert_uses_one_io_module("manifests", "file.py")
+
+    def test_markers_use_no_io_but_the_logger(self):
+        """Test that the markers use `io/log.py` alone of io, so a marker warns but reads, fetches, and runs nothing."""
+        self.assert_uses_one_io_module("markers", "log.py")
 
     def test_manifest_parsing_goes_through_the_format_layers(self):
         """Test that the manifest parsers are confined to the formats layer, so every other layer reads through it."""

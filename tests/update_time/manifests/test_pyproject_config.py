@@ -4,7 +4,7 @@ import unittest
 
 from mutation_time.mutation import kills
 from update_time.manifests import pyproject_config
-from update_time.manifests.pyproject_config import PathSource, PyprojectConfig
+from update_time.manifests.pyproject_config import PyprojectConfig, _PathSource
 
 
 class UvTableTest(unittest.TestCase):
@@ -26,4 +26,4 @@ class UvTableTest(unittest.TestCase):
         """Test that a source path comes from a table that names its path in a string, and the rest are passed over."""
         sources = 'string = "../string"\nnumber = {path = 5}\nlisted = [{path = "../listed"}, "../string"]\n'
         config = pyproject_config.parse(f"[tool.uv.sources]\n{sources}") or PyprojectConfig()
-        self.assertEqual(config.uv.path_sources, (PathSource("listed", "../listed"),))
+        self.assertEqual(config.uv.path_sources, (_PathSource("listed", "../listed"),))

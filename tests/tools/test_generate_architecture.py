@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from archunitpython.graph.graph_reporter import GraphReportEdge
 from tools import generate_architecture
-from tools.generate_architecture import diagram, main
+from tools.generate_architecture import _diagram, main
 
 from mutation_time.mutation import kills
 
@@ -22,18 +22,18 @@ class DiagramTest(unittest.TestCase):
 
     def test_each_layer_is_named_once_without_the_package(self):
         """Test that each layer an edge ends at is named once, without the package it sits in."""
-        drawn = diagram([_edge("io", "domain"), _edge("domain", "primitives")])
+        drawn = _diagram([_edge("io", "domain"), _edge("domain", "primitives")])
         self.assertEqual(sorted(set(re.findall(r"\b[a-z_]+\b", drawn)) - {"flowchart"}), ["domain", "io", "primitives"])
 
     @kills.append(
-        generate_architecture.diagram,
+        generate_architecture._diagram,
         'arrows = [f"  {_layer(edge.source)} -->',
         "|{edge.count}|",
         "each arrow carries its count of imports, so a new import between two layers leaves the document stale",
     )
     def test_an_edge_is_one_arrow_without_its_count_of_imports(self):
         """Test that the layers one layer imports from another get one arrow, which does not count the imports."""
-        self.assertEqual(diagram([_edge("io", "domain", count=13)]), "flowchart TD\n  io --> domain\n")
+        self.assertEqual(_diagram([_edge("io", "domain", count=13)]), "flowchart TD\n  io --> domain\n")
 
 
 @patch("tools.generate_architecture.project_graph")

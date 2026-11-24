@@ -13,20 +13,20 @@ from tools import readability_check
 from tools.readability_check import (
     _ABBREVIATIONS,
     _CACHE,
-    Prose,
     _cache_key,
+    _extract_prose,
+    _extract_prose_from_markdown,
+    _extract_prose_from_python,
     _faults,
     _is_code,
     _Limits,
+    _Prose,
+    _sentence_complexity,
     _sentence_tokenizer,
     _tagged,
     _Verdicts,
     _whitelisted_sentences,
-    extract_prose,
-    extract_prose_from_markdown,
-    extract_prose_from_python,
     main,
-    sentence_complexity,
 )
 
 from mutation_time.mutation import kills
@@ -104,7 +104,7 @@ class ExtractProseFromPythonTest(unittest.TestCase):
 
     def prose(self, source_code: str) -> list[str]:
         """Return the text of each run of prose the extractor finds in the source code."""
-        return [prose.text for prose in extract_prose_from_python(mock_path(source_code))]
+        return [prose.text for prose in _extract_prose_from_python(mock_path(source_code))]
 
     def test_standalone_comments_join(self):
         """Test that consecutive standalone comments join, so a sentence across them is measured whole."""
@@ -164,7 +164,7 @@ class ExtractProseFromMarkdownTest(unittest.TestCase):
 
     def prose(self, markdown: str) -> list[str]:
         """Return the text of each run of prose the extractor finds in the Markdown."""
-        return [prose.text for prose in extract_prose_from_markdown(mock_path(markdown))]
+        return [prose.text for prose in _extract_prose_from_markdown(mock_path(markdown))]
 
     def test_code_block_is_skipped(self):
         """Test that the lines inside a fenced code block are not prose, and neither are the fences."""
@@ -200,7 +200,7 @@ class ExtractProseTest(unittest.TestCase):
 
     def prose(self, *paths: Mock) -> list[str]:
         """Return the text of each run of prose found under the paths."""
-        return [prose.text for prose in extract_prose(*paths)]
+        return [prose.text for prose in _extract_prose(*paths)]
 
     def test_a_path_that_is_itself_a_matching_file(self):
         """Test that a file the glob matches is read as it is, rather than searched in."""
@@ -234,7 +234,7 @@ class SentenceComplexityTest(unittest.TestCase):
         }
         for sentence, complexity in complexities.items():
             with self.subTest(sentence=sentence):
-                self.assertEqual(sentence_complexity(sentence), complexity)
+                self.assertEqual(_sentence_complexity(sentence), complexity)
 
 
 class FaultsTest(unittest.TestCase):
@@ -480,7 +480,7 @@ class VerdictsTest(unittest.TestCase):
         scored.assert_called_once()
 
 
-@patch("tools.readability_check.extract_prose")
+@patch("tools.readability_check._extract_prose")
 @patch("tools.readability_check._sentence_tokenizer")
 class MainTest(unittest.TestCase):
     """Unit tests for the exit code the check returns, and what it writes."""
@@ -502,7 +502,7 @@ class MainTest(unittest.TestCase):
         files: FakeFiles | None = None,
     ) -> tuple[int, str]:
         """Run the check over the runs of prose with the files given, and return its exit code and output."""
-        extract.return_value = [Prose(Path("conf.py"), text, 1) for text in texts]
+        extract.return_value = [_Prose(Path("conf.py"), text, 1) for text in texts]
         tokenizer.return_value.span_tokenize.side_effect = lambda masked: [(0, len(masked))]
         files = FakeFiles() if files is None else files
         if whitelist is not None:

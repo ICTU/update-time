@@ -795,9 +795,9 @@ WARNING Redundant update-time directive ignore[archived] for org.apache.commons:
 Update-time reports an `ignore[yanked]` or an `ignore[archived]` as redundant where its check finds nothing to silence. A suppression can outlive what it was written for, and the check is what tells you it did:
 
 ```console
-WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: version 4.15.0 was not yanked (redundant-ignore-yanked)
-WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: the project is not archived (redundant-ignore-archived)
-WARNING Redundant update-time directive ignore[archived] for actions/checkout in .github/workflows/ci.yml:17: the repository is not archived (redundant-ignore-archived)
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: version 4.15.0 was not yanked (redundant-ignore)
+WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: the project is not archived (redundant-ignore)
+WARNING Redundant update-time directive ignore[archived] for actions/checkout in .github/workflows/ci.yml:17: the repository is not archived (redundant-ignore)
 ```
 
 Update-time does not report such a directive as redundant when it cannot reach the dependency's source.
@@ -805,7 +805,7 @@ Update-time does not report such a directive as redundant when it cannot reach t
 Update-time reports a staleness threshold such as `set[stale-after=90]` as redundant where it and `--stale-after` judge the newest release alike, so both warn about it or neither does:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=90] for humanize in docs/requirements.txt:12: newest release 4.15.0 was published 30 days ago, which the threshold of 90 days and the default of 365 days judge alike (redundant-stale-after-as-default)
+WARNING Redundant update-time directive set[stale-after=90] for humanize in docs/requirements.txt:12: newest release 4.15.0 was published 30 days ago, which the threshold of 90 days and the default of 365 days judge alike (redundant-stale-after)
 ```
 
 Under `--stale-after 0`, a threshold is redundant until the newest release is older than the threshold, since the run itself does not warn about any release. So `set[stale-after=0]` is always redundant there.
@@ -815,7 +815,7 @@ Under `--stale-after 0`, a threshold is redundant until the newest release is ol
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
 
 ```console
-WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability (redundant-ignore-vulnerable)
+WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability (redundant-ignore)
 ```
 
 Update-time judges a marker naming several advisories together. It warns only when none of them matches a vulnerability the version has.
@@ -823,7 +823,7 @@ Update-time judges a marker naming several advisories together. It warns only wh
 Update-time reports a risk level such as `set[vulnerability-level=high]` as redundant where it and `--vulnerability-level` report the same vulnerabilities in the version. Such a level is one the reference no longer needs:
 
 ```console
-WARNING Redundant update-time directive set[vulnerability-level=high] for django in docs/requirements.txt:12: the risk level high and the default level low report the same vulnerabilities in version 4.2.0 (redundant-vulnerability-level-as-default)
+WARNING Redundant update-time directive set[vulnerability-level=high] for django in docs/requirements.txt:12: the risk level high and the default level low report the same vulnerabilities in version 4.2.0 (redundant-vulnerability-level)
 ```
 
 #### Where a marker does not steer the update

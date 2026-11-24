@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 _LOG = get_logger("pom.xml")
 
 
-def update_pom_xmls() -> None:
+def _update_pom_xmls() -> None:
     """Update each pom.xml the scan finds, running Maven over it as a module of its reactor."""
     pom_xmls = list(glob_for(POM_XML))
     scanned_poms = {name: pom_xml for pom_xml in pom_xmls if (name := pom_xml_manifest.pom_name(pom_xml))}
@@ -91,7 +91,7 @@ def _warn_about_vulnerabilities(declared: list[pom_xml_manifest.Declaration]) ->
 
 def main() -> None:  # pragma: no cover
     """Update the dependencies and plugins in the repository's pom.xml files."""
-    update_pom_xmls()
+    _update_pom_xmls()
 
 
 if __name__ == "__main__":  # pragma: no cover

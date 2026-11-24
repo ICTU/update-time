@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from update_time.formats import json
 from update_time.primitives.lookup import LookedUp
 
 if TYPE_CHECKING:
@@ -63,16 +64,13 @@ def fetch(
     """
     try:
         response = getattr(_session(), method)(url, timeout=_TIMEOUT, **request)
-    except requests.exceptions.Timeout:
-        logger.timeout(url)
-        return None
     except requests.exceptions.RequestException as error:
-        logger.request_error(url, error)
+        logger.request_failed(url, error)
         return None
     if on_response is not None:
         on_response(response)
     if require_ok and not response.ok:
-        logger.response(response)
+        logger.request_failed(response.url, response)
         return None
     return response
 
@@ -88,12 +86,12 @@ def look_up(
 ) -> LookedUp[Response]:
     """Return the URL's OK response, or why the request failed, logged unless its status means absent."""
     if (response := fetch(url, logger, method=method, require_ok=False, on_response=on_response, **request)) is None:
-        return LookedUp(None, failure_reason(None))
+        return LookedUp(None, _failure_reason(None))
     if response.status_code in statuses_meaning_absent:
-        return LookedUp(None, failure_reason(response), absent=True)
+        return LookedUp(None, _failure_reason(response), absent=True)
     if not response.ok:
-        logger.response(response)
-        return LookedUp(None, failure_reason(response))
+        logger.request_failed(response.url, response)
+        return LookedUp(None, _failure_reason(response))
     return LookedUp(response)
 
 
@@ -104,7 +102,7 @@ def json_body(found: LookedUp[Response], logger: Logger) -> LookedUp[Any]:
     try:
         return LookedUp(response.json())
     except ValueError:  # The body isn't JSON
-        logger.invalid_json(response.url)
+        logger.invalid_response(response.url, json.FORMAT)
         return LookedUp(None, "the response is not valid JSON")
 
 
@@ -121,7 +119,7 @@ def fetch_json(
     return json_body(found, logger)
 
 
-def failure_reason(response: _Fetched) -> str:
+def _failure_reason(response: _Fetched) -> str:
     """Return why a request failed: at the transport level, or with the status code and message of its response."""
     if response is None:
         return "the request failed"

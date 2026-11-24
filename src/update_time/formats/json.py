@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 
 # What reads one JSON value and reports where it ends, and the characters JSON ignores between two values.
 _DECODER = json.JSONDecoder()
+# The name of the format, as a message about a document that does not parse names it.
+FORMAT = "JSON"
+
 _WHITESPACE = " \t\n\r"
 
 # Why a file holding valid JSON other than an object, such as `[]`, cannot be read as one.

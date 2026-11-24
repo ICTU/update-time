@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
-from tools.generate_log_svg import LogOutput, _FixedTime, _portable, generate
+from tools.generate_log_svg import _FixedTime, _LogOutput, _portable, generate
 
 from tests.helpers import log_record
 
@@ -48,7 +48,7 @@ class PortableSvgTest(unittest.TestCase):
 class GenerateTest(unittest.TestCase):
     """Unit tests for the sample log output the README embeds."""
 
-    def generated(self) -> LogOutput:
+    def generated(self) -> _LogOutput:
         """Return the generated output, which the generator can only produce while the root logger has no handlers."""
         with patch.object(logging.getLogger(), "handlers", []):
             return generate()

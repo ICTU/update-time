@@ -70,7 +70,7 @@ class UvWorkspace:
 
 
 @dataclass(frozen=True)
-class PathSource:
+class _PathSource:
     """A source that has uv resolve the dependency it names from a path, relative to the file declaring the source."""
 
     dependency: DependencyName
@@ -87,7 +87,7 @@ class _UvTable:
 
     managed: bool = True
     sources: frozenset[DependencyName] = frozenset()
-    path_sources: tuple[PathSource, ...] = ()
+    path_sources: tuple[_PathSource, ...] = ()
     workspace: UvWorkspace | None = None
 
     @classmethod
@@ -107,7 +107,7 @@ class _UvTable:
             managed=uv.get("managed") is not False,
             sources=frozenset(normalized_python_name(name) for name in sources),
             path_sources=tuple(
-                PathSource(normalized_python_name(name), source["path"])
+                _PathSource(normalized_python_name(name), source["path"])
                 for name, source in listed_sources
                 if isinstance(source, dict) and isinstance(source.get("path"), str)
             ),

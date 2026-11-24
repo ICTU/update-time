@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, call, patch
 
 from mutation_time.mutation import kills
-from update_time.domain.bound import Verb, _Redundancy
+from update_time.domain.bound import BoundRedundancy, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Changes, Project, Release
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.reference import Reference
-from update_time.io.log import Logger, LogMessage
+from update_time.io.log import Logger, ToolTask, _LogMessage
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.package_managers.maven import marker_policy as maven_marker_policy
 from update_time.package_managers.maven import reactor as reactor_module
@@ -29,7 +29,7 @@ from update_time.sources.maven_central import project as maven_central_project
 from update_time.sources.maven_central import publication as maven_central_publication
 from update_time.sources.maven_central import serves as maven_central_serves
 from update_time.updaters import update_pom_xml as update_pom_xml_module
-from update_time.updaters.update_pom_xml import update_pom_xmls
+from update_time.updaters.update_pom_xml import _update_pom_xmls
 
 from tests.helpers import mock_path, patch_environ, patch_get, patch_pathlib_path, requested_urls
 from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
@@ -380,10 +380,11 @@ def _versions_set_by_the_parent(setting: str, value: str) -> str:
     return _versions_configured(located_setting(setting, value, _SET_BY_THE_PARENT))
 
 
-def _set_by_the_parent(setting: str, consequence: OverrideConsequence) -> dict[str, object]:
-    """Return the fields reporting that the setting the parent sets wins over Update-time."""
-    pom, line = _SET_BY_THE_PARENT
-    return {"setting": setting, "pom": pom, "line": line, "consequence": consequence}
+def _set_by_the_parent(
+    setting: str, consequence: OverrideConsequence, line: int = _SET_BY_THE_PARENT[1]
+) -> dict[str, object]:
+    """Return the fields reporting that the setting the parent sets, on the line, wins over Update-time."""
+    return {"setting": setting, "set_at": f", set on line {line} of {PARENT_POM_ID},", "consequence": consequence}
 
 
 def _versions_executed(execution_id: str, settings: str, plugin_settings: str = "") -> str:
@@ -557,7 +558,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.assertEqual(mock_run.call_args_list, [_maven_run(command, directory) for command in commands])
 
     def assert_unreadable_reactor_logged(
-        self, message: LogMessage, directory: str = ".", output: str = _UNREADABLE_REACTOR_OUTPUT, **fields: object
+        self, message: _LogMessage, directory: str = ".", output: str = _UNREADABLE_REACTOR_OUTPUT, **fields: object
     ) -> None:
         """Assert that the run's errors were the failed run over the directory, then the message about the reactor."""
         failed = _maven_command(directory=directory)
@@ -644,7 +645,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         for case, (directives, directive) in cases.items():
             with self.subTest(case=case):
                 pom = self.find_pom(mock_run, mock_glob, _pom_marking_guava(directives))
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assert_ignored_logged(GUAVA, Location(pom, 6), directive, among_others=True)
                 self.assertEqual(len(self.records_of(message_of(Logger.ignored))), 1)
                 self.assert_no_redundant_directive_logged()
@@ -657,21 +658,21 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         }.items():
             with self.subTest(directives=directives):
                 pom = self.find_marked_pom(mock_run, mock_glob, directives)
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assert_recognised_marker_logged(GUAVA, Location(pom, 6), marker)
                 self.assert_no_ignored_logged()
 
     def test_a_redundant_bound_on_a_version_maven_updates_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bound that never has an effect or blocks every update is warned about."""
         for directives, redundancy in {
-            "allow[update>=33]": _Redundancy.NO_EFFECT,
-            "ignore[update>=33]": _Redundancy.BLOCKS_ALL,
+            "allow[update>=33]": BoundRedundancy.NO_EFFECT,
+            "ignore[update>=33]": BoundRedundancy.BLOCKS_ALL,
         }.items():
             with self.subTest(directives=directives):
                 pom = self.find_marked_pom(mock_run, mock_glob, directives)
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assert_logged(
-                    message_of(Logger.warn_if_redundant_bound),
+                    message_of(Logger.redundant_bound),
                     dependency=GUAVA,
                     location=Location(pom, 6),
                     directive=directives,
@@ -689,7 +690,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a marker on a property both declarations of an artefact name, and its range, are reported once."""
         properties = _marked_property("guava.version", "33.0.0-jre", "ignore[update>=34] set[stale-after=0]")
         pom = self.find_pom(mock_run, mock_glob, _guava_twice_by_property(properties))
-        update_pom_xmls()
+        _update_pom_xmls()
         marker = Marker(stale=Threshold(value=0), version_bound=bound(Verb.IGNORE, "update>=34"))
         self.assert_recognised_marker_logged(GUAVA, Location(pom, 3), marker)
         self.assertEqual(len(self.records_of(message_of(Logger.recognised_marker))), 1)
@@ -706,7 +707,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         properties = properties_element({"guava.version": "33.0.0-jre"})
         pom = self.find_pom(mock_run, mock_glob, _guava_twice_by_property(properties))
         with osv(ADVISORY), _stale_release():
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(pom, 3), among_others=True)
         self.assertEqual(len(self.records_of(message_of(Logger.vulnerable_dependency))), 1)
 
@@ -721,13 +722,13 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(directive=directive):
                 pom = self.find_pom_versioned_by_a_parent(mock_run, mock_glob, directive)
                 with patch.object(maven_central_module, "serves", Mock(return_value=False)):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assert_reported_as_held_elsewhere(Location(pom, 6), marker, directive)
 
     def test_an_ignored_update_beside_a_bound_on_a_parents_property_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker ignoring the update and setting a bound is reported as a redundant `ignore[update]`."""
         pom = self.find_pom_versioned_by_a_parent(mock_run, mock_glob, "ignore[update] allow[update<34]")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.VERSION_HELD_ELSEWHERE, GUAVA, Location(pom, 6), "ignore[update]")
 
     def test_a_marker_on_a_dependency_without_a_version_is_redundant(self, mock_run: Mock, mock_glob: Mock):
@@ -735,7 +736,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         unversioned = _marked_at_its_element(guava_element(None), "ignore[update]")
         managed_guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=5, managed_at=(PARENT_POM_ID, 12))
         pom = self.find_pom(mock_run, mock_glob, pom_declaring(unversioned), effective_pom_declaring(managed_guava))
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_reported_as_held_elsewhere(Location(pom, 3), Marker(ignored_scopes=Scope.UPDATE), "ignore[update]")
 
     @kills.delete(
@@ -761,7 +762,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(case=case):
                 surefire = marked_at_its_version(plugin_element("maven-surefire-plugin", version), "ignore[update]")
                 pom = self.find_pom(mock_run, mock_glob, pom_declaring(build=build_element(surefire)))
-                update_pom_xmls()
+                _update_pom_xmls()
                 location = Location(pom, 9)
                 self.assert_recognised_marker_logged(SUREFIRE, location, Marker(ignored_scopes=Scope.UPDATE))
                 self.assert_no_ignored_logged()
@@ -771,15 +772,15 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a dependency whose marker sets `stale-after=0` is reported as silenced rather than as stale."""
         pom = self.find_marked_pom(mock_run, mock_glob, "set[stale-after=0]")
         with _stale_release():
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_no_warnings_logged()
-        self.assert_ignored_staleness_logged(GUAVA, Location(pom, 6), "set[stale-after=0]")
+        self.assert_ignored_warning_logged(Scope.STALE, GUAVA, Location(pom, 6), "set[stale-after=0]")
 
     def test_a_marker_silences_the_vulnerability_warning(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency whose marker ignores vulnerabilities is reported as silenced, not as vulnerable."""
         pom = self.find_marked_pom(mock_run, mock_glob, "set[vulnerability-level=none]")
         with osv(ADVISORY):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_ignored_vulnerability_logged(
             GUAVA, Location(pom, 6), VULNERABILITY.advisory, "set[vulnerability-level=none]"
         )
@@ -795,7 +796,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that the `yanked` scope is reported as redundant, named alone beside another item."""
         directives = "ignore[update,yanked]"
         pom = self.find_marked_pom(mock_run, mock_glob, directives)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.NO_YANK_CONCEPT, GUAVA, Location(pom, 6), "ignore[yanked]")
 
     def test_an_opt_in_is_reported_as_redundant(self, mock_run: Mock, mock_glob: Mock):
@@ -806,7 +807,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         }.items():
             with self.subTest(directive=directive):
                 pom = self.find_marked_pom(mock_run, mock_glob, directive)
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assert_redundant_directive_logged(reason, GUAVA, Location(pom, 6), directive)
 
     def test_a_scope_on_an_artefact_maven_central_does_not_serve_is_redundant(self, mock_run: Mock, mock_glob: Mock):
@@ -818,7 +819,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                     patch.object(maven_central_module, "serves", maven_central_serves),
                     patch_get(ok=False, status_code=404, reason="Not Found", text=""),
                 ):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assert_redundant_directive_logged(Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), directive)
 
     def test_a_vulnerable_scope_on_an_artefact_maven_central_does_not_serve_is_not_redundant(
@@ -827,7 +828,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a `vulnerable` scope on an artefact Maven Central does not serve is not redundant."""
         pom = self.find_marked_pom(mock_run, mock_glob, "set[stale-after=0] set[vulnerability-level=none]")
         with osv(ADVISORY), patch.object(maven_central_module, "serves", Mock(return_value=False)):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_redundant_directive_logged(
             Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), "set[stale-after=0]"
         )
@@ -838,7 +839,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that an `archived` scope is redundant where the artefact's pom names a repository outside GitHub."""
         pom = self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
         with self.maven_central_answering(_POM_OUTSIDE_GITHUB):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.NO_GITHUB_REPOSITORY, GUAVA, Location(pom, 6), "ignore[archived]")
 
     def test_an_archived_scope_on_an_artefact_with_a_github_repository_is_not_redundant(
@@ -847,7 +848,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that an `archived` scope is not redundant where the artefact's pom names a repository on GitHub."""
         self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
         with self.maven_central_answering(_POM_ON_GITHUB) as mock_get:
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assertIn(maven_central_pom_url(GUAVA, "33.0.0-jre"), requested_urls(mock_get))
         self.assert_no_redundant_directive_logged()
 
@@ -875,7 +876,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             patch.object(maven_central_module, "serves", Mock(return_value=True)) as mock_serves,
             patch.object(maven_central_module, "lacks_a_github_repository", Mock(return_value=False)) as mock_lacks,
         ):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assertEqual(_artefacts_asked(mock_serves), ["commons-io:commons-io"])
         self.assertEqual(_artefacts_asked(mock_lacks), ["commons-io:commons-io"])
 
@@ -888,7 +889,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     def test_a_vulnerable_scope_on_an_unresolved_version_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a `vulnerable` scope on a version Maven leaves unresolved is reported as redundant."""
         pom = self.find_unresolved_pom(mock_run, mock_glob, "set[vulnerability-level=high]")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_redundant_directive_logged(
             Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
             GUAVA,
@@ -905,7 +906,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a `vulnerable` scope on a parent's version, without an effective pom, is not reported."""
         element = marked_at_its_version(guava_element("${guava.version}"), "set[vulnerability-level=none]")
         pom = self.find_pom(mock_run, mock_glob, pom_declaring(element), effective_pom="")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_recognised_marker_logged(GUAVA, Location(pom, 6), VULNERABILITY_LEVEL_NONE)
         self.assert_no_redundant_directive_logged()
 
@@ -914,7 +915,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         before, after = _POM_DECLARING_GUAVA, pom_declaring(guava_element("33.7.1-jre"))
         self.find_rewritten_pom(mock_run, mock_glob, before, after, effective_pom_declaring(EFFECTIVE_GUAVA))
         with osv() as mock_post:
-            update_pom_xmls()
+            _update_pom_xmls()
         _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.7.1-jre"))
 
     def test_a_version_maven_rejects_is_asked_about_for_staleness_alone(self, mock_run: Mock, mock_glob: Mock):
@@ -936,7 +937,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                 mock_run.side_effect = _maven_failed(output)
                 mock_project = Mock(return_value=Project())
                 with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assert_command_failed_logged(_maven_command(rules=_RULES), output)
                 # Guava is asked about, so the dependency beside it going unasked says something about its version.
                 _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
@@ -981,7 +982,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(case=case):
                 pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
                 with osv(ADVISORY):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assert_vulnerable_dependency_logged(name, version, VULNERABILITY, Location(pom, line))
 
     def test_a_plugin_its_own_pom_manages_is_warned_about_once(self, mock_run: Mock, mock_glob: Mock):
@@ -995,7 +996,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         effective_pom = effective_pom_declaring(build=build_element(unversioned, managed=effective_managed))
         pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
         with _stale_release("3.5.0"):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_stale_dependency_logged(SUREFIRE, "3.5.0", Location(pom, 12))
 
     def test_a_declaration_in_an_inactive_profile_is_warned_about_at_its_managing_declaration(
@@ -1050,7 +1051,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(case=case):
                 managing, *_ = self.find_poms(mock_run, mock_glob, *contents, effective_pom=effective_pom)
                 with _stale_release(version):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assert_stale_dependency_logged(artefact, version, Location(managing, line))
 
     def test_an_unmanaged_declaration_in_an_inactive_profile_is_checked_for_staleness_alone(
@@ -1063,7 +1064,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         )
         pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
         with _stale_release(), osv(ADVISORY) as mock_post:
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(pom, 10))
         mock_post.assert_not_called()  # OSV needs a version to match an advisory to.
 
@@ -1085,7 +1086,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                     mock_run, mock_glob, _CHILD_LEAVING_GUAVAS_VERSION, parent, effective_pom=_CHILDS_EFFECTIVE_POM
                 )
                 with _stale_release():
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 children = [Location(child, 5)] if child_warned_about else []
                 self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", *children, Location(parent_pom, 10))
 
@@ -1120,7 +1121,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(directive=directive):
                 child_pom = self.find_child_leaving_its_version(mock_run, mock_glob, directive)
                 with patch.object(maven_central_module, "serves", Mock(return_value=False)):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assert_redundant_directive_logged(
                     Reason.CHECKED_AT_THE_MANAGING_DECLARATION, GUAVA, Location(child_pom, 5), directive
                 )
@@ -1142,7 +1143,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             effective_pom=effective_pom_declaring(unversioned),
         )
         with osv(ADVISORY):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_vulnerable_dependency_logged(
             GUAVA, "33.7.1-jre", VULNERABILITY, Location(child_pom, 8), among_others=True
         )
@@ -1168,7 +1169,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             effective_pom=effective_pom_declaring(unversioned),
         )
         with osv(ADVISORY):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_vulnerable_dependency_logged(GUAVA, "33.0.0-jre", VULNERABILITY, Location(parent_pom, 6))
 
     def test_a_dependency_whose_managing_pom_no_longer_parses_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
@@ -1187,7 +1188,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
 
         parent_pom.read_bytes = Mock(side_effect=parent_contents)
         with _stale_release():
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_error_logged(message_of(Logger.invalid_xml_after_update), location=Location(parent_pom))
         self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(child_pom, 5))
 
@@ -1199,7 +1200,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     def test_an_effective_pom_a_successful_run_left_unreadable_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that a Maven run that succeeded without writing an effective pom is warned about."""
         pom = self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("${guava.version}")), effective_pom="")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_logged(message_of(Logger.effective_pom_unreadable), location=Location(pom))
 
     @kills.delete_statement(
@@ -1225,7 +1226,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         declared = pom_declaring(guava_element("${guava.version}"), dependency_element("junit", "junit", "4.13.2"))
         pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
         with osv() as mock_post:
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_logged(message_of(Logger.effective_pom_without_input_locations), location=Location(pom))
         _assert_osv_asked_about_maven(mock_post, ("junit:junit", "4.13.2"))
 
@@ -1246,7 +1247,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         output = "[ERROR] Failed to execute goal org.codehaus.mojo:versions-maven-plugin:2.22.0:use-latest-releases"
         mock_run.side_effect = _maven_failed(output)
         with osv() as mock_post:
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_command_failed_logged(_maven_command(), output)
         _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
 
@@ -1271,7 +1272,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         written = effective_pom_declaring(EFFECTIVE_GUAVA).encode()
         read_bytes = patch.object(Path, "read_bytes", autospec=True, return_value=written)
         with read_bytes as mock_read_bytes, osv() as mock_post:
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_command_failed_logged(_maven_command(), printed + failed)
         mock_read_bytes.assert_called_once_with(_PROJECT / "target/effective-pom.xml")
         _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
@@ -1290,7 +1291,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """
         pom = self.find_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA)
         with self.maven_central_answering(_POM_ON_GITHUB, archived=True):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_archived_repository_logged(GUAVA, Location(pom, 6))
 
     def test_an_artefact_holding_nothing_back_gets_a_rule_keeping_it_on_its_variant(
@@ -1298,7 +1299,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     ):
         """Test that the rule set Maven reads keeps an artefact on its variant where nothing else is held back."""
         self.find_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assertEqual(self.rule_sets, [_GUAVA_ON_ITS_VARIANT])
         self.assert_maven_ran(mock_run, rules=_RULES)
 
@@ -1310,7 +1311,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     def test_a_pom_holding_nothing_back_gets_no_rule_set(self, mock_run: Mock, mock_glob: Mock):
         """Test that a run over a pom where nothing holds a version back does not write a rule set or hand Maven one."""
         self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("r09")))
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assertEqual(self.rule_sets, [])
         self.assert_maven_ran(mock_run)
 
@@ -1324,7 +1325,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             managed=dependency_management_element(guava_element("${guava.version}")),
         )
         self.find_pom(mock_run, mock_glob, pom)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_maven_runs(mock_run, _maven_command(rules=_RULES, properties="guava.version"))
 
     @kills.delete(
@@ -1378,7 +1379,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     )
     @kills.delete(
         Logger.option_overridden_by_the_pom,
-        " if pom else {}",
+        ' if pom else ""',
         "a setting Maven does not locate is reported as set on line 0",
         case="a setting Maven does not locate",
     )
@@ -1398,10 +1399,10 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         rules = OverrideConsequence.RULES
         cases: dict[str, tuple[str, dict[str, object]]] = {
             "a managed plugin": (build_element(managed=_VERSIONS_NAMING_RULES), _set_by_the_parent("rulesUri", rules)),
-            "a rule set": (build_element(rule_set), _set_by_the_parent("ruleSet", rules) | {"line": 14}),
+            "a rule set": (build_element(rule_set), _set_by_the_parent("ruleSet", rules, line=14)),
             "a setting Maven does not locate": (
                 build_element(unlocated),
-                {"setting": "rulesUri", "consequence": rules},
+                {"setting": "rulesUri", "set_at": "", "consequence": rules},
             ),
             "ignored versions": (
                 build_element(_versions_set_by_the_parent("ignoredVersions", "nothing")),
@@ -1433,9 +1434,9 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         for case, (build, fields) in cases.items():
             with self.subTest(case=case):
                 pom = self.find_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA, _effective_pom_building(build))
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assert_logged_among_others(
-                    message_of(Logger.option_overridden_by_the_pom, "location", *fields),
+                    message_of(Logger.option_overridden_by_the_pom),
                     location=Location(pom),
                     **fields,
                 )
@@ -1498,8 +1499,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a versions plugin configured without overriding an option leaves markers be."""
         recorder_setting = located_setting("changeRecorderFormat", "none", _SET_BY_THE_PARENT)
         recorder = _versions_configured(recorder_setting)
-        unlocated = message_of(Logger.option_overridden_by_the_pom, "location", "setting", "consequence")
-        located = message_of(Logger.option_overridden_by_the_pom, *unlocated.holes, "pom", "line")
+        overridden = message_of(Logger.option_overridden_by_the_pom)
         for case, effective_pom in {
             # Maven ignores an empty element of a setting that holds a value.
             "an empty rules URI": _effective_pom_building(build_element(_versions_set_by_the_parent("rulesUri", ""))),
@@ -1525,9 +1525,8 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         }.items():
             with self.subTest(case=case):
                 pom = self.find_pom(mock_run, mock_glob, _pom_marking_guava("ignore[update>=34]"), effective_pom)
-                update_pom_xmls()
-                self.assert_none_logged(located, "overridden option")
-                self.assert_none_logged(unlocated, "overridden option")
+                _update_pom_xmls()
+                self.assert_none_logged(overridden, "overridden option")
                 self.assert_logged_among_others(
                     message_of(Logger.holding_back_range),
                     dependency=GUAVA,
@@ -1540,7 +1539,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that the rule for an artefact on a version without a number holds the cooldown's versions alone."""
         self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("r09")))
         with self.hold_back({GUAVA: ("33.7.1-jre",)}):
-            update_pom_xmls()
+            _update_pom_xmls()
         held_back_rule = _rule_ignoring("com.google.guava", "guava", _exact_version_element("33.7.1-jre"))
         self.assertEqual(self.rule_sets, [_rule_set(held_back_rule)])
 
@@ -1555,7 +1554,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             "org.springframework:spring-core": ("7.1.0",),
         }
         with self.hold_back(held_back):
-            update_pom_xmls()
+            _update_pom_xmls()
         guava = _rule("com.google.guava", "guava", "33.0.0-jre", "33.7.0-jre", "33.7.1-jre")
         spring = _rule("org.springframework", "spring-core", "6.1.0", "7.1.0")
         self.assertEqual(self.rule_sets, [_rule_set(guava, spring)])
@@ -1572,7 +1571,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(directives=directives):
                 self.find_marked_pom(mock_run, mock_glob, directives)
                 with self.asked_about() as asked:
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_GUAVA_HELD_BACK])
                 self.assertEqual(asked, [])  # The repository is not asked which versions to hold back.
                 self.assert_maven_ran(mock_run, rules=_RULES)
@@ -1593,7 +1592,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         }.items():
             with self.subTest(directive=directive):
                 self.find_marked_pom(mock_run, mock_glob, directive)
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_guava_range_held_back(maven_range)])
                 self.assert_maven_ran(mock_run, rules=_RULES)
 
@@ -1618,7 +1617,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         }.items():
             with self.subTest(directive=directive):
                 self.find_marked_pom(mock_run, mock_glob, directive)
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assertEqual(self.rule_sets, rule_sets_written)
 
     @kills.delete(
@@ -1642,7 +1641,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         }.items():
             with self.subTest(directive=directive):
                 self.find_marked_pom(mock_run, mock_glob, directive)
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_guava_range_held_back(maven_range)])
 
     def test_a_level_bound_holds_back_what_it_drops_from_its_version(self, mock_run: Mock, mock_glob: Mock):
@@ -1669,13 +1668,13 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         for case, (pom, rule_sets_written) in cases.items():
             with self.subTest(case=case):
                 self.find_pom(mock_run, mock_glob, pom)
-                update_pom_xmls()
+                _update_pom_xmls()
                 self.assertEqual(self.rule_sets, rule_sets_written)
 
     def test_the_range_a_bound_holds_back_is_reported(self, mock_run: Mock, mock_glob: Mock):
         """Test that the range of versions a bound holds back is reported at its declaration, naming the bound."""
         pom = self.find_marked_pom(mock_run, mock_glob, "ignore[update>=34]")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_logged_among_others(
             message_of(Logger.holding_back_range),
             dependency=GUAVA,
@@ -1687,7 +1686,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     def test_a_bound_is_redundant_where_the_pom_names_rules_of_its_own(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bound on a pom whose versions plugin names rules of its own holds nothing back."""
         pom = self.find_pom_naming_rules_of_its_own(mock_run, mock_glob, "ignore[update>=34]")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.RULES_OF_THE_POM, GUAVA, Location(pom, 6), "ignore[update>=34]")
         self.assert_none_logged(message_of(Logger.holding_back_range), "range held back")
 
@@ -1701,7 +1700,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a cooldown on an artefact Maven Central does not serve, in a pom naming rules, warns once."""
         pom = self.find_pom_naming_rules_of_its_own(mock_run, mock_glob, "set[cooldown=30]")
         with patch.object(maven_central_module, "serves", Mock(return_value=False)):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.RULES_OF_THE_POM, GUAVA, Location(pom, 6), "set[cooldown=30]")
 
     def test_a_marker_on_a_version_maven_leaves_holds_back_nothing(self, mock_run: Mock, mock_glob: Mock):
@@ -1730,7 +1729,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(case=case):
                 self.find_pom(mock_run, mock_glob, pom)
                 with self.hold_back({artefact: (held_back,)}):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_rule_set(_rule(*artefact.split(":"), current, held_back))])
 
     @kills.replace(
@@ -1815,14 +1814,14 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                 pom = pom_declaring(declared, managed=dependency_management_element(managed))
                 self.find_pom(mock_run, mock_glob, pom)
                 with self.hold_back({GUAVA: ("33.7.1-jre",)}):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assertEqual(self.rule_sets, rule_set)
 
     @patch_environ({COOLDOWN.name: "0"})
     def test_a_marker_holds_the_update_back_with_the_cooldown_switched_off(self, mock_run: Mock, mock_glob: Mock):
         """Test that the rule set holds back every version of a marked artefact when the cooldown holds nothing back."""
         self.find_marked_pom(mock_run, mock_glob, "ignore[update]")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assertEqual(self.rule_sets, [_GUAVA_HELD_BACK])
         self.assert_maven_ran(mock_run, rules=_RULES)
 
@@ -1872,7 +1871,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             _maven_central_source(changes=mock_changes, publication_date=mock_publication),
             patch.object(maven_central_module, "serves", Mock(return_value=True)) as mock_serves,
         ):
-            update_pom_xmls()
+            _update_pom_xmls()
         # Guava reaches every check, so the dependency beside it reaching none says something about its coordinates.
         self.assertEqual(asked, [GUAVA])
         self.assertEqual(_artefacts_asked(mock_serves), [GUAVA])
@@ -1905,7 +1904,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
                 unversioned = dependency_element("org.springframework", "spring-core", version)
                 self.find_pom(mock_run, mock_glob, pom_declaring(guava, unversioned), effective_pom)
                 with self.asked_about() as asked:
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 # Guava is asked about, so the dependency beside it going unasked says something about its version.
                 self.assertEqual(asked, [GUAVA])
 
@@ -1914,7 +1913,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that the cooldown the repository is asked about is the one --cooldown sets, not the default one."""
         self.find_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA)
         with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
 
     def test_a_marker_cooldown_holds_back_the_versions_inside_its_window(self, mock_run: Mock, mock_glob: Mock):
@@ -1923,7 +1922,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             with self.subTest(case=case), patch_environ({COOLDOWN.name: run_cooldown}):
                 self.find_marked_pom(mock_run, mock_glob, "set[cooldown=30]")
                 with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30):
-                    update_pom_xmls()
+                    _update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
 
     @kills.append(
@@ -1944,7 +1943,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             mock_run, mock_glob, pom_declaring(_SPRING_LEAVING_ITS_GROUP), effective_pom_declaring(_EFFECTIVE_SPRING)
         )
         with self.hold_back({"org.springframework:spring-core": ("7.1.0",)}):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assertEqual(self.rule_sets, [_rule_set(_rule("org.springframework", "spring-core", "6.1.0", "7.1.0"))])
         self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command(_RULES, ""))
 
@@ -1959,7 +1958,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.find_pom(mock_run, mock_glob, pom_declaring(_SPRING_LEAVING_ITS_GROUP), effective_pom="")
         output = "[ERROR] Non-resolvable parent POM for org.example:child:1.0"
         mock_run.side_effect = _maven_failed(output)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_command_failed_logged(_effective_pom_command(), output)
         self.assert_maven_runs(mock_run, _effective_pom_command())
         self.assert_no_warnings_logged()
@@ -1982,7 +1981,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             mock_run, mock_glob, pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "set[cooldown=0]"))
         )
         with self.asked_about() as asked:
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assertEqual(asked, [])
         # Asserting Maven ran, so the cooldown rather than a pom that was never read is what left the artefacts alone.
         # The staleness check asks the repository whatever the cooldown is, so this says nothing about that request.
@@ -1995,7 +1994,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         # Maven writes its errors to stdout and leaves stderr empty, so the failure travels in the output.
         output = "[ERROR] Non-readable POM /project/pom.xml"
         mock_run.side_effect = _maven_failed(output)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_command_failed_logged(_maven_command(rules=_RULES), output)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -2025,7 +2024,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             return Changes(f"Changes in {artefact} {version}", markdown=False, url="")
 
         with _maven_central_source(changes=changes):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_new_version_logged_among_others(
             GUAVA, "33.7.1-jre", Location(pom, 6), changes="Changes in com.google.guava:guava 33.7.1-jre"
         )
@@ -2051,7 +2050,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             _maven_central_source(publication_date=maven_central_publication),
             patch_maven_central(listing, _POM_ON_GITHUB) as mock_get,
         ):
-            update_pom_xmls()
+            _update_pom_xmls()
         # The cooldown and the project checks each read the listing, so the one request serves them as well.
         self.assertEqual(_artefacts_asked(mock_held_back), [GUAVA])
         self.assertEqual(_artefacts_asked(mock_project), [GUAVA])
@@ -2065,7 +2064,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         before = pom_declaring(provider, properties=properties_element({"surefire.version": "3.5.0"}), build=plugin)
         after = pom_declaring(provider, properties=properties_element({"surefire.version": "3.5.2"}), build=plugin)
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_new_versions_logged(
             "3.5.2", Location(pom, 3), "org.apache.maven.surefire:surefire-junit-platform", SUREFIRE
         )
@@ -2087,7 +2086,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             patch.object(maven_central_module, "serves", Mock(side_effect=_on_jersey_core)),
             _maven_central_source(changes=mock_changes),
         ):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_new_versions_logged("3.1.12", Location(pom, 3), "org.glassfish.jersey.core:jersey-client")
         mock_changes.assert_called_once_with("org.glassfish.jersey.core:jersey-client", "3.1.12")
         unreported = [
@@ -2114,7 +2113,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         after = pom_declaring(lib, tools, properties=properties_element({"internal.version": "1.1"}))
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
         with patch.object(maven_central_module, "serves", Mock(return_value=False)):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_new_versions_logged("1.1", Location(pom, 3), "nl.example:lib", "nl.example:tools")
         self.assert_none_logged(message_of(Logger.new_version_not_reported), "unreported new version")
 
@@ -2143,7 +2142,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         )
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
         with patch.object(maven_central_module, "serves", Mock(side_effect=_on_jersey_core)):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_new_version_logged_among_others(
             "org.glassfish.jersey.core:jersey-client", "3.1.12", Location(pom, 3)
         )
@@ -2162,7 +2161,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         before = _guava_twice_by_property(properties_element({"guava.version": "33.0.0-jre"}))
         after = _guava_twice_by_property(properties_element({"guava.version": "33.7.1-jre"}))
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_new_version_logged(GUAVA, "33.7.1-jre", Location(pom, 3))
 
     def test_a_name_two_sections_declare_is_reported_per_declaration(self, mock_run: Mock, mock_glob: Mock):
@@ -2174,7 +2173,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
             guava_element("33.7.1-jre"), managed=dependency_management_element(guava_element("33.7.1-jre"))
         )
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_new_version_logged(GUAVA, "33.7.1-jre", Location(pom, 7))
 
     @kills.replace(
@@ -2194,7 +2193,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.find_rewritten_pom(mock_run, mock_glob, unchanged, unchanged, effective_pom)
         get_changes = Mock()
         with _maven_central_source(changes=get_changes):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_maven_ran(mock_run, rules=_RULES)  # The pom was examined, so reporting nothing says something.
         self.assert_no_new_version_logged()
         get_changes.assert_not_called()
@@ -2203,7 +2202,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a pom whose XML does not parse is warned about, and leaves the next pom checked as usual."""
         poms = {"broken": "<project><broken>", "app": pom_declaring(guava_element("33.7.1-jre"))}
         broken, second = self.find_reactor(mock_run, mock_glob, poms)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_invalid_file_logged(broken, "XML")
         self.assert_path_logged(second)
         # Maven ran for the pom that parsed, and not for the one that did not.
@@ -2219,7 +2218,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a pom Maven left unparsable is reported as a failed update, and then left alone."""
         pom = self.find_rewritten_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA, "<project><broken>")
         with osv() as mock_post:
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_error_logged(message_of(Logger.invalid_xml_after_update), location=Location(pom))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()  # The pom was not skipped: Maven ran and rewrote it.
@@ -2246,7 +2245,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, pom_declaring(guava_element("33.7.1-jre")))
         mock_project = Mock(return_value=Project())
         with patch.object(maven_central_module, "project", mock_project):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_error_logged(message_of(Logger.declarations_changed), location=Location(pom), before=2, after=1)
         self.assert_no_new_version_logged()
         mock_project.assert_not_called()  # The pom is reported, not checked on a reading it cannot pair up.
@@ -2263,7 +2262,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         second = self.find_poms(mock_run, mock_glob, "<project/>", "<project/>")[1]
         refusal = PermissionError(13, "Permission denied")
         mock_run.side_effect = [refusal, _maven_succeeded()]
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_error_logged(message_of(Logger.command_error), command=_maven_command(), error=refusal)
         self.assertEqual(mock_run.call_count, 2)
         self.assert_path_logged(second)
@@ -2291,7 +2290,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.leave_off_the_path("mvn", "./mvnw")
         self.find_reactor(mock_run, mock_glob, {".": _aggregator("app"), "app": "<project/>"})
         with patch("pathlib.Path.exists", lambda self: self == _PROJECT / "mvnw"):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_maven_runs(mock_run, _maven_command("./mvnw"), _maven_command("./mvnw", directory="app"))
 
     @kills.replace(
@@ -2304,7 +2303,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a module only a profile lists runs Maven from its own directory."""
         root = "<project><profiles><profile><modules><module>app</module></modules></profile></profiles></project>"
         self.find_reactor(mock_run, mock_glob, {".": root, "app": "<project/>"})
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assertEqual(mock_run.call_args_list[1], _maven_run(_maven_command(), _PROJECT / "app"))
 
     def test_a_module_listed_by_another_path_runs_maven_from_the_reactor_root(self, mock_run: Mock, mock_glob: Mock):
@@ -2315,21 +2314,21 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         for case, (listed, directory, selected) in cases.items():
             with self.subTest(case=case):
                 self.find_reactor(mock_run, mock_glob, {"root": _aggregator(listed), directory: "<project/>"})
-                update_pom_xmls()
+                _update_pom_xmls()
                 commands = (_maven_command(), _maven_command(directory=selected))
                 self.assert_maven_runs(mock_run, *commands, directory=root)
 
     def test_a_pom_listing_itself_as_a_module_runs_maven_selecting_itself(self, mock_run: Mock, mock_glob: Mock):
         """Test that a pom listing its own directory as a module runs Maven once, from its own directory."""
         self.find_pom(mock_run, mock_glob, _aggregator("."))
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_maven_ran(mock_run)
 
     def test_each_pom_of_a_reactor_runs_maven_from_the_topmost_aggregator(self, mock_run: Mock, mock_glob: Mock):
         """Test that each pom of a reactor runs Maven from the topmost aggregator's directory, selecting itself."""
         reactor = {".": _aggregator("config"), "config": _aggregator("spring"), "config/spring": "<project/>"}
         self.find_reactor(mock_run, mock_glob, reactor)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_maven_runs(mock_run, *(_maven_command(directory=directory) for directory in reactor))
 
     @kills.replace(
@@ -2344,7 +2343,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         _, *later_poms, _ = self.find_reactor(mock_run, mock_glob, poms)
         output = "[ERROR] The build could not read 2 projects -> [Help 1]"
         mock_run.side_effect = [_maven_failed(output), *[_maven_succeeded()] * (len(poms) - 1)]
-        update_pom_xmls()
+        _update_pom_xmls()
         message = message_of(Logger.unreadable_reactor_as_found)
         self.assert_unreadable_reactor_logged(message, output=output, poms="2 other poms")
         runs = [_maven_run(_maven_command()), _maven_run(_maven_command(), _PROJECT / "other")]
@@ -2355,19 +2354,16 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self, mock_run: Mock, mock_glob: Mock
     ):
         """Test that the error names the pom an earlier run changed, and the poms left where there are any."""
+        message = message_of(Logger.unreadable_reactor_since_update)
         cases = {
-            "poms left": (("app", "lib"), message_of(Logger.unreadable_reactor_since_update), {"poms": "1 pom"}),
-            "the reactor's last pom": (
-                ("app",),
-                message_of(Logger.unreadable_reactor_since_update_without_poms_left),
-                {},
-            ),
+            "poms left": (("app", "lib"), ", so Update-time does not run Maven over the 1 pom left in it"),
+            "the reactor's last pom": (("app",), ""),
         }
-        for case, (later, message, fields) in cases.items():
+        for case, (later, poms_left) in cases.items():
             with self.subTest(case=case):
                 bom = self.find_reactor_updated_by_bom(mock_run, mock_glob, *later, failing="app")
-                update_pom_xmls()
-                self.assert_unreadable_reactor_logged(message, "app", updated=Location(bom), **fields)
+                _update_pom_xmls()
+                self.assert_unreadable_reactor_logged(message, "app", updated=Location(bom), poms_left=poms_left)
 
     @kills.replace(
         reactor_module.Reactor.update,
@@ -2384,7 +2380,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
     def test_a_reactor_read_after_the_update_is_reported_without_a_cause(self, mock_run: Mock, mock_glob: Mock):
         """Test that the error leaves the update out where a later run read the reactor without changing a pom."""
         self.find_reactor_updated_by_bom(mock_run, mock_glob, "app", "lib", "web", failing="lib")
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_unreadable_reactor_logged(message_of(Logger.unreadable_reactor), "lib", poms="1 pom")
 
     def test_a_reactor_holding_a_pom_that_does_not_parse_runs_maven_over_none_of_its_poms(
@@ -2393,7 +2389,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a pom that does not parse leaves every pom of its reactor without a Maven run, logging why once."""
         poms = {".": _aggregator("app", "lib"), "app": "<project>", "lib": "<project/>"}
         root, app, lib = self.find_reactor(mock_run, mock_glob, poms)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assertEqual(mock_run.call_args_list, [])
         self.assert_error_logged(
             message_of(Logger.unparsable_reactor),
@@ -2405,8 +2401,8 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
 
     @kills.replace(
         reactor_module.Reactor.update,
-        "_LOG.package_manager_not_on_path(pom_xml, _MVN)\n            return None",
-        "_LOG.package_manager_not_on_path(pom_xml, _MVN)",
+        "_LOG.tool_not_on_path(pom_xml, ToolTask.UPDATE, _MVN)\n            return None",
+        "_LOG.tool_not_on_path(pom_xml, ToolTask.UPDATE, _MVN)",
         "a missing Maven is reported, and the pom is then handled as if Maven were on the path",
     )
     def test_a_missing_maven_is_reported_once_for_each_pom_that_parses(self, mock_run: Mock, mock_glob: Mock):
@@ -2414,10 +2410,16 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.leave_off_the_path("mvn")
         poms = {".": _aggregator("app", "lib"), "app": "<project>", "lib": "<project/>"}
         root, _app, lib = self.find_reactor(mock_run, mock_glob, poms)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_errors_logged(
-            (message_of(Logger.package_manager_not_on_path), {"location": Location(root), "executable": "mvn"}),
-            (message_of(Logger.package_manager_not_on_path), {"location": Location(lib), "executable": "mvn"}),
+            (
+                message_of(Logger.tool_not_on_path),
+                {"task": ToolTask.UPDATE, "location": Location(root), "executable": "mvn"},
+            ),
+            (
+                message_of(Logger.tool_not_on_path),
+                {"task": ToolTask.UPDATE, "location": Location(lib), "executable": "mvn"},
+            ),
         )
         self.assert_maven_not_run_logged()
 
@@ -2425,7 +2427,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         """Test that a pom forming a reactor of its own, which Maven cannot read, gets Maven's error alone."""
         self.find_pom(mock_run, mock_glob)
         mock_run.side_effect = _maven_failed(_UNREADABLE_REACTOR_OUTPUT)
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_command_failed_logged(_maven_command(), _UNREADABLE_REACTOR_OUTPUT)
 
     def test_a_pom_left_without_a_maven_run_is_still_checked(self, mock_run: Mock, mock_glob: Mock):
@@ -2434,7 +2436,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         mock_run.side_effect = _maven_failed(_UNREADABLE_REACTOR_OUTPUT)
         mock_project = Mock(return_value=Project())
         with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
-            update_pom_xmls()
+            _update_pom_xmls()
         self.assert_unreadable_reactor_logged(message_of(Logger.unreadable_reactor_as_found), poms="1 other pom")
         self.assert_maven_runs(mock_run, _maven_command())
         _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
@@ -2451,7 +2453,7 @@ class UpdatePomXmlTest(ExecutablesOnPathTestCase):
         self.find_reactor(mock_run, mock_glob, {".": _aggregator("app"), "app": "<project/>"})
         output = "[ERROR] Failed to execute goal org.codehaus.mojo:versions-maven-plugin on project root"
         mock_run.side_effect = [_maven_failed(output), _maven_succeeded()]
-        update_pom_xmls()
+        _update_pom_xmls()
         self.assert_command_failed_logged(_maven_command(), output)
         self.assert_maven_runs(mock_run, _maven_command(), _maven_command(directory="app"))
         self.assert_maven_not_run_logged()

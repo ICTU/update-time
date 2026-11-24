@@ -5,20 +5,20 @@ import logging
 import re
 import shlex
 from dataclasses import dataclass
+from enum import StrEnum
 from functools import wraps
 from logging import DEBUG, ERROR, INFO, WARNING
 from signal import SIGINT, SIGQUIT, Signals
 from typing import TYPE_CHECKING, Concatenate, cast
 
+from requests.exceptions import Timeout
 from rich.console import Console
 
-from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import cooldown_end
 from update_time.domain.dependency import tag_of
-from update_time.domain.directive import Reason, opt_in_redundancy
-from update_time.domain.marker import Scope, spell
-from update_time.domain.reference import RefKind
-from update_time.domain.staleness import STALE_AFTER, stale_release
+from update_time.domain.marker import Scope
+from update_time.domain.reference import DriftKind
+from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL
 from update_time.io.console import (
     CHANGES,
@@ -41,7 +41,9 @@ if TYPE_CHECKING:
 
     from requests import Response
 
+    from update_time.domain.bound import BoundRedundancy
     from update_time.domain.dependency import (
+        Archival,
         DependencyVersion,
         FloatingPin,
         ImageNotLookedUp,
@@ -50,7 +52,7 @@ if TYPE_CHECKING:
     )
     from update_time.domain.directive import RedundancyReason
     from update_time.domain.marker import Threshold
-    from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
+    from update_time.domain.reference import DriftedPin, Reference, RefKind, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.primitives.command import Command
 
@@ -65,7 +67,7 @@ _KEYS = {SIGINT: "Ctrl-C", SIGQUIT: "Ctrl-\\"}
 
 
 @dataclass(frozen=True)
-class LogMessage:
+class _LogMessage:
     """A log message, with the level it is logged at, its format string, and its name."""
 
     level: int
@@ -86,55 +88,57 @@ class LogMessage:
         return set(re.findall(r"%\((\w+)\)", self.format))
 
 
-type _Fields = dict[str, object] | None
+type _Fields = dict[str, object]
 type _FieldsMethod[**P] = Callable[Concatenate[Logger, P], _Fields]
 type _LogMethod[**P] = Callable[Concatenate[Logger, P], None]
+# What a decorator adds a message to: a method returning fields, or the log method an inner decorator made of one.
+type _Decorated[**P] = _FieldsMethod[P] | _LogMethod[P]
 
 # The console renders these fields below a record's line, rather than in its message.
 _EXTRAS = (CHANGES, NOTE)
 
 
-def _debug[**P](format_string: str, name: str) -> Callable[[_FieldsMethod[P]], _LogMethod[P]]:
+def _debug[**P](format_string: str, name: str) -> Callable[[_Decorated[P]], _LogMethod[P]]:
     """Return a decorator adding the message with the format and the name at debug level to a log method."""
     return _logs_at(DEBUG, format_string, name)
 
 
-def _info[**P](format_string: str, name: str) -> Callable[[_FieldsMethod[P]], _LogMethod[P]]:
+def _info[**P](format_string: str, name: str) -> Callable[[_Decorated[P]], _LogMethod[P]]:
     """Return a decorator adding the message with the format and the name at info level to a log method."""
     return _logs_at(INFO, format_string, name)
 
 
-def _warning[**P](format_string: str, name: str) -> Callable[[_FieldsMethod[P]], _LogMethod[P]]:
+def _warning[**P](format_string: str, name: str) -> Callable[[_Decorated[P]], _LogMethod[P]]:
     """Return a decorator adding the message with the format and the name at warning level to a log method."""
     return _logs_at(WARNING, format_string, name)
 
 
-def _error[**P](format_string: str, name: str) -> Callable[[_FieldsMethod[P]], _LogMethod[P]]:
+def _error[**P](format_string: str, name: str) -> Callable[[_Decorated[P]], _LogMethod[P]]:
     """Return a decorator adding the message with the format and the name at error level to a log method."""
     return _logs_at(ERROR, format_string, name)
 
 
-def _logs_at[**P](level: int, format_string: str, name: str) -> Callable[[_FieldsMethod[P]], _LogMethod[P]]:
+def _logs_at[**P](level: int, format_string: str, name: str) -> Callable[[_Decorated[P]], _LogMethod[P]]:
     """Return a decorator adding the message with the format and the name at the level to a log method.
 
-    The log method logs the message with the fields the decorated method returns, if any. Decorators stack: an outer
-    one adds its message to the log method the inner one made, which then logs the message whose holes its fields
-    fill.
+    The log method logs the message with the fields the decorated method returns. Decorators stack: an outer one
+    adds its message to the log method the inner one made, which then logs the message whose holes its fields fill.
     """
-    message = LogMessage(level, format_string, name)
+    message = _LogMessage(level, format_string, name)
 
-    def decorate(method: _FieldsMethod[P]) -> _LogMethod[P]:
+    def decorate(method: _Decorated[P]) -> _LogMethod[P]:
         if (stacked := vars(method).get("messages")) is not None:
             stacked.append(message)
             return cast("_LogMethod[P]", method)  # An inner decorator made it a log method already
         messages = [message]
+        fields_method = cast("_FieldsMethod[P]", method)
 
-        @wraps(method)
+        @wraps(fields_method)
         def log_method(self: Logger, *args: P.args, **kwargs: P.kwargs) -> None:
-            if (fields := method(self, *args, **kwargs)) is not None:
-                extra = {name: value for name, value in fields.items() if name in _EXTRAS}
-                filling = {name: value for name, value in fields.items() if name not in _EXTRAS}
-                self._emit(_filled_by(messages, filling), filling, extra)
+            fields = fields_method(self, *args, **kwargs)
+            extra = {name: value for name, value in fields.items() if name in _EXTRAS}
+            filling = {name: value for name, value in fields.items() if name not in _EXTRAS}
+            self._emit(_filled_by(messages, filling), filling, extra)
 
         vars(log_method)["messages"] = messages
         return log_method
@@ -142,7 +146,7 @@ def _logs_at[**P](level: int, format_string: str, name: str) -> Callable[[_Field
     return decorate
 
 
-def _filled_by(messages: list[LogMessage], fields: dict[str, object]) -> LogMessage:
+def _filled_by(messages: list[_LogMessage], fields: dict[str, object]) -> _LogMessage:
     """Return the one message whose holes are the fields, or the method's only message, whatever its holes."""
     if len(messages) == 1:
         return messages[0]
@@ -151,31 +155,20 @@ def _filled_by(messages: list[LogMessage], fields: dict[str, object]) -> LogMess
 
 
 @dataclass(frozen=True)
-class Drift:
-    """A kind of hash pin that can drift: the separator before the version it records, and the words naming it.
+class _RefMove:
+    """What a warning about a moved ref says: how the ref moved, and what to verify before updating the pin."""
 
-    A commit drifts as the tag, the branch, or the ref pointing at it moves, so its kind names the ref, how it moved,
-    and what to verify. A digest's kind names none of them.
-    """
+    moved: str
+    advice: str
 
-    separator: str
-    ref: RefKind | None = None
-    moved: str = ""
-    advice: str = ""
 
-    @property
-    def warning_words(self) -> dict[str, str]:
-        """Return the words the warning about this kind of drift fills in."""
-        return (
-            {"Ref": self.ref.capitalize(), "ref": self.ref, "moved": self.moved, "advice": self.advice}
-            if self.ref
-            else {}
-        )
-
-    @property
-    def adopted_words(self) -> dict[str, str]:
-        """Return the words the report that this kind of drift was adopted fills in."""
-        return {"ref": self.ref} if self.ref else {}
+# How each kind of ref moves, keyed by the kind of drift its move causes. The drift of a digest does not name a ref.
+_REF_MOVES = {
+    DriftKind.TAG: _RefMove("now points at", "the tag was moved deliberately"),
+    # A branch's drift names its newest commit older than the cooldown, which the branch may have moved on from already.
+    DriftKind.BRANCH: _RefMove("has moved on to", "the branch moved to a commit you trust"),
+    DriftKind.REF: _RefMove("now points at", "the ref moved to a commit you trust"),
+}
 
 
 def _redundant_directive(reason: str) -> str:
@@ -183,9 +176,9 @@ def _redundant_directive(reason: str) -> str:
     return f"Redundant update-time directive %(directive)s for %(dependency)s in %(location)s: {reason}"
 
 
-def _run_setting_field[T](name: str, setting: EnvVar[T], value: T) -> dict[str, T]:
-    """Return the field naming the run's value: `default_<name>` if it is the setting's default, else `run_<name>`."""
-    return {f"default_{name}" if value == setting.default else f"run_{name}": value}
+def _run_setting[T](setting: EnvVar[T], value: T, option: str, default: str) -> str:
+    """Return how a message names the run's value: in the default's wording, or as the option that set it."""
+    return default.format(value) if value == setting.default else f"{option} {value}"
 
 
 def _effective_pom_unused(problem: str, cause: str) -> str:
@@ -212,6 +205,43 @@ def _poms(count: int, *qualifiers: str) -> str:
     return " ".join((str(count), *qualifiers, "pom" if count == 1 else "poms"))
 
 
+# How the report that a marker silenced a warning names that warning, by the scope that steers it.
+_WARNINGS = {
+    Scope.STALE: "staleness",
+    Scope.YANKED: "yank",
+    Scope.ARCHIVED: "archival",
+    Scope.VULNERABLE: "{advisory} vulnerability",
+}
+
+# What an `ignore` that silences nothing finds in place of what it would silence, by its scope.
+_FINDINGS = {
+    Scope.YANKED: "version {} was not yanked",
+    Scope.VULNERABLE: "version {} has no such vulnerability",
+    Scope.ARCHIVED: "the {} is not archived",
+}
+
+
+def _finding(scope: Scope, judged: str) -> str:
+    """Return what an `ignore` of the scope finds at what it judged: a version, or the subject a source archives."""
+    return _FINDINGS[scope].format(judged)
+
+
+def _locked_version(version: VersionString) -> str:
+    """Return what the report that a range was rewritten says about the version the lock file held before."""
+    if version:
+        return f"the version in the lock file is unchanged at {version}"
+    return "the lock file did not record a version before"
+
+
+def _failure(failure: Response | Exception) -> str:
+    """Return how the warning that a request failed words the failure: the HTTP error, a timeout, or the error."""
+    if isinstance(failure, Timeout):
+        return "the request timed out"
+    if isinstance(failure, Exception):
+        return str(failure)
+    return f"HTTP {failure.status_code} {failure.reason}"
+
+
 def _ignoring(subject: str, cause: str = "update-time: %(directive)s") -> str:
     """Return a message saying what is being ignored, and why."""
     return f"Ignoring {subject} for %(dependency)s in %(location)s ({cause})"
@@ -228,6 +258,26 @@ def _undated(source: str, event: str, in_between: str) -> str:
 def _stays_on(in_between: str) -> str:
     """Return the clause saying the reference stays on its version, since a candidate stopped the walk."""
     return f"%(dependency)s stays on %(current)s rather than trying the {in_between} in between"
+
+
+class ToolTask(StrEnum):
+    """What Update-time runs a tool to do for a file, as the error that the tool could not do it names it."""
+
+    UPDATE = "update the dependencies in"
+    RECOMPILE = "recompile"
+
+
+class FileContent(StrEnum):
+    """What Update-time looks for in a file it reads, as the warning that it cannot read the file names it."""
+
+    LOCKED_VERSIONS = "the versions it locks"
+    CATALOGS = "the catalogs it holds"
+    BUN_COOLDOWN = "whether it sets a cooldown for bun"
+    DEPENDENCY_LINES = "the lines declaring its dependencies"
+    PACKAGE_MANAGER = "the package manager it names"
+    NODE_ENGINE = "the Node engine it declares"
+    INLINE_SCRIPT_METADATA = "the inline script metadata it carries"
+    REQUIRES_PYTHON = "the requires-python it declares"
 
 
 class Logger:
@@ -247,12 +297,12 @@ class Logger:
         self._logged_changes.clear()
 
     @classmethod
-    def messages(cls) -> tuple[LogMessage, ...]:
+    def messages(cls) -> tuple[_LogMessage, ...]:
         """Return the messages the log methods hold, each of the messages stacked on one method included."""
         methods = [value for value in vars(cls).values() if inspect.isfunction(value)]
         return tuple(message for method in methods for message in vars(method).get("messages", []))
 
-    def _emit(self, message: LogMessage, fields: dict[str, object], extra: dict[str, object]) -> None:
+    def _emit(self, message: _LogMessage, fields: dict[str, object], extra: dict[str, object]) -> None:
         """Emit a log record at the message's own level, carrying the message's name and any extra beside its fields."""
         self.log.log(message.level, message, self._rendered(fields), extra={**extra, MESSAGE_NAME: message.name})
 
@@ -287,27 +337,6 @@ class Logger:
     def _ignored_fields(dependency: str, directive: str, location: Location, **extra: object) -> dict[str, object]:
         """Return the fields of a message that a marker held an update back or silenced a warning."""
         return {"dependency": dependency, "location": location, "directive": directive, **extra}
-
-    @classmethod
-    def _check_fields(
-        cls,
-        scope: Scope,
-        resolved: ResolvedReference,
-        warning_fields: dict[str, object] | None,
-        redundancy_fields: Mapping[str, object] | None,
-    ) -> dict[str, object] | None:
-        """Return the fields of what a check found: its warning's, the silencing marker's, or the redundant marker's.
-
-        `redundancy_fields` are what the redundancy warning adds, and None where the check did not answer.
-        """
-        marker = resolved.marker
-        if warning_fields is None:
-            if redundancy_fields is None or not marker.ignores(scope):
-                return None
-            return cls._reference_fields(resolved, directive=marker.scope_directive(scope), **redundancy_fields)
-        if marker.ignores(scope):
-            return cls._ignored_fields(resolved.dependency, marker.directive_for(scope), resolved.location)
-        return warning_fields
 
     @staticmethod
     def _file_fields(path: Path, **fields: object) -> dict[str, object]:
@@ -392,18 +421,21 @@ class Logger:
             return {**fields, CHANGES: version.changes}
         return {**fields, NOTE: self._NO_CHANGELOG}
 
-    _RANGE_REWRITE = "%(manager)s rewrote the range of %(dependency)s in %(location)s from %(range)s to %(new_range)s"
-
-    @_info(f"{_RANGE_REWRITE}; the version in the lock file is unchanged at %(version)s", "range-rewritten")
-    @_info(f"{_RANGE_REWRITE}; the lock file did not record a version before", "range-rewritten-without-locked-version")
+    @_info(
+        "%(manager)s rewrote the range of %(dependency)s in %(location)s from %(range)s to %(new_range)s; %(locked)s",
+        "range-rewritten",
+    )
     def range_rewrite(
         self, manager: str, reference: Reference, new_range: str, version: VersionString
     ) -> dict[str, object]:
         """Log that a package manager rewrote the range a reference declares, with the version locked before if any."""
-        fields = self._reference_fields(
-            reference, manager=manager, range=reference.current_version, new_range=new_range
+        return self._reference_fields(
+            reference,
+            manager=manager,
+            range=reference.current_version,
+            new_range=new_range,
+            locked=_locked_version(version),
         )
-        return {**fields, "version": version} if version else fields
 
     @_info(
         "%(manager)s moved %(dependency)s in %(location)s back from %(version)s to %(new_version)s",
@@ -553,23 +585,28 @@ class Logger:
         """Log that a URL declared as a bare string cannot be pinned."""
         return self._reference_fields(reference)
 
-    DIGEST_DRIFT = Drift(":")
-    TAG_DRIFT = Drift("@", RefKind.TAG, "now points at", "the tag was moved deliberately")
-    # A branch's drift names its newest commit older than the cooldown, which the branch may have moved on from already.
-    BRANCH_DRIFT = Drift("@", RefKind.BRANCH, "has moved on to", "the branch moved to a commit you trust")
-    REF_DRIFT = Drift("@", RefKind.REF, "now points at", "the ref moved to a commit you trust")
-
     @classmethod
-    def _drift_fields(cls, kind: Drift, drifted: DriftedPin, **extra: object) -> dict[str, object]:
+    def _drift_fields(cls, drifted: DriftedPin, **extra: object) -> dict[str, object]:
         """Return the fields every drift message carries, plus the ones the message reporting it adds."""
-        return cls._drifted_reference_fields(
-            kind, drifted, current_sha=drifted.current_sha, new_sha=drifted.new_sha, **extra
-        )
+        return cls._drifted_reference_fields(drifted, current_sha=drifted.current_sha, new_sha=drifted.new_sha, **extra)
 
     @classmethod
-    def _drifted_reference_fields(cls, kind: Drift, drifted: DriftedPin, **extra: object) -> dict[str, object]:
+    def _drifted_reference_fields(cls, drifted: DriftedPin, **extra: object) -> dict[str, object]:
         """Return the fields naming the drifted reference, plus the ones the message reporting it adds."""
-        return cls._reference_fields(drifted, tag=tag_of(drifted.current_version, kind.separator), **extra)
+        return cls._reference_fields(drifted, tag=tag_of(drifted.current_version, drifted.kind.separator), **extra)
+
+    @classmethod
+    def _drift_warning_fields(cls, drifted: DriftedPin) -> dict[str, object]:
+        """Return the fields of the warning that a hash pin drifted, with the words naming how its ref moved, if any."""
+        if (ref := drifted.kind.ref) is None:
+            return cls._drift_fields(drifted)
+        move = _REF_MOVES[drifted.kind]
+        return cls._drift_fields(drifted, Ref=ref.capitalize(), ref=ref, moved=move.moved, advice=move.advice)
+
+    @classmethod
+    def _adopted_drift_fields(cls, drifted: DriftedPin, directive: object) -> dict[str, object]:
+        """Return the fields of the report that a reference adopted its drift, naming what drifted."""
+        return cls._drift_fields(drifted, directive=directive, drift=drifted.kind.ref or "digest")
 
     @_warning(
         "%(Ref)s drift for %(dependency)s%(tag)s in %(location)s: pinned to commit %(current_sha)s but the %(ref)s "
@@ -581,23 +618,18 @@ class Logger:
         "now serves %(new_sha)s; the pin was left unchanged, verify the change is expected before updating the pin",
         "digest-drift",
     )
-    def drift(self, kind: Drift, drifted: DriftedPin) -> dict[str, object]:
+    def drift(self, drifted: DriftedPin) -> dict[str, object]:
         """Warn that a hash pin drifted."""
-        return self._drift_fields(kind, drifted, **kind.warning_words)
+        return self._drift_warning_fields(drifted)
 
     @_info(
-        "Adopted %(ref)s drift for %(dependency)s%(tag)s in %(location)s: "
-        "re-pinned from commit %(current_sha)s to %(new_sha)s (update-time: %(directive)s)",
-        "ref-drift-adopted",
-    )
-    @_info(
-        "Adopted digest drift for %(dependency)s%(tag)s in %(location)s: "
+        "Adopted %(drift)s drift for %(dependency)s%(tag)s in %(location)s: "
         "re-pinned from %(current_sha)s to %(new_sha)s (update-time: %(directive)s)",
-        "digest-drift-adopted",
+        "drift-adopted",
     )
-    def adopted_drift(self, kind: Drift, drifted: DriftedPin, directive: str) -> dict[str, object]:
+    def adopted_drift(self, drifted: DriftedPin, directive: str) -> dict[str, object]:
         """Log that a reference adopted the drift of its hash pin."""
-        return self._drift_fields(kind, drifted, directive=directive, **kind.adopted_words)
+        return self._adopted_drift_fields(drifted, directive)
 
     @_warning(
         "Integrity hash mismatch for %(dependency)s@%(version)s in %(location)s: declares %(declared_hash)s but "
@@ -616,25 +648,18 @@ class Logger:
         "%(days)d days ago (> %(threshold)d)",
         "stale-dependency",
     )
-    def report_staleness(self, resolved: ResolvedReference, threshold: int) -> dict[str, object] | None:
-        """Warn that the reference's newest release is older than the threshold, where it is."""
-        if (newest := stale_release(resolved.project, threshold)) is None:
-            return None
+    def stale_dependency(self, reference: Reference, newest: Release, threshold: int) -> dict[str, object]:
+        """Warn that the reference's newest release is older than the threshold."""
         return self._reference_fields(
-            resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
+            reference, version=newest.version, days=days_since(newest.published), threshold=threshold
         )
 
-    _JUDGED_ALIKE = (
-        "newest release %(version)s was published %(days)d days ago, which the threshold of %(threshold)d days"
-    )
-
     @_warning(
-        _redundant_directive(f"{_JUDGED_ALIKE} and the default of %(default_threshold)d days judge alike"),
-        "redundant-stale-after-as-default",
-    )
-    @_warning(
-        _redundant_directive(f"{_JUDGED_ALIKE} and --stale-after %(run_threshold)d judge alike"),
-        "redundant-stale-after-as-option",
+        _redundant_directive(
+            "newest release %(version)s was published %(days)d days ago, which the threshold of %(threshold)d days "
+            "and %(run_setting)s judge alike"
+        ),
+        "redundant-stale-after",
     )
     def redundant_stale_threshold(
         self, reference: Reference, threshold: Threshold[int], newest: Release, run_threshold: int
@@ -646,53 +671,42 @@ class Logger:
             version=newest.version,
             days=days_since(newest.published),
             threshold=threshold.value,
-            **_run_setting_field("threshold", STALE_AFTER, run_threshold),
+            run_setting=_run_setting(STALE_AFTER, run_threshold, "--stale-after", "the default of {} days"),
         )
 
-    @_debug(_ignoring("the staleness warning"), "stale-dependency-ignored")
-    def ignored_staleness(self, reference: Reference, directive: str) -> dict[str, object]:
-        """Log that the marker's staleness threshold silenced a warning the run's threshold gives."""
-        return self._ignored_fields(reference.dependency, directive, reference.location)
+    @_debug(_ignoring("the %(warning)s warning"), "warning-ignored")
+    def ignored_warning(
+        self, reference: Reference, scope: Scope, directive: str, *, advisory: str = ""
+    ) -> dict[str, object]:
+        """Log that the marker silenced the warning that the scope steers, about the advisory for a vulnerability."""
+        warning = _WARNINGS[scope].format(advisory=advisory)
+        return self._ignored_fields(reference.dependency, directive, reference.location, warning=warning)
 
-    @classmethod
-    def _yank_fields(cls, resolved: ResolvedReference) -> dict[str, object] | None:
-        """Return the yank warning's fields, or None when the version the run leaves the reference on was not yanked.
-
-        The reason is the yank itself, which renders as the maintainer's words where they gave any.
-        """
-        release = resolved.release
-        if release.yank is None or not release.yank.yanked:
-            return None
-        return cls._reference_fields(resolved, version=release.version, reason=release.yank)
-
-    @_warning(_redundant_directive("version %(version)s was not yanked"), "redundant-ignore-yanked")
-    @_debug(_ignoring("the yank warning"), "yanked-dependency-ignored")
     @_warning(
         "Yanked dependency %(dependency)s in %(location)s: version %(version)s was yanked (%(reason)s)",
         "yanked-dependency",
     )
-    def report_yank(self, resolved: ResolvedReference) -> dict[str, object] | None:
-        """Report the version's yank, or the marker that silenced it or had nothing to silence."""
-        release = resolved.release
-        redundancy_fields = None if release.yank is None else {"version": release.version}
-        return self._check_fields(Scope.YANKED, resolved, self._yank_fields(resolved), redundancy_fields)
+    def yanked_dependency(self, resolved: ResolvedReference) -> dict[str, object]:
+        """Warn that the version the run leaves the reference on was yanked.
 
-    @_warning(_redundant_directive("the %(subject)s is not archived"), "redundant-ignore-archived")
-    @_debug(_ignoring("the archival warning"), "archived-dependency-ignored")
+        The reason is the yank itself, which renders as the maintainer's words where they gave any.
+        """
+        release = resolved.release
+        return self._reference_fields(resolved, version=release.version, reason=release.yank)
+
+    @_warning(_redundant_directive("%(finding)s"), "redundant-ignore")
+    def redundant_ignore(self, reference: Reference, scope: Scope, directive: str, judged: str) -> dict[str, object]:
+        """Warn that the marker's `ignore` of the scope silences nothing for what it judged (see `_finding`)."""
+        return self._reference_fields(reference, directive=directive, finding=_finding(scope, judged))
+
     @_warning(
         "Archived dependency %(dependency)s in %(location)s: the %(subject)s was archived%(reason)s",
         "archived-dependency",
     )
-    def report_archival(self, resolved: ResolvedReference) -> dict[str, object] | None:
-        """Report the reference's archival, or the marker that silenced it or had nothing to silence."""
-        if (archival := resolved.project.archival) is None:
-            return None
+    def archived_dependency(self, reference: Reference, archival: Archival) -> dict[str, object]:
+        """Warn that the source archived the reference's project or repository, quoting the reason it gave, if any."""
         reason = f' ("{archival.reason}")' if archival.reason else ""
-        warning_fields = (
-            self._reference_fields(resolved, subject=archival.subject, reason=reason) if archival.archived else None
-        )
-        redundancy_fields = {"subject": archival.subject}
-        return self._check_fields(Scope.ARCHIVED, resolved, warning_fields, redundancy_fields)
+        return self._reference_fields(reference, subject=archival.subject, reason=reason)
 
     @_warning(
         "Could not score the CVSS vector of advisory %(advisory)s (%(error)s), so its risk level is unknown",
@@ -731,15 +745,6 @@ class Logger:
         """Warn that the pinned version has a known vulnerability."""
         return self._vulnerability_fields(reference, vulnerability)
 
-    @_debug(_ignoring("the %(advisory)s vulnerability warning"), "vulnerable-dependency-ignored")
-    def ignored_vulnerability(
-        self, reference: Reference, vulnerability: Vulnerability, directive: str
-    ) -> dict[str, object]:
-        """Log that the marker's directive silenced a vulnerability warning."""
-        return self._ignored_fields(
-            reference.dependency, directive, reference.location, advisory=vulnerability.advisory
-        )
-
     @_debug(
         _ignoring("the %(advisory)s vulnerability warning", "--ignore-vulnerability %(identifiers)s"),
         "vulnerability-ignored-by-option",
@@ -763,24 +768,11 @@ class Logger:
         """
         return cls._reference_fields(reference, directive=directive, version=reference.current_version, **extra)
 
-    @_warning(_redundant_directive("version %(version)s has no such vulnerability"), "redundant-ignore-vulnerable")
-    def redundant_vulnerable_advisory(self, reference: Reference) -> dict[str, object]:
-        """Warn that the advisory the marker names silences nothing."""
-        return self._redundant_suppression_fields(reference, reference.marker.advisory_directives)
-
-    _SAME_VULNERABILITIES = "report the same vulnerabilities in version %(version)s"
-
     @_warning(
         _redundant_directive(
-            f"the risk level %(level)s and the default level %(default_level)s {_SAME_VULNERABILITIES}"
+            "the risk level %(level)s and %(run_setting)s report the same vulnerabilities in version %(version)s"
         ),
-        "redundant-vulnerability-level-as-default",
-    )
-    @_warning(
-        _redundant_directive(
-            f"the risk level %(level)s and --vulnerability-level %(run_level)s {_SAME_VULNERABILITIES}"
-        ),
-        "redundant-vulnerability-level-as-option",
+        "redundant-vulnerability-level",
     )
     def redundant_vulnerable_level(self, reference: Reference, run_level: str) -> dict[str, object]:
         """Warn that the marker's risk level reports the same vulnerabilities as the run's level does."""
@@ -789,7 +781,7 @@ class Logger:
             reference,
             level.directive,
             level=level.value,
-            **_run_setting_field("level", VULNERABILITY_LEVEL, run_level),
+            run_setting=_run_setting(VULNERABILITY_LEVEL, run_level, "--vulnerability-level", "the default level {}"),
         )
 
     @_warning(_redundant_directive("%(reason)s"), "redundant-directive")
@@ -806,7 +798,11 @@ class Logger:
         """Log that a reference's repository does not tag a release."""
         return self._reference_fields(reference)
 
-    @_error("Could not fetch commit SHA for %(dependency)s %(version)s (%(reason)s): %(url)s", "commit-sha-not-fetched")
+    @_error(
+        "Could not fetch the commit of the release %(dependency)s@%(version)s, so a reference cannot be pinned to it "
+        "(%(reason)s): %(url)s",
+        "commit-sha-not-fetched",
+    )
     def no_commit_sha(self, dependency: str, version: str, reason: str, url: str) -> dict[str, object]:
         """Log that the commit SHA of a release could not be fetched."""
         return {"dependency": dependency, "version": version, "reason": reason, "url": url}
@@ -835,23 +831,29 @@ class Logger:
         """Return the fields of a message saying why a candidate stopped the walk, and which version stays."""
         return {"dependency": dependency, "candidate": candidate, "current": current, "reason": reason}
 
+    @classmethod
+    def _undated_drift_fields(cls, drifted: DriftedPin, reason: str) -> dict[str, object]:
+        """Return the fields of the report that the source could not date what the drifted pin now points at.
+
+        GitHub dates the new commit of a drifted ref, which the report names. Docker Hub dates the push of a drifted
+        digest.
+        """
+        commit = {} if drifted.kind is DriftKind.DIGEST else {"new_sha": drifted.new_sha}
+        return cls._drifted_reference_fields(drifted, reason=reason, **commit)
+
     @_error(
         "Could not determine from GitHub the date of commit %(new_sha)s that %(dependency)s%(tag)s in %(location)s "
         "now points at (%(reason)s), so the cooldown can't be verified; not adopting the drift",
         "drift-commit-date-unknown",
     )
-    def no_commit_date(self, kind: Drift, drifted: DriftedPin, reason: str) -> dict[str, object]:
-        """Log that GitHub could not date the new commit of a drifted pin."""
-        return self._drifted_reference_fields(kind, drifted, new_sha=drifted.new_sha, reason=reason)
-
     @_error(
         "Could not determine from Docker Hub when %(dependency)s%(tag)s in %(location)s was pushed (%(reason)s), "
         "so the cooldown can't be verified; not adopting the drift",
         "drift-push-date-unknown",
     )
-    def no_push_date(self, kind: Drift, drifted: DriftedPin, reason: str) -> dict[str, object]:
-        """Log that Docker Hub could not date the re-pushed tag of a drifted digest."""
-        return self._drifted_reference_fields(kind, drifted, reason=reason)
+    def undated_drift(self, drifted: DriftedPin, reason: str) -> dict[str, object]:
+        """Log that the source could not date what a drifted pin now points at, so its drift is not adopted."""
+        return self._undated_drift_fields(drifted, reason)
 
     @_warning(
         "Could not read the publication date '%(date)s' that Maven Central lists for %(dependency)s %(version)s, "
@@ -884,40 +886,15 @@ class Logger:
         """Warn that the reference's marker carries an invalid bracket item."""
         return self._reference_fields(reference, bracket_item=item)
 
-    def report_marker(self, reference: Reference, *, steers_the_update: bool) -> None:
-        """Report a reference's marker.
-
-        It logs an `ignore[update]` as holding the update back only where the marker steers the update.
-        """
-        marker = reference.marker
-        for directive in marker.default_directives:
-            self.redundant_directive(reference, directive, Reason.ASKS_FOR_THE_DEFAULT)
-        if marker.invalid_item is not None:
-            self.invalid_bracket_item(reference, marker.invalid_item)
-        self.recognised_marker(reference)
-        if steers_the_update and marker.ignores(Scope.UPDATE):
-            self.ignored(reference)
-
-    def warn_if_the_opt_in_is_redundant(
-        self, reference: Reference, scope: Scope, reason: RedundancyReason | None
-    ) -> None:
-        """Warn when the marker's opt-in to the scope is redundant, saying why (see `opt_in_redundancy`)."""
-        marker = reference.marker
-        if (redundancy := opt_in_redundancy(marker, scope, reason)) is not None:
-            self.redundant_directive(reference, marker.allow_directive(scope), redundancy)
-
     @_warning(_redundant_directive("this bound %(redundancy)s at version %(version)s"), "redundant-bound")
-    def warn_if_redundant_bound(self, reference: Reference) -> dict[str, object] | None:
-        """Warn when the marker's version bound is redundant for the current version.
-
-        The bound is redundant when it never has an effect or blocks every update (see `VersionBound.redundancy`).
-        """
-        if (bound := reference.marker.version_bound) == NO_BOUND:
-            return None
-        current_version = reference.current_version
-        if (redundancy := bound.redundancy(current_version)) is None:
-            return None
-        return self._reference_fields(reference, directive=spell(bound), version=current_version, redundancy=redundancy)
+    def redundant_bound(self, reference: Reference, redundancy: BoundRedundancy) -> dict[str, object]:
+        """Warn that the marker's version bound is redundant at the reference's current version."""
+        return self._reference_fields(
+            reference,
+            directive=reference.marker.version_bound_directive,
+            version=reference.current_version,
+            redundancy=redundancy,
+        )
 
     @_debug(
         "Holding back the versions %(range)s of %(dependency)s in %(location)s (update-time: %(directive)s)",
@@ -960,15 +937,13 @@ class Logger:
         )
 
     @_debug("Recognised update-time marker %(directives)s for %(dependency)s in %(location)s", "marker-recognised")
-    def recognised_marker(self, reference: Reference) -> dict[str, object] | None:
+    def recognised_marker(self, reference: Reference) -> dict[str, object]:
         """Log that a reference's marker was recognised.
 
         The marker is echoed as the file spells it, so a user comparing the log line against their file sees their
         own marker.
         """
-        if not str(marker := reference.marker):
-            return None
-        return {"directives": marker, "dependency": reference.dependency, "location": reference.location}
+        return {"directives": reference.marker, "dependency": reference.dependency, "location": reference.location}
 
     @_debug(_ignoring("updates"), "update-held-back")
     def ignored(self, reference: Reference) -> dict[str, object]:
@@ -1051,7 +1026,7 @@ class Logger:
         "Set %(setting)s to %(cooldown)r for %(compiled)s, and recorded in %(location)s that Update-time manages it",
         "compiled-file-cooldown-set",
     )
-    def managed_by_comment_written(
+    def configured_compiled_file_cooldown(
         self, source: Path, compiled: Path, cooldown: str, setting: str
     ) -> dict[str, object]:
         """Log that Update-time passed its cooldown to a recompile, and wrote the managed-by comment into the source."""
@@ -1109,26 +1084,16 @@ class Logger:
     @_warning(
         "Not running a package manager for %(location)s: %(files)s name different ones; set the packageManager field "
         "to the one to run",
-        "several-package-managers",
+        "several-node-package-managers",
     )
     def files_of_more_than_one_manager(self, path: Path, files: Iterable[Path]) -> dict[str, object]:
         """Warn that no package manager runs for a file whose project holds the files of more than one."""
         return self._file_fields(path, files=tuple(Location(file) for file in files))
 
-    @_warning("Could not read %(location)s to find the versions it locks (%(error)s)", "bun-lock-unreadable")
-    def unreadable_bun_lock(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
-        """Warn that a bun.lock cannot be read, so the versions bun moved in it go unreported."""
-        return self._file_fields(path, error=str(error))
-
-    @_warning("Could not read %(location)s to find the catalogs it holds (%(error)s)", "catalogs-unreadable")
-    def unreadable_catalogs(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
-        """Warn that a file holding catalogs cannot be read, so the entries of its catalogs go unchecked."""
-        return self._file_fields(path, error=str(error))
-
-    @_warning("Could not read %(location)s to find whether it sets a cooldown for bun (%(error)s)", "bunfig-unreadable")
-    def unreadable_bunfig(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
-        """Warn that a bunfig.toml cannot be read, so the cooldown it may set goes unread."""
-        return self._file_fields(path, error=str(error))
+    @_warning("Could not read %(location)s to find %(content)s (%(error)s)", "file-unreadable")
+    def unreadable_file(self, path: Path, error: OSError | ValueError, content: FileContent) -> dict[str, object]:
+        """Warn that a file cannot be read, so Update-time goes on without what it looked for in the file."""
+        return self._file_fields(path, content=content, error=str(error))
 
     @_warning(
         "Could not read from %(tool)s's settings whether they set an %(setting)s for %(location)s (%(reason)s); "
@@ -1139,10 +1104,10 @@ class Logger:
         """Warn that a tool does not report its settings, which say whether they set a cooldown for the file."""
         return self._file_fields(path, tool=tool, setting=setting, reason=reason)
 
-    @_error("Could not update the dependencies in %(location)s: %(tool)s failed", "dependencies-not-updated")
-    def uv_dependencies_not_updated(self, path: Path, tool: str) -> dict[str, object]:
-        """Log that a uv command failed for a file."""
-        return self._file_fields(path, tool=tool)
+    @_error("Could not %(task)s %(location)s: %(tool)s failed", "tool-failed")
+    def tool_failed(self, path: Path, task: ToolTask, tool: str) -> dict[str, object]:
+        """Log that the tool failed to do its task for a file."""
+        return self._file_fields(path, task=task, tool=tool)
 
     @_error(
         "Could not update the dependencies in %(location)s: they move together with %(failed)s, which uv could not "
@@ -1184,13 +1149,10 @@ class Logger:
         """Log that a file uv locks cannot be written, so the files uv locks together keep the dependencies they had."""
         return self._file_fields(path, error=str(error))
 
-    @_error(
-        "Could not update the dependencies in %(location)s: %(executable)s is not on the path",
-        "package-manager-not-on-path",
-    )
-    def package_manager_not_on_path(self, path: Path, executable: str) -> dict[str, object]:
-        """Log that the package manager that updates a file's dependencies is not on the path."""
-        return self._file_fields(path, executable=executable)
+    @_error("Could not %(task)s %(location)s: %(executable)s is not on the path", "tool-not-on-path")
+    def tool_not_on_path(self, path: Path, task: ToolTask, executable: str) -> dict[str, object]:
+        """Log that the tool that does the task for a file is not on the path."""
+        return self._file_fields(path, task=task, executable=executable)
 
     @_warning(
         "Could not read %(version)r, the version %(location)s pins %(dependency)s to; not upgrading it",
@@ -1199,16 +1161,6 @@ class Logger:
     def pinned_version_unreadable(self, path: Path, dependency: str, version: str) -> dict[str, object]:
         """Warn that a compiled requirements file pins a package to a version that is not PEP 440."""
         return self._file_fields(path, dependency=dependency, version=version)
-
-    @_error("Could not recompile %(location)s: %(tool)s failed", "compiled-file-not-recompiled")
-    def compiled_file_not_recompiled(self, path: Path, tool: str) -> dict[str, object]:
-        """Log that the tool failed to recompile a compiled requirements file."""
-        return self._file_fields(path, tool=tool)
-
-    @_error("Could not recompile %(location)s: %(executable)s is not on the path", "compiler-not-on-path")
-    def compiler_not_on_path(self, path: Path, executable: str) -> dict[str, object]:
-        """Log that the tool that compiled a requirements file is not on the path."""
-        return self._file_fields(path, executable=executable)
 
     @_warning(
         "Not updating the dependencies of %(location)s: %(manager)s manages them, and Update-time supports only "
@@ -1286,46 +1238,6 @@ class Logger:
         """Warn that a file does not parse."""
         return self._file_fields(path, format=file_format)
 
-    @_warning(
-        "Could not read %(location)s to find the lines declaring its dependencies (%(error)s)",
-        "package-json-unreadable",
-    )
-    def unreadable_package_json(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
-        """Warn that a package.json can't be read to find the lines declaring its dependencies."""
-        return self._file_fields(path, error=str(error))
-
-    @_warning(
-        "Could not read %(location)s to find the package manager it names (%(error)s)",
-        "package-manager-declaration-unreadable",
-    )
-    def unreadable_manager_declaration(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
-        """Warn that a package.json can't be read, so the package manager it may name goes unread."""
-        return self._file_fields(path, error=str(error))
-
-    @_warning("Could not read %(location)s to find the Node engine it declares (%(error)s)", "node-engine-unreadable")
-    def unreadable_node_engine(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
-        """Warn that a package.json can't be read, so the Node engine it may declare goes unread."""
-        return self._file_fields(path, error=str(error))
-
-    @_warning(
-        "Could not read %(location)s to find the inline script metadata it carries (%(error)s)", "script-unreadable"
-    )
-    def unreadable_script(self, path: Path, error: OSError | UnicodeDecodeError) -> dict[str, object]:
-        """Warn that a .py file can't be read, so the inline script metadata it may carry goes unread."""
-        return self._file_fields(path, error=str(error))
-
-    @_warning(
-        "Could not read %(location)s to find the requires-python it declares (%(error)s)", "requires-python-unreadable"
-    )
-    def unreadable_requires_python(self, path: Path, error: OSError | UnicodeDecodeError) -> dict[str, object]:
-        """Warn that a pyproject.toml can't be read, so the `requires-python` it may declare goes unread."""
-        return self._file_fields(path, error=str(error))
-
-    @_warning("Could not read the pom at %(url)s: it is not valid XML", "invalid-pom")
-    def invalid_pom(self, url: str) -> dict[str, object]:
-        """Warn that a pom a repository served does not parse."""
-        return {"url": url}
-
     @_error("Could not read %(location)s after updating it: it is not valid XML", "invalid-xml-after-update")
     def invalid_xml_after_update(self, path: Path) -> dict[str, object]:
         """Report that the file an updater rewrote cannot be parsed, so its update failed rather than being skipped."""
@@ -1363,12 +1275,7 @@ class Logger:
         return self._file_fields(path, before=before, after=after)
 
     @_debug(
-        "The versions plugin's %(setting)s, set on line %(line)s of %(pom)s, wins over Update-time "
-        "for %(location)s, so %(consequence)s",
-        "versions-plugin-setting-wins-at-line",
-    )
-    @_debug(
-        "The versions plugin's %(setting)s wins over Update-time for %(location)s, so %(consequence)s",
+        "The versions plugin's %(setting)s%(set_at)s wins over Update-time for %(location)s, so %(consequence)s",
         "versions-plugin-setting-wins",
     )
     def option_overridden_by_the_pom(
@@ -1378,8 +1285,8 @@ class Logger:
 
         Where the effective pom locates the setting, the message names the pom and the line.
         """
-        located = {"pom": pom, "line": line} if pom else {}
-        return self._file_fields(path, setting=setting, consequence=consequence, **located)
+        set_at = f", set on line {line} of {pom}," if pom else ""
+        return self._file_fields(path, setting=setting, consequence=consequence, set_at=set_at)
 
     @_debug(
         "Not reporting a new version for %(dependency)s in %(location)s: Maven moved the property %(property)s to "
@@ -1400,15 +1307,11 @@ class Logger:
         """Report that Maven cannot read the reactor as the scan found it."""
         return self._file_fields(root, poms=_poms(poms_left, "other"))
 
-    @_error(_CANNOT_READ_THE_REACTOR + _SINCE_UPDATE + _POMS_LEFT + _FIX, "reactor-unreadable-since-update")
+    @_error(_CANNOT_READ_THE_REACTOR + _SINCE_UPDATE + "%(poms_left)s" + _FIX, "reactor-unreadable-since-update")
     def unreadable_reactor_since_update(self, root: Path, updated: Path, poms_left: int) -> dict[str, object]:
-        """Report that Maven cannot read the reactor since Update-time updated a pom."""
-        return self._file_fields(root, updated=Location(updated), poms=_poms(poms_left))
-
-    @_error(_CANNOT_READ_THE_REACTOR + _SINCE_UPDATE + _FIX, "reactor-unreadable-since-last-update")
-    def unreadable_reactor_since_update_without_poms_left(self, root: Path, updated: Path) -> dict[str, object]:
-        """Report that Maven cannot read the reactor since Update-time updated a pom, in its run over the last pom."""
-        return self._file_fields(root, updated=Location(updated))
+        """Report that Maven cannot read the reactor since Update-time updated a pom, counting the poms left if any."""
+        left = _POMS_LEFT % {"poms": _poms(poms_left)} if poms_left else ""
+        return self._file_fields(root, updated=Location(updated), poms_left=left)
 
     @_error(_UPDATE_TIME_CANNOT_READ_THE_REACTOR + _SINCE_UNPARSABLE + _OTHER_POMS, "reactor-pom-unparsable")
     def unparsable_reactor(self, root: Path, unparsable: Path, other_poms: int) -> dict[str, object]:
@@ -1425,10 +1328,10 @@ class Logger:
 
     # --- HTTP fetching ---
 
-    @_warning("Could not fetch %(url)s: HTTP %(status)s %(reason)s", "http-error")
-    def response(self, response: Response) -> dict[str, object]:
-        """Log that the source answered a request with an error."""
-        return self._response_fields(response)
+    @_warning("Could not fetch %(url)s: %(failure)s", "request-failed")
+    def request_failed(self, url: str, failure: Response | Exception) -> dict[str, object]:
+        """Warn that a request failed, naming why (see `_failure`)."""
+        return {"url": url, "failure": _failure(failure)}
 
     @_debug("Could not fetch the changelog at %(url)s: HTTP %(status)s %(reason)s", "changelog-not-served")
     def unserved_changelog(self, response: Response) -> dict[str, object]:
@@ -1440,25 +1343,15 @@ class Logger:
         """Log that a repository does not serve a version listing for an artefact."""
         return {"url": url, "reason": reason}
 
-    @_warning("Could not read %(url)s: it is not valid JSON", "invalid-json")
-    def invalid_json(self, url: str) -> dict[str, object]:
-        """Warn that a source answered a request with a body that is not JSON."""
-        return {"url": url}
+    @_warning("Could not read %(url)s: it is not valid %(format)s", "invalid-response")
+    def invalid_response(self, url: str, response_format: str) -> dict[str, object]:
+        """Warn that a source answered a request with a body that does not parse as the format it should have."""
+        return {"url": url, "format": response_format}
 
     @staticmethod
     def _response_fields(response: Response) -> dict[str, object]:
         """Return the response's URL, status code, and reason phrase, as the fields of a message about it."""
         return {"url": response.url, "status": response.status_code, "reason": response.reason}
-
-    @_warning("Could not fetch %(url)s: the request timed out", "request-timed-out")
-    def timeout(self, url: str) -> dict[str, object]:
-        """Warn that a request timed out."""
-        return {"url": url}
-
-    @_warning("Could not fetch %(url)s: %(error)s", "request-failed")
-    def request_error(self, url: str, error: Exception) -> dict[str, object]:
-        """Log a network error (connection failure, too many redirects, ...) while fetching a URL."""
-        return {"url": url, "error": error}
 
     @_error(
         "GitHub's API rate limit of %(limit)s requests is used up until %(reset)s; set GITHUB_TOKEN to raise it",

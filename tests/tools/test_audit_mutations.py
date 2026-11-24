@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 from tools import audit_mutations as audit_module
 from tools.audit_mutations import _audit, _Finding, _passes_unmutated, _SuiteRun, main
 
-from mutation_time.mutation import Mutation, Outcome, Result, kills
+from mutation_time.mutation import Mutation, Outcome, _MutationResult, kills
 
 from tests.helpers import time_zone
 from tests.mutation_time import mutation_subject
@@ -162,7 +162,7 @@ class AuditTest(unittest.TestCase):
         registrations = [(_REGISTERED, _ODD_REPORTED_AS_EVEN), (_REGISTERED, even_reported_as_odd)]
         with (
             patch.object(audit_module, "_passes_unmutated", Mock(return_value=True)) as passes,
-            patch.object(Mutation, "check", return_value=Result(Outcome.SURVIVED)) as checked,
+            patch.object(Mutation, "check", return_value=_MutationResult(Outcome.SURVIVED)) as checked,
         ):
             _audit(registrations, _run_with(_A_SURVIVOR))
         passes.assert_called_once_with(_A_SURVIVOR)
@@ -172,9 +172,9 @@ class AuditTest(unittest.TestCase):
         """Test that a candidate is checked in UTC, and that the machine's own zone is restored afterwards."""
         zones = []
 
-        def check(_mutation: Mutation, _test: str) -> Result:
+        def check(_mutation: Mutation, _test: str) -> _MutationResult:
             zones.append((os.environ["TZ"], time.timezone))
-            return Result(Outcome.SURVIVED)
+            return _MutationResult(Outcome.SURVIVED)
 
         with time_zone("Asia/Tokyo"):
             with patch.object(Mutation, "check", autospec=True, side_effect=check):

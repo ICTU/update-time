@@ -5,12 +5,13 @@ from typing import TYPE_CHECKING
 
 from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
-from update_time.io.log import Logger
+from update_time.io.log import FileContent, Logger
 from update_time.manifests import package_json as package_json_manifest
+from update_time.markers import report
 from update_time.primitives.location import Location
 from update_time.references import rewrite
 from update_time.updaters import update_node_engine
-from update_time.updaters.update_node_engine import update_node_engines
+from update_time.updaters.update_node_engine import _update_node_engines
 
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.update_time.fixtures import DIGEST
@@ -62,7 +63,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(*(docker_tag(tag, DIGEST) for tag in latest))
         mock_package_json = mock_path(contents, parent=SCAN_ROOT)
         mock_glob.return_value = [mock_package_json]
-        update_node_engines()
+        _update_node_engines()
         return mock_package_json
 
     def test_unchanged(self, mock_glob: Mock):
@@ -87,10 +88,15 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         unreadable = mock_path("{", parent=SCAN_ROOT / "fixtures")
         mock_package_json = mock_path(_PACKAGE_JSON, parent=SCAN_ROOT)
         mock_glob.return_value = [unreadable, mock_package_json]
-        update_node_engines()
+        _update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
         error = "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
-        self.assert_logged(message_of(Logger.unreadable_node_engine), location=Location(unreadable), error=error)
+        self.assert_logged(
+            message_of(Logger.unreadable_file),
+            content=FileContent.NODE_ENGINE,
+            location=Location(unreadable),
+            error=error,
+        )
 
     def test_a_node_version_outside_the_engines_section_is_left_as_it_is(self, mock_glob: Mock):
         """Test that a node version another section declares is not taken for the engine."""
@@ -235,9 +241,9 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         case="a section that is not an object",
     )
     @kills.replace(
-        Logger.recognised_marker,
-        "if not str(marker := reference.marker):",
-        "if not (marker := reference.marker).raw:",
+        report.report_marker,
+        "if str(marker):",
+        "if marker.raw:",
         "no Recognised line names a marker spelled without directive text",
         case="a field that is not an object",
     )

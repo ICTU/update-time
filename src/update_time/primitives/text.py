@@ -26,7 +26,7 @@ def column(text: str, offset: int) -> int:
     return offset - text.rfind("\n", 0, offset) - 1
 
 
-def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
+def _rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
     """Return the matched text with the named groups replaced, leaving the rest of the match untouched.
 
     Only the spans the regex captured are rewritten, so the same value occurring elsewhere within the match is left
@@ -48,4 +48,4 @@ def replace_match(match: re.Match[str], replacement: str) -> str:
 
 def rewrite_string(match: re.Match[str], replacements: dict[str, str]) -> str:
     """Return the whole string the match came from, with the match's named groups replaced."""
-    return replace_match(match, rewrite_match(match, replacements))
+    return replace_match(match, _rewrite_match(match, replacements))

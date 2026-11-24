@@ -19,9 +19,9 @@ from update_time.primitives.timestamp import utc_date_and_time
 from update_time.sources import github
 from update_time.sources.github import (
     GitHubRepository,
-    TaggedVersion,
     _get_release,
     _newest_release,
+    _TaggedVersion,
     archival,
     changes_from_changelog_file,
     changes_from_release,
@@ -469,7 +469,7 @@ class NewestReleaseTest(LoggingTestCase):
         self.assertEqual(_newest_release(GitHubRepository("owner", "mixed")), Release("2.0", FRESH_DATE))
 
     @kills.delete(
-        github.TaggedVersion.version_string,
+        github._TaggedVersion.version_string,
         " if self.has_valid_version else self.tag_name",
         "a release tagged with something that is no version ends the run with a traceback",
         raises="packaging.version.InvalidVersion: Invalid version: 'nightly'",
@@ -530,10 +530,10 @@ class ArchivalTest(LoggingTestCase):
 class GetReleaseTest(LoggingTestCase):
     """Unit tests for getting a release matching a specific package and version."""
 
-    def assert_release(self, release: TaggedVersion | None, tag_name: str, body: str = "") -> None:
+    def assert_release(self, release: _TaggedVersion | None, tag_name: str, body: str = "") -> None:
         """Assert that the release found is the one the tag names, carrying the changes it was published with."""
-        self.assertEqual(cast("TaggedVersion", release).tag_name, tag_name)
-        self.assertEqual(cast("TaggedVersion", release).body, body)
+        self.assertEqual(cast("_TaggedVersion", release).tag_name, tag_name)
+        self.assertEqual(cast("_TaggedVersion", release).body, body)
 
     def assert_releases(self, repository: str, cases: list[tuple[str, str, str]]) -> None:
         """Assert that each case's package and version resolve, in the repository, to the release its tag names."""
@@ -668,7 +668,7 @@ class GetReleaseTest(LoggingTestCase):
             _get_release(GitHubRepository("owner", "repo without releases for get_release"), release_tags("any", "1.0"))
         )
         url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"
-        self.assert_logged(message_of(Logger.timeout), url=url)
+        self.assert_logged(message_of(Logger.request_failed), url=url, failure="the request timed out")
 
 
 class ChangesFromReleaseTest(CacheClearingTestCase):
@@ -698,7 +698,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         )
 
     @kills.replace(
-        github.TaggedVersion.from_release,
+        github._TaggedVersion.from_release,
         'release.get("body")',
         'release["body"]',
         "a release GitHub answers without a body ends the run with a traceback",

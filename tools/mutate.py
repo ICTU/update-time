@@ -69,7 +69,7 @@ _DEFAULT_COMMAND = ("just", "test")
 _ENVIRONMENT = os.environ | {CHECKS_OFF: "1"}
 
 
-def snippets(text: str) -> tuple[str, str]:
+def _snippets(text: str) -> tuple[str, str]:
     """Return the snippet to replace and its replacement, split on the separator line.
 
     The replacement drops the trailing newline the input ends with, so that both snippets are the text between the
@@ -92,7 +92,7 @@ def main() -> int:
     file_name, _, anchor = sys.argv[1].partition(_ANCHOR)
     path, command = Path(file_name), sys.argv[2:] or list(_DEFAULT_COMMAND)
     try:
-        old, new = snippets(sys.stdin.read())
+        old, new = _snippets(sys.stdin.read())
     except ValueError as reason:
         sys.stderr.write(f"{reason}\n")
         return _NOT_RUN

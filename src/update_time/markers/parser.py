@@ -3,13 +3,12 @@
 import re
 from typing import TYPE_CHECKING
 
-from packaging.specifiers import InvalidSpecifier
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
 
-from update_time.domain.bound import Verb
+from update_time.domain.bound import UpdateLevel, Verb, VersionBound
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.marker import directive as _directive
 from update_time.domain.vulnerability import NO_RISK_LEVEL, RISK_LEVELS
-from update_time.markers.bound import parse_bound
 
 if TYPE_CHECKING:
     from update_time.primitives.line import Line
@@ -158,7 +157,7 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
     if (advisory_marker := _parse_advisory_item(verb, item)) is not None:
         return advisory_marker
     try:
-        version_bound = parse_bound(verb, item)
+        version_bound = _parse_bound(verb, item)
     except InvalidSpecifier:
         # A bound's `update` names the item rather than the version it bounds, so the item reports its specifier.
         return Marker(invalid_item=item.removeprefix(str(Scope.UPDATE)))
@@ -187,3 +186,17 @@ def _parse_advisory_item(verb: Verb, item: str) -> Marker | None:
     if match is None or verb is not Verb.IGNORE:
         return None
     return Marker(ignored_advisories=frozenset({match.group("advisory")}))
+
+
+def _parse_bound(verb: Verb, item: str) -> VersionBound | None:
+    """Parse a marker item into a version bound, or None when the item is not a bound.
+
+    An `update` bound whose specifier is unparsable raises `InvalidSpecifier` rather than returning None, so a
+    caller can tell a malformed bound (which it should report) from an item that is simply not a bound. A bound
+    built here holds exactly one of its two forms, the specifier or the level.
+    """
+    if (level := next((level for level in UpdateLevel if item == f"{level.name.lower()}-update"), None)) is not None:
+        return VersionBound(verb, level=level, item=item)
+    if item.startswith("update"):
+        return VersionBound(verb, SpecifierSet(item.removeprefix("update")), item=item)
+    return None

@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, call
 
 from mutation_time.mutation import kills
-from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
+from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, BoundRedundancy, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
+    NO_PROJECT,
     Archival,
     ArchivedSubject,
     DependencyVersion,
@@ -18,6 +19,7 @@ from update_time.domain.dependency import (
     ProjectGetter,
     Release,
     Unserved,
+    Yank,
     every_project,
 )
 from update_time.domain.directive import Reason
@@ -27,17 +29,24 @@ from update_time.domain.source import Source, every_dependency
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Ecosystem
 from update_time.references import resolve as resolve_module
-from update_time.references.resolve import latest_version, report_project_checks
+from update_time.references.resolve import latest_version, report_project_checks, report_yank
 
 from tests.helpers import patch_environ
-from tests.update_time.fixtures import COOLDOWN_30, DIGEST, STALE_AFTER_90, STALE_DATE, VULNERABILITY_LEVEL_NONE
+from tests.update_time.fixtures import (
+    COOLDOWN_30,
+    DIGEST,
+    PAST_COOLDOWN_DATE,
+    STALE_AFTER_90,
+    STALE_DATE,
+    STALE_PROJECT,
+    VULNERABILITY_LEVEL_NONE,
+)
 from tests.update_time.helpers import (
     bound,
     resolved_reference,
     staleness_disabled,
 )
 from tests.update_time.references.helpers import (
-    mock_logger,
     mock_new_version_getter,
     mock_project_getter,
     new_version_getter,
@@ -101,22 +110,50 @@ _REDUNDANT_DIRECTIVES = {
 }
 
 
-@dataclass(frozen=True)
-class _ReportedCheck:
-    """One of the checks a marker silences that the decision reports the resolved version on.
+_YANKED = DependencyVersion("3.15", yank=Yank(yanked=True))
+_IGNORE_YANKED = Marker(ignored_scopes=Scope.YANKED)
+_IGNORE_ARCHIVED = Marker(ignored_scopes=Scope.ARCHIVED)
 
-    `scope` is what a marker silences the check with, and `reporter` names the `Logger` method it reports through.
+# A project whose newest release is stale under a threshold of 90 days, and not under the default.
+_STALE_UNDER_90 = Project(newest=Release("3.16", PAST_COOLDOWN_DATE))
+
+# The logger methods that warn about a project.
+_PROJECT_REPORTS = ("stale_dependency", "archived_dependency")
+
+
+@dataclass(frozen=True)
+class _CheckCase[StateT]:
+    """What the source answers a check, the reference's marker, and the `Logger` method reporting them, if any.
+
+    `arguments` holds what the report is called with besides the reference.
     """
 
-    scope: Scope
-    reporter: str
+    state: StateT
+    marker: Marker = NO_MARKER
+    report: str = ""
+    arguments: tuple[object, ...] = ()
+
+    def expected_calls(self, resolved: ResolvedReference) -> list[object]:
+        """Return the calls the logger gets for the reference: the report, or none."""
+        return [getattr(call, self.report)(resolved, *self.arguments)] if self.report else []
 
 
-# A marker can silence each of these checks, which are keyed by the scope silencing them. The decision reports the
-# resolved version on each.
-_CHECKS = {
-    "yanked": _ReportedCheck(Scope.YANKED, "report_yank"),
-    "archived": _ReportedCheck(Scope.ARCHIVED, "report_archival"),
+_YANK_CASES = {
+    "yank silenced": _CheckCase(Yank(yanked=True), _IGNORE_YANKED, "ignored_warning", (Scope.YANKED, "ignore[yanked]")),
+    "ignore[yanked] on a version not yanked": _CheckCase(
+        Yank(), _IGNORE_YANKED, "redundant_ignore", (Scope.YANKED, "ignore[yanked]", "3.15")
+    ),
+    "not yanked": _CheckCase(Yank()),
+}
+
+_ARCHIVAL_CASES = {
+    "archival silenced": _CheckCase(
+        Archival(archived=True), _IGNORE_ARCHIVED, "ignored_warning", (Scope.ARCHIVED, "ignore[archived]")
+    ),
+    "ignore[archived] on a project not archived": _CheckCase(
+        Archival(), _IGNORE_ARCHIVED, "redundant_ignore", (Scope.ARCHIVED, "ignore[archived]", ArchivedSubject.PROJECT)
+    ),
+    "not archived": _CheckCase(Archival()),
 }
 
 
@@ -126,26 +163,29 @@ class LatestVersionTest(unittest.TestCase):
     def setUp(self) -> None:
         """Use a mock logger and path so log calls can be asserted."""
         super().setUp()
-        self.log = mock_logger()
+        self.log = Mock()
         self.path = Mock()
 
     def reference(self, dependency: str = "python", marker: Marker = NO_MARKER) -> Reference:
         """Return the reference the decision is run for, steered by the marker, as the logger is handed it."""
         return Reference(dependency, "3.14", self.path, marker=marker)
 
-    def resolved(self, release: str = "3.15", marker: Marker = NO_MARKER) -> ResolvedReference:
-        """Return the resolved reference the decision hands the logger, for the version it resolved."""
-        return ResolvedReference.from_reference(self.reference(marker=marker), release=DependencyVersion(release))
+    def resolved(self, marker: Marker = NO_MARKER, project: Project = NO_PROJECT) -> ResolvedReference:
+        """Return the resolved reference the decision hands the logger, for version 3.15 and the project."""
+        reference = self.reference(marker=marker)
+        return ResolvedReference.from_reference(reference, release=DependencyVersion("3.15"), project=project)
 
     def latest_version(
         self,
         marker: Marker = NO_MARKER,
         get_new_version: NewVersionGetter | None = None,
         dependency: str = "python",
+        get_project: ProjectGetter | None = None,
     ) -> DependencyVersion | None:
         """Run the decision for the dependency's reference at version 3.14, resolving 3.15 unless overridden."""
         get_new_version = new_version_getter("3.15") if get_new_version is None else get_new_version
-        return latest_version(self.reference(dependency, marker), Source(new_version=get_new_version), self.log)
+        source = Source(new_version=get_new_version, project=get_project)
+        return latest_version(self.reference(dependency, marker), source, self.log)
 
     def assert_resolved(
         self, get_new_version: Mock, version_bound: VersionBound = NO_BOUND, cooldown: int = COOLDOWN.default
@@ -202,36 +242,44 @@ class LatestVersionTest(unittest.TestCase):
         """Test that the reference's bound is checked for redundancy against its current version."""
         marker = Marker(version_bound=bound(Verb.IGNORE, "patch-update"))
         self.latest_version(marker)
-        self.log.warn_if_redundant_bound.assert_called_once_with(self.reference(marker=marker))
+        self.log.redundant_bound.assert_called_once_with(self.reference(marker=marker), BoundRedundancy.BLOCKS_ALL)
 
     def test_the_resolved_version_reaches_every_check(self):
-        """Test that the version the run resolves is handed to each check, which warns or reports what silenced it."""
-        for name, check in _CHECKS.items():
-            with self.subTest(check=name):
-                self.log.reset_mock()  # Judge each case on the calls of its own run.
-                self.latest_version()
-                getattr(self.log, check.reporter).assert_called_once_with(self.resolved())
+        """Test that the resolved version and the project the source reports reach the yank and archival checks."""
+        archival = Archival(archived=True)
+        source = Source(
+            new_version=mock_new_version_getter(_YANKED), project=mock_project_getter(Project(archival=archival))
+        )
+        latest_version(self.reference(), source, self.log)
+        project = Project(archival=archival)
+        resolved = ResolvedReference.from_reference(self.reference(), release=_YANKED, project=project)
+        self.log.archived_dependency.assert_called_once_with(resolved, archival)
+        self.log.yanked_dependency.assert_called_once_with(resolved)
 
     @patch_environ({STALE_AFTER.name: "30"})
     def test_the_configured_threshold_is_used_for_the_staleness_warning(self):
         """Test that the threshold the run was configured with is used, rather than the built-in default."""
-        self.latest_version()
-        self.log.report_staleness.assert_called_once_with(self.resolved(), 30)
+        self.latest_version(get_project=mock_project_getter(_STALE_UNDER_90))
+        resolved = self.resolved(project=_STALE_UNDER_90)
+        self.log.stale_dependency.assert_called_once_with(resolved, _STALE_UNDER_90.newest, 30)
 
+    @kills.replace(
+        resolve_module._warn_if_stale,
+        "stale_release(resolved.project, resolved.stale_after)",
+        "stale_release(resolved.project, STALE_AFTER.get())",
+        "the marker's threshold is ignored, so the run's threshold decides the staleness warning",
+    )
     def test_the_markers_threshold_is_used_for_the_staleness_warning(self):
         """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
-        self.latest_version(STALE_AFTER_90)
-        self.log.report_staleness.assert_called_once_with(self.resolved(marker=STALE_AFTER_90), 90)
+        self.latest_version(STALE_AFTER_90, get_project=mock_project_getter(_STALE_UNDER_90))
+        resolved = self.resolved(STALE_AFTER_90, _STALE_UNDER_90)
+        self.log.stale_dependency.assert_called_once_with(resolved, _STALE_UNDER_90.newest, 90)
 
     def test_a_marker_silencing_a_warning_still_returns_the_update(self):
-        """Test that a marker silencing a warning leaves the update in place, and reaches the check that reports it."""
-        for name, check in _CHECKS.items():
-            with self.subTest(check=name):
-                self.log.reset_mock()  # Judge each case on the calls of its own run.
-                marker = Marker(ignored_scopes=check.scope)
-                latest = self.latest_version(marker)
-                self.assertEqual(latest, DependencyVersion(version="3.15"))
-                getattr(self.log, check.reporter).assert_called_once_with(self.resolved(marker=marker))
+        """Test that a marker silencing the yank and archival warnings leaves the update in place."""
+        marker = Marker(ignored_scopes=Scope.YANKED | Scope.ARCHIVED)
+        latest = self.latest_version(marker, mock_new_version_getter(_YANKED))
+        self.assertEqual(latest, _YANKED)
 
     def test_warns_about_a_directive_the_source_cannot_apply(self):
         """Test that a directive is reported as redundant when the source cannot apply it, and the update stands."""
@@ -332,9 +380,12 @@ class LatestVersionTest(unittest.TestCase):
         archival = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
         project = Project(newest=Release("3.16", STALE_DATE), archival=archival)
         cases = {
-            "a repository not served": (Unserved.REPOSITORY, Project()),
-            "a version not served": (Unserved.VERSION, Project(archival=archival)),
-            "a repository that does not tag a release": (Unserved.RELEASES, project),
+            "a repository not served": (Unserved.REPOSITORY, []),
+            "a version not served": (Unserved.VERSION, ["archived_dependency"]),
+            "a repository that does not tag a release": (
+                Unserved.RELEASES,
+                ["stale_dependency", "archived_dependency"],
+            ),
         }
         for case, (unserved, expected) in cases.items():
             with self.subTest(case=case):
@@ -345,7 +396,8 @@ class LatestVersionTest(unittest.TestCase):
                     new_version=mock_new_version_getter(served),
                 )
                 latest_version(self.reference(), source, self.log)
-                self.assertEqual(self.log.report_staleness.call_args.args[0].project, expected)
+                reports = [name for name, *_ in self.log.method_calls if name in _PROJECT_REPORTS]
+                self.assertEqual(reports, expected)
 
     @kills.force_false(
         resolve_module._reported_project,
@@ -377,8 +429,9 @@ class LatestVersionTest(unittest.TestCase):
 
     def test_ignore_update_returns_none(self):
         """Test that `ignore[update]` holds back the update, after the staleness check has still run."""
-        self.assertIsNone(self.latest_version(Marker(ignored_scopes=Scope.UPDATE)))
-        self.log.report_staleness.assert_called_once()
+        get_project = mock_project_getter(STALE_PROJECT)
+        self.assertIsNone(self.latest_version(Marker(ignored_scopes=Scope.UPDATE), get_project=get_project))
+        self.log.stale_dependency.assert_called_once()
 
 
 class ReportProjectChecksTest(unittest.TestCase):
@@ -387,24 +440,57 @@ class ReportProjectChecksTest(unittest.TestCase):
     def setUp(self) -> None:
         """Use a mock logger and path so log calls can be asserted."""
         super().setUp()
-        self.log = mock_logger()
+        self.log = Mock()
         self.path = Mock()
 
     def reference(self, marker: Marker = NO_MARKER) -> Reference:
         """Return the reference without an exact pin the checks are run for, steered by the marker."""
         return Reference("humanize", "", self.path, marker=marker)
 
-    def project(self, archival: Archival) -> ProjectGetter:
-        """Return a project getter answering with the project's archival, which it declares."""
-        return ProjectGetter(Mock(return_value=Project(archival=archival)), declares_archival=every_project)
+    def report_project_checks(self, project: Project, marker: Marker = NO_MARKER) -> ResolvedReference:
+        """Run the checks over the project, steered by the marker, and return the reference checked."""
+        report_project_checks(self.reference(marker), self.log, mock_project_getter(project))
+        return resolved_reference("humanize", self.path, marker=marker, project=project)
 
     def test_reports_both_checks_for_the_project(self):
         """Test that what the getter answers reaches the archival report and the staleness report alike."""
-        archival = Archival(archived=True)
-        report_project_checks(self.reference(), self.log, self.project(archival))
-        resolved = resolved_reference("humanize", self.path, project=Project(archival=archival))
-        self.log.report_archival.assert_called_once_with(resolved)
-        self.log.report_staleness.assert_called_once_with(resolved, STALE_AFTER.default)
+        archival, newest = Archival(archived=True), Release("4.15.0", STALE_DATE)
+        resolved = self.report_project_checks(Project(newest=newest, archival=archival))
+        self.log.archived_dependency.assert_called_once_with(resolved, archival)
+        self.log.stale_dependency.assert_called_once_with(resolved, newest, STALE_AFTER.default)
+
+    @kills.force_false(
+        resolve_module._report_archival,
+        "archival.archived and directive",
+        "an ignore[archived] no longer silences the archival warning",
+        case="archival silenced",
+    )
+    @kills.replace(
+        resolve_module._report_archival,
+        "elif directive:",
+        "elif False:",
+        "an ignore[archived] that silences nothing goes unreported, so it outlives the archival it was written for",
+        case="ignore[archived] on a project not archived",
+    )
+    @kills.replace(
+        resolve_module._report_archival,
+        "elif directive:",
+        "else:",
+        "an unmarked project that its source keeps active gets a redundancy warning for a directive it does not carry",
+        case="not archived",
+    )
+    def test_reports_the_archival_marker_or_nothing(self):
+        """Test that a silenced archival is reported as silenced, and that a marker silencing nothing is redundant."""
+        for name, case in _ARCHIVAL_CASES.items():
+            with self.subTest(case=name):
+                self.log.reset_mock()  # Judge each case on the calls of its own run.
+                resolved = self.report_project_checks(Project(archival=case.state), case.marker)
+                self.assertEqual(self.log.method_calls, case.expected_calls(resolved))
+
+    def test_reports_nothing_where_the_archival_is_unknown(self):
+        """Test that an `ignore[archived]` on a project whose source did not say it archived it is not reported."""
+        self.report_project_checks(NO_PROJECT, _IGNORE_ARCHIVED)
+        self.assertEqual(self.log.method_calls, [])
 
     def test_a_source_reporting_no_archival_is_not_asked_with_the_staleness_check_switched_off(self):
         """Test that switching the staleness check off leaves such a source unasked, so it costs no request."""
@@ -412,5 +498,48 @@ class ReportProjectChecksTest(unittest.TestCase):
         with staleness_disabled:
             report_project_checks(self.reference(), self.log, get_project)
         get_project.assert_not_called()
-        self.log.report_staleness.assert_not_called()
-        self.log.report_archival.assert_not_called()
+        self.assertEqual(self.log.method_calls, [])
+
+
+class ReportYankTest(unittest.TestCase):
+    """Unit tests for reporting the yank of the version the run leaves a reference on."""
+
+    @staticmethod
+    def report_yank(yank: Yank | None, marker: Marker) -> tuple[ResolvedReference, Mock]:
+        """Report the yank of version 3.15, steered by the marker, and return the reference and the logger."""
+        log = Mock()
+        resolved = resolved_reference("python", Mock(), DependencyVersion("3.15", yank=yank), marker=marker)
+        report_yank(resolved, log)
+        return resolved, log
+
+    @kills.force_false(
+        resolve_module.report_yank,
+        "yank.yanked and directive",
+        "an ignore[yanked] no longer silences the yank warning",
+        case="yank silenced",
+    )
+    @kills.replace(
+        resolve_module.report_yank,
+        "elif directive:",
+        "elif False:",
+        "an ignore[yanked] that silences nothing goes unreported, so it outlives the yank it was written for",
+        case="ignore[yanked] on a version not yanked",
+    )
+    @kills.replace(
+        resolve_module.report_yank,
+        "elif directive:",
+        "else:",
+        "an unmarked version that its source kept gets a redundancy warning for a directive it does not carry",
+        case="not yanked",
+    )
+    def test_reports_the_marker_or_nothing(self):
+        """Test that a silenced yank is reported as silenced, and that a marker silencing nothing is redundant."""
+        for name, case in _YANK_CASES.items():
+            with self.subTest(case=name):
+                resolved, log = self.report_yank(case.state, case.marker)
+                self.assertEqual(log.method_calls, case.expected_calls(resolved))
+
+    def test_reports_nothing_where_the_yank_is_unknown(self):
+        """Test that an `ignore[yanked]` on a version whose source did not say whether it was yanked is not reported."""
+        _resolved, log = self.report_yank(None, _IGNORE_YANKED)
+        self.assertEqual(log.method_calls, [])

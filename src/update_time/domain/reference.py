@@ -1,7 +1,7 @@
 """References as a file records them, what a source resolved for them, and whether a hash pin drifted."""
 
 from dataclasses import dataclass, field, fields, replace
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Self
 
 from update_time.domain.cooldown import COOLDOWN
@@ -89,8 +89,9 @@ class ResolvedReference(Reference):
 
 @dataclass(frozen=True, kw_only=True)
 class DriftedPin(Reference):
-    """A hash pin that no longer matches what it points at, and the hash it now resolves to."""
+    """A hash pin that no longer matches what it points at: its kind, and the hash it now resolves to."""
 
+    kind: DriftKind
     new_sha: str
 
 
@@ -127,6 +128,28 @@ class RefKind(StrEnum):
     BRANCH = "branch"
     SHORT_COMMIT_SHA = "short commit SHA"
     REF = "ref"
+
+
+class DriftKind(Enum):
+    """A kind of hash pin that can drift: a digest, or the commit that a tag, a branch, or a ref of unknown kind names.
+
+    A commit drifts as the ref naming it moves, so its kind is the kind of that ref, and `DriftKind(ref)` looks it up.
+    """
+
+    DIGEST = None
+    TAG = RefKind.TAG
+    BRANCH = RefKind.BRANCH
+    REF = RefKind.REF
+
+    @property
+    def ref(self) -> RefKind | None:
+        """Return the kind of the ref whose move drifts the pin, or None for a digest."""
+        return self.value
+
+    @property
+    def separator(self) -> str:
+        """Return the separator before the version that the drifted reference names."""
+        return ":" if self is DriftKind.DIGEST else "@"
 
 
 def hash_drifted(resolved: str, pinned: str) -> bool:

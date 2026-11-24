@@ -3,7 +3,7 @@
 from unittest.mock import Mock, patch
 
 from update_time.primitives.location import Location
-from update_time.updaters.update_gitlab_ci_config import update_gitlab_ci_config
+from update_time.updaters.update_gitlab_ci_config import _update_gitlab_ci_config
 
 from tests.helpers import mock_path
 from tests.update_time import registry
@@ -24,7 +24,7 @@ class UpdateGitLabCIConfigTest(registry.ImageUpdaterTestMixin):
     def run_updater(self, mock_file: Mock) -> None:
         """Run the GitLab CI updater on the mock config file."""
         with patch("update_time.updaters.update_gitlab_ci_config.glob_for", return_value=[mock_file]):
-            update_gitlab_ci_config()
+            _update_gitlab_ci_config()
 
     def test_pin_tagless_image(self):
         """Test that an `image:` naming no tag is pinned to the version and digest `latest` serves."""
@@ -38,7 +38,7 @@ class UpdateGitLabCIConfigTest(registry.ImageUpdaterTestMixin):
     def test_missing_config_file(self):
         """Test that a repository without a .gitlab-ci.yml is handled gracefully."""
         with patch("update_time.updaters.update_gitlab_ci_config.glob_for", return_value=[]):
-            update_gitlab_ci_config()
+            _update_gitlab_ci_config()
         self.requests.assert_not_called()
         self.assert_no_debug_logged()
         self.assert_no_new_version_logged()

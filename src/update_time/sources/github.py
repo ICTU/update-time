@@ -166,7 +166,7 @@ class GitHubRepository:
 
 @total_ordering
 @dataclass(frozen=True)
-class TaggedVersion:
+class _TaggedVersion:
     """A version of a GitHub repository, known from its tag, its release, or both."""
 
     repository: GitHubRepository
@@ -179,7 +179,7 @@ class TaggedVersion:
     has_release: bool = True  # False for a version that was tagged but not published as a GitHub release
 
     @classmethod
-    def from_release(cls, repository: GitHubRepository, release: _ReleaseJSON) -> TaggedVersion:
+    def from_release(cls, repository: GitHubRepository, release: _ReleaseJSON) -> _TaggedVersion:
         """Create a TaggedVersion from a GitHub releases endpoint result.
 
         GitHub renders a release body as Markdown, whatever the repository's own changelog file is written in. A release
@@ -198,7 +198,7 @@ class TaggedVersion:
         )
 
     @classmethod
-    def from_tag(cls, repository: GitHubRepository, tag: _TagJSON, release: _ReleaseJSON | None) -> TaggedVersion:
+    def from_tag(cls, repository: GitHubRepository, tag: _TagJSON, release: _ReleaseJSON | None) -> _TaggedVersion:
         """Create a TaggedVersion from a GitHub tags endpoint result, enriched with the tag's release when there is one.
 
         A tag without a release takes its pre-release flag from its version, such as `v4.0.0-alpha.8`.
@@ -264,7 +264,7 @@ class TaggedVersion:
         """Return the tag's version. Version accepts (and normalizes away) the common `v` prefix."""
         return Version(self.tag_name)
 
-    def __lt__(self, other: TaggedVersion) -> bool:
+    def __lt__(self, other: _TaggedVersion) -> bool:
         """Order by version, and equal versions by how precisely they are spelled."""
         return (self.version, len(self.version.release)) < (other.version, len(other.version.release))
 
@@ -518,7 +518,7 @@ def version_at_tag(dependency: DependencyName, version: VersionString) -> Versio
     return highest.version_string
 
 
-def _own_tag(tagged_versions: Iterable[TaggedVersion], version: Version) -> TaggedVersion | None:
+def _own_tag(tagged_versions: Iterable[_TaggedVersion], version: Version) -> _TaggedVersion | None:
     """Return the listed tag spelled as precisely as the version: `v4` for version `4`, whatever `v4.0.0` tags."""
     return next(
         (
@@ -533,12 +533,12 @@ def _own_tag(tagged_versions: Iterable[TaggedVersion], version: Version) -> Tagg
     )
 
 
-def _tags_another_commit(tagged_version: TaggedVersion, own_tag: TaggedVersion | None) -> bool:
+def _tags_another_commit(tagged_version: _TaggedVersion, own_tag: _TaggedVersion | None) -> bool:
     """Return whether the version equals the own tag's but tags another commit, as `v4.0.0` can beside `v4`."""
     return own_tag is not None and tagged_version.version == own_tag.version and tagged_version.sha != own_tag.sha
 
 
-def _highest_version_at(repository: GitHubRepository, sha: str) -> TaggedVersion | None:
+def _highest_version_at(repository: GitHubRepository, sha: str) -> _TaggedVersion | None:
     """Return the highest of the commit's version tags that could be an update, or None."""
     tagged = _tagged_versions(repository) or ()
     versions = [version for version in tagged if version.sha == sha and version.is_candidate]
@@ -566,7 +566,7 @@ def _committer_date(commit: _CommitJSON) -> LookedUp[datetime]:
     return LookedUp(committed)
 
 
-def _tagged_versions(repository: GitHubRepository) -> list[TaggedVersion] | None:
+def _tagged_versions(repository: GitHubRepository) -> list[_TaggedVersion] | None:
     """Return the repository's versions: its tags with their releases, plus the releases whose tag wasn't listed.
 
     A tag without a release takes the publication date of the first release of the same commit. Both endpoints return
@@ -578,7 +578,7 @@ def _tagged_versions(repository: GitHubRepository) -> list[TaggedVersion] | None
         return None
     releases_by_tag = {release["tag_name"]: release for release in releases or ()}
     listed_tags = {tag["name"] for tag in tags or ()}
-    tagged_versions = [TaggedVersion.from_tag(repository, tag, releases_by_tag.get(tag["name"])) for tag in tags or ()]
+    tagged_versions = [_TaggedVersion.from_tag(repository, tag, releases_by_tag.get(tag["name"])) for tag in tags or ()]
     release_dates_by_sha: dict[str, datetime] = {}
     for published_at, sha in sorted(
         (version.published_at, version.sha) for version in tagged_versions if version.published_at
@@ -589,7 +589,7 @@ def _tagged_versions(repository: GitHubRepository) -> list[TaggedVersion] | None
         for version in tagged_versions
     ]
     tagged_versions.extend(
-        TaggedVersion.from_release(repository, release)
+        _TaggedVersion.from_release(repository, release)
         for tag_name, release in releases_by_tag.items()
         if tag_name not in listed_tags
     )
@@ -634,7 +634,7 @@ def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, co
 
 
 def _eligible_version(
-    tagged_version: TaggedVersion,
+    tagged_version: _TaggedVersion,
     walk: CooldownWalk,
     changes_by_version: Mapping[Version, Changes],
     current_version: VersionString,
@@ -706,9 +706,9 @@ def _newest_release(repository: GitHubRepository) -> Release | None:
     """
     if (releases := _list_releases(repository)) is None or _list_tags(repository) is None:
         return None
-    versions = [TaggedVersion.from_release(repository, release) for release in releases]
+    versions = [_TaggedVersion.from_release(repository, release) for release in releases]
     if (tag := _newest_tag_beyond_releases(repository)) is not None:
-        versions.append(TaggedVersion.from_tag(repository, tag, release=None))
+        versions.append(_TaggedVersion.from_tag(repository, tag, release=None))
     return Release.newest(
         Release(version=version.version_string, published=published)
         for version in versions
@@ -716,12 +716,12 @@ def _newest_release(repository: GitHubRepository) -> Release | None:
     )
 
 
-def _get_release(repository: GitHubRepository, tags: list[str]) -> TaggedVersion | None:
+def _get_release(repository: GitHubRepository, tags: list[str]) -> _TaggedVersion | None:
     """Get the release carrying the first of the tags that the repository released under."""
     releases_by_tag = {release["tag_name"]: release for release in (_list_releases(repository) or ())}
     for tag in tags:
         if tag in releases_by_tag:
-            return TaggedVersion.from_release(repository, releases_by_tag[tag])
+            return _TaggedVersion.from_release(repository, releases_by_tag[tag])
     return None
 
 

@@ -32,7 +32,7 @@ def _layer(label: str) -> str:
     return label.removeprefix(f"{_PACKAGE}/")
 
 
-def diagram(edges: Iterable[GraphReportEdge]) -> str:
+def _diagram(edges: Iterable[GraphReportEdge]) -> str:
     """Return the Mermaid flowchart of the layers, top down, with an arrow from each layer to each layer it imports."""
     arrows = [f"  {_layer(edge.source)} --> {_layer(edge.target)}" for edge in edges]
     return "\n".join(["flowchart TD", *arrows]) + "\n"
@@ -41,7 +41,7 @@ def diagram(edges: Iterable[GraphReportEdge]) -> str:
 def _render() -> dict[Path, str]:
     """Return the document, drawn from the imports between the layers of the package's code."""
     snapshot = project_graph(str(_ROOT / "src")).collapse_to_folder_depth(_LAYER_DEPTH).snapshot()
-    return {_ARCHITECTURE: f"{_INTRODUCTION}\n```mermaid\n{diagram(snapshot.edges)}```\n"}
+    return {_ARCHITECTURE: f"{_INTRODUCTION}\n```mermaid\n{_diagram(snapshot.edges)}```\n"}
 
 
 def main() -> None:

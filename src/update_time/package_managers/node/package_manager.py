@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.filesystem import is_scanned
-from update_time.io.log import get_logger
+from update_time.io.log import ToolTask, get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files.locked_versions import ROOT_PROJECT
 from update_time.manifests.npm_declaration import Catalogs
@@ -212,7 +212,7 @@ class PackageManager:
         """
         path = package_json.path
         if not is_installed(executable := self.update.executable):
-            _LOG.package_manager_not_on_path(path, executable)
+            _LOG.tool_not_on_path(path, ToolTask.UPDATE, executable)
             return CheckedPackageJson(package_json, MARKER_POLICY)
         directory = path.parent
         workspace = self.workspace_of(directory)

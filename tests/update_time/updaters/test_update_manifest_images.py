@@ -13,7 +13,7 @@ from update_time.primitives.location import Location
 from update_time.references import file as references_file
 from update_time.references import resolve as references_resolve
 from update_time.sources import oci
-from update_time.updaters.update_manifest_images import update_manifest_images
+from update_time.updaters.update_manifest_images import _update_manifest_images
 
 from tests.helpers import mock_path
 from tests.update_time import registry
@@ -42,7 +42,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
             return mock_files if pattern == glob_pattern else []
 
         with patch("pathlib.Path.rglob", side_effect=rglob):
-            update_manifest_images()
+            _update_manifest_images()
 
     def run_compose_updater(self, *mock_files: Mock) -> None:
         """Run the manifest updater with the mock files as the only Docker Compose files."""
@@ -242,8 +242,8 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills.replace(
         references_resolve._warn_about_redundant_update_directives,
-        "if never_updated is None:\n        log.warn_if_redundant_bound(reference)\n        return",
-        "log.warn_if_redundant_bound(reference)\n    if never_updated is None:\n        return",
+        "else:\n        warn_if_the_bound_is_redundant(reference, log)",
+        "warn_if_the_bound_is_redundant(reference, log)",
         "a bound on an image never looked up is reported twice, once as never having an effect",
     )
     def test_a_bound_on_a_built_image_is_redundant_once_because_of_the_build(self):
@@ -303,7 +303,7 @@ class ScannedManifestsTest(unittest.TestCase):
             patch("update_time.updaters.update_manifest_images.update_yaml_files") as update_yaml_files,
             patch("update_time.updaters.update_manifest_images.glob_for", return_value=[]) as glob_for,
         ):
-            update_manifest_images()
+            _update_manifest_images()
         return update_yaml_files, glob_for
 
     def test_docker_compose_files_are_scanned(self):

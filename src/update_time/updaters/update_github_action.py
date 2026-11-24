@@ -40,7 +40,7 @@ def _versioned_actions(lines: list[Line]) -> list[Reference]:
     return actions
 
 
-def update_github_actions() -> None:
+def _update_github_actions() -> None:
     """Update the GitHub Actions in all YAML files under the GitHub directory, including composite actions.
 
     The vulnerability check runs on the lines the rewrite produced, so it checks the version the run settled on.
@@ -59,7 +59,7 @@ def update_github_actions() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the GitHub Actions in the repository's workflows."""
-    update_github_actions()
+    _update_github_actions()
 
 
 if __name__ == "__main__":  # pragma: no cover

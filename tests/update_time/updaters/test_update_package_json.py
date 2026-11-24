@@ -17,8 +17,9 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
+from update_time.io import log as log_module
 from update_time.io import process as process_module
-from update_time.io.log import Logger
+from update_time.io.log import FileContent, Logger, ToolTask
 from update_time.manifests import catalogs_yaml as catalogs_yaml_module
 from update_time.manifests import npm_declaration as npm_declaration_module
 from update_time.manifests import package_json as package_json_module
@@ -35,7 +36,7 @@ from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.primitives.timestamp import MINUTES_PER_DAY, SECONDS_PER_DAY
 from update_time.updaters import update_package_json as update_package_json_module
-from update_time.updaters.update_package_json import update_package_jsons
+from update_time.updaters.update_package_json import _update_package_jsons
 
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_environ, patch_pathlib_path
 from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
-    from update_time.io.log import LogMessage
+    from update_time.io.log import _LogMessage
 
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
 _PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * MINUTES_PER_DAY}"  # pnpm's
@@ -311,8 +312,10 @@ def _assert_manager_called(mock_run: Mock, locked: Command, update: Command, dir
     mock_run.assert_has_calls((call(locked, **run_kwargs), call(update, **run_kwargs), call(locked, **run_kwargs)))
 
 
-# Every log of a rewritten range carries these fields. The wording naming the version locked before adds `version`.
-_RANGE_REWRITE_FIELDS = ("manager", "dependency", "location", "range", "new_range")
+def _range_rewrite(**fields: object) -> dict[str, object]:
+    """Return the fields of the report that a range was rewritten, wording the version the lock file held as it does."""
+    version = cast("str", fields.pop("version", ""))
+    return {**fields, "locked": log_module._locked_version(version)}
 
 
 class PackageLookupResponsesTest(unittest.TestCase):
@@ -360,16 +363,20 @@ class _PackageJsonFilesTestCase(ExecutablesOnPathTestCase):
 
     def assert_range_rewrite_logged(self, **fields: object) -> None:
         """Assert that the rewrite of a range was the only record logged at its level, with the given fields."""
-        self.assert_logged(message_of(Logger.range_rewrite, *fields), **fields)
+        self.assert_logged(message_of(Logger.range_rewrite), **_range_rewrite(**fields))
 
     def assert_unreadable_package_json_warned(self, path: Path, error: Exception = _UNREADABLE_ERROR) -> None:
         """Assert that a warning about the unreadable package.json was the only one logged, with the error."""
-        self.assert_logged(message_of(Logger.unreadable_package_json), location=Location(path), error=str(error))
+        self.assert_logged(
+            message_of(Logger.unreadable_file),
+            content=FileContent.DEPENDENCY_LINES,
+            location=Location(path),
+            error=str(error),
+        )
 
     def assert_no_range_rewrite_logged(self) -> None:
-        """Assert that no rewrite of a range was logged, in either wording."""
-        self.assert_none_logged(message_of(Logger.range_rewrite, *_RANGE_REWRITE_FIELDS), "range rewrite")
-        self.assert_none_logged(message_of(Logger.range_rewrite, *_RANGE_REWRITE_FIELDS, "version"), "range rewrite")
+        """Assert that no rewrite of a range was logged."""
+        self.assert_none_logged(message_of(Logger.range_rewrite), "range rewrite")
 
     def update_stub(self, path: Path, saved: str, results: list) -> Callable[..., Mock]:
         """Return a `subprocess.run` stub that answers with the results and saves the file on an update."""
@@ -413,7 +420,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         """Test that npm runs for a package.json that declares peer dependencies alone."""
         mock_glob.return_value = [self.create_package_json('{"peerDependencies": {"is-number": "^7.0.0"}}')]
         mock_run.side_effect = _npm_runs(*_npm_no_update())
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
 
     @kills.replace(
@@ -427,7 +434,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.files.replace_all({SCAN_ROOT / "npm-shrinkwrap.json": ""})
         mock_glob.return_value = [self.create_package_json()]
         mock_run.side_effect = _npm_runs(*_npm_no_update())
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
 
     def test_nearest_directory_naming_a_manager_decides(self, mock_run: Mock, mock_glob: Mock):
@@ -446,7 +453,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 self.files.replace_all({SCAN_ROOT / "pnpm-workspace.yaml": "packages:\n  - a/b\n", **files})
                 mock_glob.return_value = [package_json := SCAN_ROOT / "a/b/package.json"]
                 mock_run.side_effect = [Mock(stdout="/a/b\n")]
-                update_package_jsons()
+                _update_package_jsons()
                 self.assert_logged_among_others(
                     message_of(Logger.no_lock_file),
                     location=Location(package_json),
@@ -460,7 +467,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.files.replace_all({**workspace_file, **self.lock_file(SCAN_ROOT / "a/b")})
         mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "a/b")]
         mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/a/b\n"))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a/b")
 
     def run_below_package_json(self, mock_run: Mock, mock_glob: Mock, contents: str) -> None:
@@ -472,7 +479,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "a")
         mock_glob.return_value = [package_json]
         mock_run.side_effect = [Mock(stdout="/a\n")]
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_logged_among_others(
             message_of(Logger.no_lock_file),
             location=Location(package_json),
@@ -487,17 +494,18 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
             with self.subTest(case):
                 self.run_below_package_json(mock_run, mock_glob, contents)
                 self.assert_logged(
-                    message_of(Logger.unreadable_manager_declaration),
+                    message_of(Logger.unreadable_file),
+                    content=FileContent.PACKAGE_MANAGER,
                     location=Location(SCAN_ROOT / "package.json"),
                     error=str(error),
                 )
 
     @kills.replace(
-        update_package_jsons,
+        _update_package_jsons,
         "_LOG.path(package_json)\n"
-        "        if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
+        "        if (file := PackageJson.readable(package_json, _UNREADABLE_PACKAGE_JSON)) is None:\n"
         "            continue",
-        "if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:\n"
+        "if (file := PackageJson.readable(package_json, _UNREADABLE_PACKAGE_JSON)) is None:\n"
         "            continue\n"
         "        _LOG.path(package_json)",
         "a package.json that does not parse is warned about without being logged as checked first",
@@ -508,7 +516,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         fixture = self.write_package_json(_UNREADABLE, SCAN_ROOT / "fixtures")
         mock_glob.return_value = [root, fixture]
         mock_run.side_effect = _npm_runs(*_npm_no_update())
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_unreadable_package_json_warned(fixture, _UNREADABLE_ERROR)
         self.assert_path_logged_first(fixture)
@@ -524,7 +532,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.create_package_json()
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
-        update_package_jsons()
+        _update_package_jsons()
         self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_npm_called(mock_run)
         self.assert_path_logged(package_json)
@@ -545,7 +553,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _npm_runs(_npm_lock(baz="1.0"), Mock(stdout=""), _npm_lock(baz="1.1"))
         with patch("requests.Session.get", _package_lookup_responses()) as get:
-            update_package_jsons()
+            _update_package_jsons()
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
         )
@@ -560,7 +568,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         runs = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         mock_run.side_effect = self.update_stub(package_json, _PACKAGE_RANGE.replace("^1.0.0", "^1.1.0"), runs)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
         )
@@ -586,7 +594,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         runs = _npm_runs(_npm_lock(package="1.1"), Mock(stdout=""), _npm_lock(package="1.0"))
         mock_run.side_effect = self.update_stub(package_json, original.replace("^1.1.0", "^1.0.0"), runs)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_moved_back_logged(
             "npm", "package", "1.1", "1.0", Location(package_json, 3), Location(package_json, 6)
         )
@@ -600,7 +608,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.side_effect = _npm_runs(
             _npm_lock(package="15.0.0-canary.5"), Mock(stdout=""), _npm_lock(package="14.2.3")
         )
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_moved_back_logged("npm", "package", "15.0.0-canary.5", "14.2.3", Location(package_json))
 
     @patch("requests.Session.get", _package_lookup_responses())
@@ -615,7 +623,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.create_package_json(contents)
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
-        update_package_jsons()
+        _update_package_jsons()
         published = published_version("1.1", _PUBLICATION_TIME)
         self.assert_new_version_logged_among_others("package", published, Location(package_json, 3), changes=ANY)
         self.assert_new_version_logged_among_others("package", published, Location(package_json, 6), ANY)
@@ -629,7 +637,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.create_package_json(contents)
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), changes="Changelog"
         )
@@ -642,7 +650,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         saved = original.replace("git+https://github.com/calj/bats.git", "github:calj/bats")
         locked = _npm_lock(bats="1.0.0")
         mock_run.side_effect = self.update_stub(package_json, saved, _npm_unmoved(locked))
-        update_package_jsons()
+        _update_package_jsons()
         self.assertEqual(self.files[package_json], saved)
         self.assert_npm_called(mock_run)
         self.assert_path_logged(package_json)
@@ -663,9 +671,9 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         locked = _npm_lock(minimatch="3.1.5")
         saved = original.replace("^3.1.2", "^3.1.5")
         mock_run.side_effect = self.update_stub(package_json, saved, _npm_unmoved(locked))
-        update_package_jsons()
-        fields = {"manager": "npm", **_MINIMATCH_REWRITE}
-        message = message_of(Logger.range_rewrite, *fields)
+        _update_package_jsons()
+        fields = _range_rewrite(manager="npm", **_MINIMATCH_REWRITE)
+        message = message_of(Logger.range_rewrite)
         self.assert_logged_among_others(message, location=Location(package_json, 3), **fields)
         self.assert_logged_among_others(message, location=Location(package_json, 6), **fields)
 
@@ -683,7 +691,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         locked = _npm_lock(minimatch="3.1.5", **{"ansi-regex": "5.0.1"})
         saved = '{\n  "dependencies": {\n    "ansi-regex": "^5.0.1",\n    "minimatch": "^3.1.5"\n  }\n}\n'
         mock_run.side_effect = self.update_stub(package_json, saved, _npm_unmoved(locked))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_range_rewrite_logged(manager="npm", location=Location(package_json, 4), **_MINIMATCH_REWRITE)
 
     def test_unmoved_version_not_logged(self, mock_run: Mock, mock_glob: Mock):
@@ -693,7 +701,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         # The lock file does not record a version of "untracked":
         untracked = Mock(stdout='{"dependencies": {"held": {"version": "1.0"}, "untracked": {"missing": true}}}')
         mock_run.side_effect = _npm_runs(untracked, Mock(stdout=""), untracked)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(package_json)
         self.assert_no_new_version_logged()
@@ -705,7 +713,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.create_package_json()
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _npm_runs(_npm_lock(), Mock(stdout=""), _npm_lock(package="1.1"))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_no_new_version_logged()
 
@@ -716,7 +724,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         runs = _npm_runs(_npm_lock(), Mock(stdout=""), _npm_lock(minimatch="3.1.5"))
         mock_run.side_effect = self.update_stub(package_json, original.replace("^3.0.0", "^3.1.5"), runs)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_range_rewrite_logged(
             manager="npm",
             dependency="minimatch",
@@ -731,7 +739,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         # npm list returns nothing, as a failed command does (its failure is logged by `run`):
         mock_run.side_effect = _npm_runs(Mock(stdout=""), Mock(stdout=""), Mock(stdout=""))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_no_new_version_logged()
@@ -744,7 +752,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         failed_listing = subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error EJSONPARSE")
         runs = _npm_runs(_npm_lock(minimatch="3.1.5"), Mock(stdout=""), failed_listing)
         mock_run.side_effect = self.update_stub(package_json, saved, runs)
-        update_package_jsons()
+        _update_package_jsons()
         self.assertEqual(self.files[package_json], saved)
         self.assert_command_stderr_logged(stderr="npm error EJSONPARSE")
         self.assert_no_range_rewrite_logged()
@@ -756,7 +764,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.create_package_json(_MINIMATCH_RANGE)
         mock_glob.return_value = [package_json]
         mock_run.side_effect = self.update_stub(package_json, _UNREADABLE, _npm_unmoved(_npm_lock(minimatch="3.1.5")))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_unreadable_package_json_warned(package_json)
         self.assert_no_range_rewrite_logged()
 
@@ -769,7 +777,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         runs = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         mock_run.side_effect = self.update_stub(package_json, _UNREADABLE, runs)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_unreadable_package_json_warned(package_json)
         self.assert_new_version_logged("package", published_version("1.1", _PUBLICATION_TIME), Location(package_json))
 
@@ -782,7 +790,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
             subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error network"),
             _npm_lock(package="1.0"),
         )
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_command_stderr_logged(stderr="npm error network")
@@ -799,7 +807,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         probes = [Mock(stdout="null\n"), Mock(stdout="2026-11-01\n")]  # min-release-age is unset, before is set
         mock_run.side_effect = [Mock(stdout=_NPM_PREFIX), *probes, *_npm_no_update()]
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run, cooldown=False)
         self.assert_project_cooldown_logged(package_json, "npm before")
         self.assert_no_new_version_logged()
@@ -810,7 +818,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [self.create_package_json()]
         failed = subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error code ENOWORKSPACES")
         mock_run.side_effect = [Mock(stdout=_NPM_PREFIX), failed, failed, *_npm_no_update()]
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
 
     @_publishing_version_1_1
@@ -835,7 +843,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 mock_run.side_effect = _npm_runs(
                     _npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"), prefix=prefix
                 )
-                update_package_jsons()
+                _update_package_jsons()
                 self.assert_new_version_logged(
                     "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3)
                 )
@@ -861,7 +869,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 after = _npm_workspace_lock(*(_npm_member(*member, package="1.1") for member in _MEMBERS.values()))
                 unmoved = [run for _member in members for run in _npm_runs(after, Mock(stdout=""), after)]
                 mock_run.side_effect = [*_npm_runs(before, Mock(stdout=""), after), *unmoved]
-                update_package_jsons()
+                _update_package_jsons()
                 published = published_version("1.1", _PUBLICATION_TIME)
                 new_version = message_of(Logger.new_version)
                 reports = [
@@ -878,7 +886,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         member = self.write_package_json(_member_contents("a"), SCAN_ROOT / "packages/a")
         mock_glob.return_value = [member, root]
         mock_run.side_effect = [*_npm_runs(*_npm_no_update()), Mock(stdout=_NPM_PREFIX)]
-        update_package_jsons()
+        _update_package_jsons()
         updated_directories = [
             kwargs["cwd"] for command, kwargs in mock_run.call_args_list if command[0][:2] == ("npm", "update")
         ]
@@ -902,7 +910,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         locked = _npm_workspace_lock(_npm_member(name, directory, package="1.1"))
         saved = original.replace("^1.0.0", "^1.1.0")
         mock_run.side_effect = self.update_stub(member, saved, _npm_unmoved(locked))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_range_rewrite_logged(
             manager="npm",
             dependency="package",
@@ -933,7 +941,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 self.files.replace_all(
                     {root: _WORKSPACE_ROOT_WITH_A_DEPENDENCY, **self.lock_file(SCAN_ROOT), **member_files}
                 )
-                update_package_jsons()
+                _update_package_jsons()
                 self.assert_unreadable_package_json_warned(member, error)
                 published = published_version("1.1", _PUBLICATION_TIME)
                 self.assert_new_version_logged("package", published, Location(member))
@@ -949,7 +957,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
             Mock(stdout=""),
             _npm_workspace_lock(without_dependencies, unreadable, new),
         )
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -960,7 +968,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [self.create_package_json()]
         prefix_failed = subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error prefix")
         mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=prefix_failed)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_npm_called(mock_run)
         mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **SUBPROCESS_RUN_OPTIONS, cwd=SCAN_ROOT)
 
@@ -1011,7 +1019,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.side_effect = _pnpm_runs(
             _pnpm_lock("devDependencies", package="1.0"), Mock(stdout=""), _pnpm_lock("devDependencies", package="1.1")
         )
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(package_json)
         self.assert_new_version_logged(
@@ -1026,7 +1034,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         before = _pnpm_workspace_listing("1.0")
         after = _pnpm_workspace_listing("1.1")
         mock_run.side_effect = _pnpm_runs(before, Mock(stdout=""), after)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_pnpm_called(mock_run)
         version = published_version("1.1", _PUBLICATION_TIME)
         self.assert_new_version_logged("package", version, Location(member, 3), changes="Changelog")
@@ -1043,7 +1051,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.side_effect = _pnpm_runs(
             _pnpm_workspace_listing("1.0"), Mock(stdout=""), _pnpm_workspace_listing("1.1")
         )
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_pnpm_called(mock_run)
         version = published_version("1.1", _PUBLICATION_TIME)
         self.assert_new_version_logged("package", version, Location(member, 3), changes="Changelog")
@@ -1066,10 +1074,10 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.leave_off_the_path("pnpm")
         mock_run.side_effect = FileNotFoundError
         member = self.write_pnpm_workspace(mock_glob, _PACKAGE_RANGE, root=None)
-        update_package_jsons()
+        _update_package_jsons()
         mock_run.assert_not_called()
         self.assert_error_logged(
-            message_of(Logger.package_manager_not_on_path), location=Location(member), executable="pnpm"
+            message_of(Logger.tool_not_on_path), task=ToolTask.UPDATE, location=Location(member), executable="pnpm"
         )
 
     @kills.replace(
@@ -1084,7 +1092,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.create_package_json()
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _pnpm_runs(_pnpm_lock(package="1.1"), Mock(stdout=""), _pnpm_lock(package="1.0"))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_moved_back_logged("pnpm", "package", "1.1", "1.0", Location(package_json))
 
     def test_unmoved_version_not_logged(self, mock_run: Mock, mock_glob: Mock):
@@ -1097,7 +1105,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
             '"devDependencies": {"untracked": {"from": "untracked"}}}]'
         )
         mock_run.side_effect = _pnpm_runs(untracked, Mock(stdout=""), untracked)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(package_json)
         self.assert_no_new_version_logged()
@@ -1111,7 +1119,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         locked = _pnpm_lock(minimatch="3.1.5")
         saved = original.replace("^3.1.2", "^3.1.5")
         mock_run.side_effect = self.update_stub(package_json, saved, _pnpm_runs(locked, Mock(stdout=""), locked))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_range_rewrite_logged(manager="pnpm", location=Location(package_json, 4), **_MINIMATCH_REWRITE)
 
     def test_pnpm_detected_via_lockfile(self, mock_run: Mock, mock_glob: Mock):
@@ -1120,7 +1128,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.create_package_json(json.dumps(_GIT_DEPENDENCY))
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -1142,7 +1150,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
                 self.files.replace_all(files)
                 member = self.write_package_json(contents, SCAN_ROOT / "a")
                 mock_glob.return_value = [member]
-                update_package_jsons()
+                _update_package_jsons()
                 mock_run.assert_not_called()
                 self.assert_debug_logged_after_path(
                     member, message_of(Logger.no_lock_file), manager="pnpm", lock=Location(lock_root / "pnpm-lock.yaml")
@@ -1163,7 +1171,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.side_effect = _pnpm_runs(
             _pnpm_workspace_listing("1.0"), Mock(stdout=""), _pnpm_workspace_listing("1.1")
         )
-        update_package_jsons()
+        _update_package_jsons()
         version = published_version("1.1", _PUBLICATION_TIME)
         self.assert_new_version_logged("package", version, Location(workspace_file, 5), changes="Changelog")
 
@@ -1177,7 +1185,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         listing = _pnpm_workspace_listing("1.1")
         locked = _pnpm_runs(listing, Mock(stdout=""), listing)
         mock_run.side_effect = self.update_stub(workspace_file, original.replace("^1.0.0", "^1.1.0"), locked)
-        update_package_jsons()
+        _update_package_jsons()
         fields = {
             "manager": "pnpm",
             "dependency": "package",
@@ -1193,7 +1201,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         # The cooldown probe returns a value, so Update-time adds no cooldown of its own:
         mock_run.side_effect = [Mock(stdout="4320\n"), Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]")]
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_pnpm_called(mock_run, cooldown=False)
         self.assert_project_cooldown_logged(package_json, "pnpm minimumReleaseAge")
         self.assert_no_new_version_logged()
@@ -1221,7 +1229,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
             self.files.replace_all({bunfig: contents, SCAN_ROOT / self.lock_file_name: _bun_lock(package="1.0")})
             mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
             mock_run.return_value = Mock(stdout="")
-            update_package_jsons()
+            _update_package_jsons()
 
     @staticmethod
     def assert_bun_updated(mock_run: Mock, *, cooldown: bool = True, directory: Path = SCAN_ROOT) -> None:
@@ -1238,7 +1246,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         self.files[lock] = _bun_lock(package="1.0")
         mock_run.side_effect = self.update_stub(lock, _bun_lock(package="1.1"), [Mock(stdout="")])
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_bun_updated(mock_run)
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
@@ -1256,7 +1264,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [root, member]
         after = bun_lock_contents(workspaces, {"package": "package@1.1"})
         mock_run.side_effect = self.update_stub(lock, after, [Mock(stdout=""), Mock(stdout="")])
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_bun_updated(mock_run)
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(member, 3), changes="Changelog"
@@ -1299,7 +1307,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         after = bun_lock_contents(workspaces, {"package": "package@1.1"})
         lock = SCAN_ROOT / self.lock_file_name
         mock_run.side_effect = self.update_stub(lock, after, [Mock(stdout=""), Mock(stdout="")])
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(root, 8), changes="Changelog"
         )
@@ -1312,7 +1320,7 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         )
         rewritten = self.files[root].replace("^1.0.0", "^1.1.0")
         mock_run.side_effect = self.update_stub(root, rewritten, [Mock(stdout=""), Mock(stdout="")])
-        update_package_jsons()
+        _update_package_jsons()
         fields = {"manager": "bun", "dependency": "package", "range": "^1.0.0", "new_range": "^1.1.0", "version": "1.1"}
         self.assert_range_rewrite_logged(location=Location(root, 7), **fields)
 
@@ -1338,11 +1346,11 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.reset_mock()
         mock_run.side_effect = update
         mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
-        update_package_jsons()
+        _update_package_jsons()
 
     @kills.replace(
         bun_module._bun_locked_versions,
-        "_LOG.unreadable_bun_lock(lock, error)",
+        "_LOG.unreadable_file(lock, error, FileContent.LOCKED_VERSIONS)",
         "del error",
         "Update-time passes over a bun.lock it cannot read without a warning",
         case="unreadable after the update",
@@ -1375,7 +1383,12 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
         for case, (lock_before, lock_after, read_errors_after, error) in cases.items():
             with self.subTest(case):
                 self.run_with_lock_rewritten(mock_run, mock_glob, lock_before, lock_after, read_errors_after)
-                self.assert_logged(message_of(Logger.unreadable_bun_lock), location=Location(lock), error=error)
+                self.assert_logged(
+                    message_of(Logger.unreadable_file),
+                    content=FileContent.LOCKED_VERSIONS,
+                    location=Location(lock),
+                    error=error,
+                )
                 self.assert_no_new_version_logged()
 
     @kills.replace(
@@ -1438,9 +1451,14 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
             )
             mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE, project) for project in projects]
             mock_run.return_value = Mock(stdout="")
-            update_package_jsons()
+            _update_package_jsons()
         self.assertEqual(len(mock_run.call_args_list), len(projects))
-        self.assert_logged(message_of(Logger.unreadable_bunfig), location=Location(global_bunfig), error=unclosed_error)
+        self.assert_logged(
+            message_of(Logger.unreadable_file),
+            content=FileContent.BUN_COOLDOWN,
+            location=Location(global_bunfig),
+            error=unclosed_error,
+        )
 
     @kills.force_false(
         bun_module._bunfig_sets_a_cooldown,
@@ -1475,7 +1493,12 @@ class UpdateBunPackageJsonTest(_PackageJsonFilesTestCase):
                 self.files.read_errors = read_errors
                 self.run_beside_bunfig(mock_run, mock_glob, bunfig, contents, {"HOME": "/home"})
                 self.assert_bun_updated(mock_run)
-                self.assert_logged(message_of(Logger.unreadable_bunfig), location=Location(bunfig), error=error)
+                self.assert_logged(
+                    message_of(Logger.unreadable_file),
+                    content=FileContent.BUN_COOLDOWN,
+                    location=Location(bunfig),
+                    error=error,
+                )
 
 
 @staleness_disabled
@@ -1498,7 +1521,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         package_json = self.write_package_json(_PACKAGE_RANGE)
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _yarn_runs(_yarn_info(package="1.0"), Mock(stdout=""), _yarn_info(package="1.1"))
-        update_package_jsons()
+        _update_package_jsons()
         update = _YARN_UP
         versioned, configured, listed = _yarn_call(_YARN_VERSION), _yarn_call(_YARN_CONFIG), _yarn_call(_YARN_INFO)
         updated = _yarn_call(update, _YARN_GATE)
@@ -1548,7 +1571,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
             return Mock(stdout=f"{json.dumps(root)}\n")
 
         mock_run.side_effect = _yarn_runs(listing("1.0"), Mock(stdout=""), listing("1.1"))
-        update_package_jsons()
+        _update_package_jsons()
         update = Command("yarn", "up", "-R", "--mode=update-lockfile", "baz", "react-dom", "typescript")
         self.assertIn(update, [each.args[0] for each in mock_run.call_args_list])
         version = published_version("1.1", _PUBLICATION_TIME)
@@ -1576,7 +1599,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         root = {"value": "root@workspace:.", "children": {"Version": "0.0.0", "Dependencies": resolved}}
         listing = Mock(stdout=f"{json.dumps(root)}\n")
         mock_run.side_effect = _yarn_unmoved(listing)
-        update_package_jsons()
+        _update_package_jsons()
         update = _YARN_UP
         commands = [each.args[0] for each in mock_run.call_args_list]
         self.assertEqual(commands, [_YARN_VERSION, _YARN_CONFIG, _YARN_INFO, update, _YARN_INFO])
@@ -1597,7 +1620,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         before = _yarn_workspaces_info({".": {}, "packages/a": {"package": "1.0"}})
         after = _yarn_workspaces_info({".": {}, "packages/a": {"package": "1.1"}})
         mock_run.side_effect = _yarn_runs(before, Mock(stdout=""), after)
-        update_package_jsons()
+        _update_package_jsons()
         update = _YARN_UP
         commands = [each.args[0] for each in mock_run.call_args_list]
         self.assertEqual(commands, [_YARN_VERSION, _YARN_CONFIG, _YARN_INFO, update, _YARN_INFO])
@@ -1625,7 +1648,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         for case, (runs, command) in cases.items():
             with self.subTest(case):
                 mock_run.side_effect = runs
-                update_package_jsons()
+                _update_package_jsons()
                 self.assert_error_logged(message_of(Logger.command_failed), command=command, output=error)
                 self.assert_no_new_version_logged()
 
@@ -1640,7 +1663,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
         listing = _yarn_info(package="1.0")
         mock_run.side_effect = _yarn_unmoved(listing, version=Mock(stdout="4.10.1\n"))
-        update_package_jsons()
+        _update_package_jsons()
         update = _YARN_UP
         self.assertIn(_yarn_call(update, _YARN_GATE), mock_run.call_args_list)
 
@@ -1657,7 +1680,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         crash = subprocess.CalledProcessError(1, "", output="", stderr="Segmentation fault")
         listing = _yarn_info(package="1.0")
         mock_run.side_effect = _yarn_runs(listing, crash, listing)
-        update_package_jsons()
+        _update_package_jsons()
         update = _YARN_UP
         self.assert_command_stderr_logged(update, "Segmentation fault")
         self.assert_none_logged(message_of(Logger.command_failed), "failed command")
@@ -1680,7 +1703,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
             "➤ YN0001: │ Error: The lockfile would have been modified by this install, which is explicitly forbidden.\n"
         )
         mock_run.side_effect = _yarn_unmoved(subprocess.CalledProcessError(1, "", output=error, stderr=""))
-        update_package_jsons()
+        _update_package_jsons()
         commands = [each.args[0] for each in mock_run.call_args_list]
         self.assertEqual(commands, [_YARN_VERSION, _YARN_CONFIG, _YARN_INFO])
         self.assert_errors_logged((message_of(Logger.command_failed), {"command": _YARN_INFO, "output": error}))
@@ -1691,7 +1714,7 @@ class UpdateYarnPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [self.write_package_json(_PACKAGE_RANGE)]
         listing = _yarn_info(package="1.0")
         mock_run.side_effect = _yarn_unmoved(listing, config=settings)
-        update_package_jsons()
+        _update_package_jsons()
         self.assertEqual(mock_run.call_args_list[1], _yarn_call(_YARN_CONFIG))
         (update,) = [each for each in mock_run.call_args_list if each.args[0][:2] == ("yarn", "up")]
         return update.kwargs["env"]
@@ -1765,7 +1788,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
     def test_skip_unsupported_package_manager(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json with an unsupported `packageManager` field is skipped without running anything."""
         mock_package_json = _discover_package_json(mock_glob, '{"packageManager": "deno@2.5.0"}')
-        update_package_jsons()
+        _update_package_jsons()
         mock_run.assert_not_called()
         mock_package_json.write_text.assert_not_called()
         self.assert_unsupported_package_manager_logged(mock_package_json, "deno", "npm, pnpm, yarn, and bun")
@@ -1802,7 +1825,7 @@ class SkipPackageJsonWithoutDependenciesTest(ExecutablesOnPathTestCase):
         for case, contents in cases.items():
             with self.subTest(case):
                 mock_package_json = _discover_package_json(mock_glob, contents)
-                update_package_jsons()
+                _update_package_jsons()
                 mock_run.assert_not_called()
                 mock_package_json.write_text.assert_not_called()
                 self.assert_debug_logged_after_path(
@@ -1836,7 +1859,7 @@ class NoUpdateTestCase(ExecutablesOnPathTestCase):
         self.stub_npm_prefix(mock_run)
         get.return_value = self.registry_doc("2.0.11", published.isoformat())
         package_json = _discover_package_json(glob, contents)
-        update_package_jsons()
+        _update_package_jsons()
         return package_json
 
 
@@ -1852,7 +1875,7 @@ class VulnerableDependencyTest(NoUpdateTestCase):
         self.stub_npm_prefix(mock_run)
         package_json = _discover_package_json(glob, _LEFT_PAD_PINNED)
         with osv(ADVISORY):
-            update_package_jsons()
+            _update_package_jsons()
         self.assert_vulnerable_dependency_logged("left-pad", "1.3.0", VULNERABILITY, Location(package_json, 4))
 
     def test_each_pin_of_a_name_warned_at_its_line(self, mock_run: Mock, glob: Mock):
@@ -1866,7 +1889,7 @@ class VulnerableDependencyTest(NoUpdateTestCase):
         )
         package_json = _discover_package_json(glob, contents)
         with osv(ADVISORY):
-            update_package_jsons()
+            _update_package_jsons()
         self.assert_vulnerable_dependency_logged(
             "left-pad", "1.3.0", VULNERABILITY, Location(package_json, 3), among_others=True
         )
@@ -1885,13 +1908,13 @@ class VulnerableDependencyTest(NoUpdateTestCase):
         workspace = mock_path("catalog:\n  left-pad: 1.3.0\n", parent=SCAN_ROOT, name="pnpm-workspace.yaml")
         _find_workspace_files(glob, workspace)
         with osv(ADVISORY):
-            update_package_jsons()
+            _update_package_jsons()
         self.assert_path_logged_first(workspace)
         self.assert_vulnerable_dependency_logged("left-pad", "1.3.0", VULNERABILITY, Location(workspace, 2))
 
     @kills.delete(
         update_package_json_module._checked_workspace_files,
-        ", _LOG.unreadable_catalogs",
+        ", _UNREADABLE_CATALOGS",
         "Update-time passes over a pnpm-workspace.yaml it cannot read without a warning",
     )
     def test_a_pnpm_workspace_file_that_cannot_be_read_is_warned_about_and_passed_over(
@@ -1904,11 +1927,15 @@ class VulnerableDependencyTest(NoUpdateTestCase):
         workspace = mock_path("catalog:\n  left-pad: 1.3.0\n", parent=SCAN_ROOT, name="pnpm-workspace.yaml")
         _find_workspace_files(glob, undecodable, invalid, workspace)
         with osv(ADVISORY):
-            update_package_jsons()
-        message = message_of(Logger.unreadable_catalogs)
+            _update_package_jsons()
+        message = message_of(Logger.unreadable_file)
         error = "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
-        self.assert_logged_among_others(message, location=Location(undecodable), error=error)
-        self.assert_logged_among_others(message, location=Location(invalid), error="it is not valid YAML")
+        self.assert_logged_among_others(
+            message, content=FileContent.CATALOGS, location=Location(undecodable), error=error
+        )
+        self.assert_logged_among_others(
+            message, content=FileContent.CATALOGS, location=Location(invalid), error="it is not valid YAML"
+        )
         location = Location(workspace, 2)
         self.assert_vulnerable_dependency_logged("left-pad", "1.3.0", VULNERABILITY, location, among_others=True)
 
@@ -1923,14 +1950,14 @@ class VulnerableDependencyTest(NoUpdateTestCase):
         dependencies = '{"left-pad": "1.3.0", "react": "^17.0.2", "baz": "npm:react-is@18.0.0"}'
         _discover_package_json(glob, f'{{"dependencies": {dependencies}}}')
         with osv() as mock_post:
-            update_package_jsons()
+            _update_package_jsons()
         assert_osv_asked_about(mock_post, ("left-pad", "1.3.0"), ("react-is", "18.0.0"), ecosystem="npm")
 
     def test_pnpm_project_checked(self, _mock_run: Mock, glob: Mock):
         """Test that a dependency a pnpm project pins to a version is looked up, as an npm project's is."""
         _discover_package_json(glob, '{"packageManager": "pnpm@9.15.0", "dependencies": {"left-pad": "1.3.0"}}')
         with osv() as mock_post:
-            update_package_jsons()
+            _update_package_jsons()
         assert_osv_asked_about(mock_post, ("left-pad", "1.3.0"), ecosystem="npm")
 
 
@@ -1950,7 +1977,7 @@ class YankedDependencyTest(NoUpdateTestCase):
             '{\n  "name": "app",\n  "dependencies": {\n    "left-pad": "1.3.0",\n    "right-pad": "2.0.0"\n  }\n}\n'
         )
         package_json = _discover_package_json(glob, contents)
-        update_package_jsons()
+        _update_package_jsons()
         deprecation = Yank(yanked=True, reason="use 2.0 instead")
         self.assert_yanked_dependency_logged("left-pad", "1.3.0", Location(package_json, 4), deprecation)
 
@@ -1960,7 +1987,7 @@ class YankedDependencyTest(NoUpdateTestCase):
         url = "https://registry.npmjs.org/left-pad"
         get.return_value = mock_response(ok=False, status_code=503, reason="Service Unavailable", url=url)
         _discover_package_json(glob, _LEFT_PAD_PINNED)
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_could_not_fetch_logged(url, status=503, reason="Service Unavailable")
 
 
@@ -2027,7 +2054,7 @@ class StaleDependencyTest(NoUpdateTestCase):
         self.stub_npm_prefix(mock_run)
         get.return_value = mock_response({})  # the document dates no version, so newest_release returns None
         _discover_package_json(glob, self.clipboard_contents())
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_no_warnings_logged()
 
     @staleness_disabled
@@ -2036,7 +2063,7 @@ class StaleDependencyTest(NoUpdateTestCase):
         """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request."""
         self.stub_npm_prefix(mock_run)
         _discover_package_json(glob, self.clipboard_contents())
-        update_package_jsons()
+        _update_package_jsons()
         get.assert_not_called()
         self.assert_no_warnings_logged()
 
@@ -2049,9 +2076,9 @@ class MissingPackageManagerTest(NoUpdateTestCase):
     @patch("requests.Session.get")
     @kills.replace(
         package_manager_module.PackageManager.update_package_json,
-        "_LOG.package_manager_not_on_path(path, executable)\n"
+        "_LOG.tool_not_on_path(path, ToolTask.UPDATE, executable)\n"
         "            return CheckedPackageJson(package_json, MARKER_POLICY)",
-        "_LOG.package_manager_not_on_path(path, executable)",
+        "_LOG.tool_not_on_path(path, ToolTask.UPDATE, executable)",
         "a missing package manager is reported, and then run anyway, failing once per command",
     )
     def test_a_missing_manager_is_reported_once_and_the_checks_still_run(self, get: Mock, mock_run: Mock, glob: Mock):
@@ -2059,9 +2086,9 @@ class MissingPackageManagerTest(NoUpdateTestCase):
         self.leave_off_the_path("npm")
         get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
         package_json = _discover_package_json(glob, self.clipboard_contents())
-        update_package_jsons()
+        _update_package_jsons()
         self.assert_error_logged(
-            message_of(Logger.package_manager_not_on_path), location=Location(package_json), executable="npm"
+            message_of(Logger.tool_not_on_path), task=ToolTask.UPDATE, location=Location(package_json), executable="npm"
         )
         mock_run.assert_not_called()
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
@@ -2085,7 +2112,7 @@ class _ProjectLeftAsItIsTestCase(_PackageJsonFilesTestCase, NoUpdateTestCase):
         files: dict[Path, str],
         contents: str,
         npm_prefix: Path | None,
-        message: LogMessage,
+        message: _LogMessage,
         **fields: object,
     ) -> None:
         """Assert that the run leaves the member's package.json as it is, logs why, and checks its stale dependency.
@@ -2098,7 +2125,7 @@ class _ProjectLeftAsItIsTestCase(_PackageJsonFilesTestCase, NoUpdateTestCase):
         mock_run.reset_mock()
         mock_run.side_effect = [] if npm_prefix is None else [Mock(stdout=f"{npm_prefix}\n")]
         get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-        update_package_jsons()
+        _update_package_jsons()
         runs = [] if npm_prefix is None else [call(Command("npm", "prefix"), **SUBPROCESS_RUN_OPTIONS, cwd=_MEMBER)]
         self.assertEqual(mock_run.call_args_list, runs)
         self.assert_debug_logged_after_path(package_json, message, **fields)
@@ -2205,7 +2232,7 @@ class ProjectWithoutALockFileTest(_ProjectLeftAsItIsTestCase):
         package_json = self.write_package_json(self.clipboard_contents(), _MEMBER)
         mock_glob.return_value = [path for path in self.files if path.name == "package.json"]
         get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-        update_package_jsons()
+        _update_package_jsons()
         mock_run.assert_not_called()
         self.assertEqual(len(self.records_of(message_of(Logger.binary_lock))), 1)
         self.assert_logged_among_others(
@@ -2250,7 +2277,7 @@ class FilesOfMoreThanOneManagerTest(_ProjectLeftAsItIsTestCase):
     """Unit tests for a package.json whose directory holds the files of more than one package manager."""
 
     @kills.force_false(
-        update_package_jsons,
+        _update_package_jsons,
         "choice.names_more_than_one_manager()",
         "the manager whose file comes first runs, and may update a lock the project no longer uses",
         case="npm's shrinkwrap file and pnpm's lock",
@@ -2282,7 +2309,7 @@ class FilesOfMoreThanOneManagerTest(_ProjectLeftAsItIsTestCase):
                 mock_run.reset_mock()
                 mock_run.return_value = Mock(stdout="", stderr="")
                 get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-                update_package_jsons()
+                _update_package_jsons()
                 mock_run.assert_not_called()
                 self.assert_logged_among_others(
                     message_of(Logger.files_of_more_than_one_manager),
@@ -2296,7 +2323,7 @@ class FilesOfMoreThanOneManagerTest(_ProjectLeftAsItIsTestCase):
         self.files.replace_all({_MEMBER / "pnpm-lock.yaml": "", _MEMBER / "bun.lockb": ""})
         package_json = self.write_package_json('{"name": "fixture"}', _MEMBER)
         mock_glob.return_value = [package_json]
-        update_package_jsons()
+        _update_package_jsons()
         mock_run.assert_not_called()
         get.assert_not_called()
         self.assert_logged_among_others(
@@ -2325,7 +2352,7 @@ class FilesOfMoreThanOneManagerTest(_ProjectLeftAsItIsTestCase):
                 mock_run.reset_mock()
                 mock_run.return_value = Mock(stdout="")
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-                update_package_jsons()
+                _update_package_jsons()
                 update = Command("bun", "update", "-r", _BUN_COOLDOWN_OPTION)
                 mock_run.assert_called_once_with(update, **SUBPROCESS_RUN_OPTIONS, cwd=_MEMBER)
                 self.assert_no_warnings_logged()
@@ -2382,7 +2409,7 @@ class WorkspaceRootOutsideTheScanTest(_ProjectLeftAsItIsTestCase):
                 mock_glob.return_value = [package_json]
                 mock_run.side_effect = [Mock(stdout=f"{workspace_root}\n")]
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-                update_package_jsons()
+                _update_package_jsons()
                 self.assert_redundant_directive_logged(reason, "clipboard", Location(package_json, 4), directive)
 
     @kills.delete(
@@ -2403,7 +2430,7 @@ class WorkspaceRootOutsideTheScanTest(_ProjectLeftAsItIsTestCase):
         )
         package_json = self.write_package_json(self.clipboard_contents("ignore[yanked]", "catalog:"), _MEMBER)
         mock_glob.return_value = [package_json]
-        update_package_jsons()
+        _update_package_jsons()
         location = Location(package_json, 4)
         self.assert_redundant_directive_logged(Reason.CATALOG_ENTRY_NOT_FOUND, "clipboard", location, "ignore[yanked]")
 
@@ -2441,7 +2468,7 @@ class YarnVersionTest(_ProjectLeftAsItIsTestCase):
         mock_run.reset_mock()
         mock_run.side_effect = [Mock(stdout="1.22.22\n") if version is None else version]
         get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-        update_package_jsons()
+        _update_package_jsons()
         self.assertEqual(mock_run.call_args_list, [_yarn_call(_YARN_VERSION)])
         return package_json
 
@@ -2477,7 +2504,7 @@ class YarnVersionTest(_ProjectLeftAsItIsTestCase):
         mock_glob.return_value = [root, self.write_package_json(self.clipboard_contents(), SCAN_ROOT / "a")]
         mock_run.side_effect = [FileNotFoundError(2, "No such file or directory")]
         get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-        update_package_jsons()
+        _update_package_jsons()
         self.assertEqual(mock_run.call_args_list, [_yarn_call(_YARN_VERSION)])
         self.assert_error_logged(
             message_of(Logger.command_not_found), command=Command("yarn", "--version"), executable="yarn"
@@ -2491,7 +2518,7 @@ class YarnVersionTest(_ProjectLeftAsItIsTestCase):
         mock_glob.return_value = [root, member]
         mock_run.side_effect = [Mock(stdout="1.22.22\n")]
         get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-        update_package_jsons()
+        _update_package_jsons()
         warning = message_of(Logger.yarn_without_a_cooldown)
         at_the_root = self.records_of(
             warning, location=Location(root), directory=Location(SCAN_ROOT), version="1.22.22"
@@ -2615,7 +2642,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 mock_glob.return_value = [package_json]
                 mock_run.side_effect = _npm_runs(*_npm_no_update()) if files else [Mock(stdout=_NPM_PREFIX)]
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-                update_package_jsons()
+                _update_package_jsons()
                 self.assert_redundant_directive_logged(reason, "clipboard", Location(package_json, 4), directive)
 
     @kills.replace(
@@ -2648,7 +2675,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 _find_workspace_files(mock_glob, workspace_file)
                 mock_run.side_effect = _pnpm_runs(Mock(stdout="[]"), Mock(stdout=""), Mock(stdout="[]"))
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-                update_package_jsons()
+                _update_package_jsons()
                 location = Location(workspace_file, 2)
                 self.assert_redundant_directive_logged(reason, "clipboard", location, "ignore[update]")
 
@@ -2671,7 +2698,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
         )
         _find_workspace_files(mock_glob, yarnrc, package_json)
         get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-        update_package_jsons()
+        _update_package_jsons()
         mock_run.assert_not_called()
         location = Location(yarnrc, 2)
         self.assert_redundant_directive_logged(
@@ -2687,7 +2714,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
         self.files.replace_all(pnpm_root if root is None else root)
         package_json = self.write_package_json(self.clipboard_contents("ignore[yanked]", spec), SCAN_ROOT / "a")
         mock_glob.return_value = [package_json]
-        update_package_jsons()
+        _update_package_jsons()
         return package_json
 
     @kills.replace(
@@ -2750,7 +2777,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 package_json = self.write_package_json(self.clipboard_contents(directive))
                 mock_glob.return_value = [package_json]
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-                update_package_jsons()
+                _update_package_jsons()
                 mock_run.assert_not_called()
                 location = Location(package_json, 4)
                 self.assert_redundant_directive_logged(reason, "clipboard", location, directive, among_others=True)
@@ -2783,7 +2810,7 @@ class UpdateMarkerTest(_PackageJsonFilesTestCase, NoUpdateTestCase):
                 package_json = self.write_package_json(self.clipboard_contents(directive))
                 mock_glob.return_value = [package_json]
                 get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-                update_package_jsons()
+                _update_package_jsons()
                 mock_run.assert_not_called()
                 location = Location(package_json, 4)
                 self.assert_redundant_directive_logged(reason, "clipboard", location, directive, among_others=True)
@@ -2885,7 +2912,7 @@ class MarkerTest(NoUpdateTestCase):
             '{\n  "name": "app",\n  "update-time": {\n    "dependencies": {"lodash": "set[stale-after=0]"}\n  }\n}\n'
         )
         package_json = _discover_package_json(glob, contents)
-        update_package_jsons()
+        _update_package_jsons()
         mock_run.assert_not_called()
         get.assert_not_called()
         location = Location(package_json, 4)

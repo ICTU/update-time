@@ -12,7 +12,7 @@ from packaging.specifiers import SpecifierSet
 from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
-from update_time.io.log import Logger
+from update_time.io.log import Logger, ToolTask
 from update_time.lock_files import uv_lock
 from update_time.manifests import pyproject_config
 from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
@@ -20,7 +20,7 @@ from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers.uv import lock, marker_policy, uv
 from update_time.primitives.location import Location
 from update_time.updaters import uv_pins
-from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
+from update_time.updaters.update_pyproject_toml import _update_pyproject_tomls
 
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
 from tests.update_time.fixtures import CHANGELOG
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from update_time.primitives.command import Command
-    from update_time.sources.pypi import ReleaseMetadata
+    from update_time.sources.pypi import _ReleaseMetadata
 
 
 # What the log renders for version 1.1, whose changelog PyPI does not name in `files_after_update`.
@@ -224,7 +224,7 @@ class _PyprojectTomlLockTestCase(UvLockTestCase):
 
     def update(self) -> None:
         """Run the pyproject.toml updater."""
-        update_pyproject_tomls()
+        _update_pyproject_tomls()
 
 
 # What `configure_cooldown` writes is the uv package manager's tests' to pin, so it is stubbed out here, and these tests
@@ -243,7 +243,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     def pypi_metadata(
         changelog_url: str = "https://changelog",
         repository: str = "https://github.com/repo/package_with_github_releases",
-    ) -> ReleaseMetadata:
+    ) -> _ReleaseMetadata:
         """Create PyPI release metadata fixture."""
         project_urls = {"Homepage": "https://home", "repository": repository}
         if changelog_url:
@@ -321,7 +321,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         files = {PYPROJECT_TOML: pyproject("package>=0.9", marker=directive), _UV_LOCK: _uv_lock("1.0")}
         self.files_after_update(run, get, glob, files, _uv_lock("1.0"))
         self.assert_logged_among_others(
-            message_of(Logger.warn_if_redundant_bound),
+            message_of(Logger.redundant_bound),
             dependency="package",
             location=Location(PYPROJECT_TOML, 2),
             directive=directive,
@@ -678,7 +678,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(left[PYPROJECT_TOML], contents)
         self.assertEqual(left[_UV_LOCK], _uv_lock("1.1"))
         self.assert_errors_logged(
-            (message_of(Logger.uv_dependencies_not_updated), {"location": Location(PYPROJECT_TOML), "tool": "uv lock"}),
+            (
+                message_of(Logger.tool_failed),
+                {"location": Location(PYPROJECT_TOML), "task": ToolTask.UPDATE, "tool": "uv lock"},
+            ),
             (message_of(Logger.file_not_restored), {"location": Location(_UV_LOCK), "error": str(error)}),
         )
         self.assert_no_new_version_logged()
@@ -842,7 +845,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(dict(files), {**_LIB_AND_APP, **changed})
         self.assert_no_new_version_logged()
         self.assert_errors_logged(
-            (message_of(Logger.uv_dependencies_not_updated), {"location": Location(_APP), "tool": "uv lock"}),
+            (message_of(Logger.tool_failed), {"location": Location(_APP), "task": ToolTask.UPDATE, "tool": "uv lock"}),
             (message_of(Logger.rolled_back_with_cycle), {"location": Location(_LIB), "failed": (Location(_APP),)}),
         )
 
@@ -862,10 +865,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         }
         files = self.updated_lib_and_app(run, get, glob, changed, [_LIB, _APP])
         self.assertEqual(dict(files), {**_LIB_AND_APP, **changed})
-        not_updated = message_of(Logger.uv_dependencies_not_updated)
+        not_updated = message_of(Logger.tool_failed)
         self.assert_errors_logged(
-            (not_updated, {"location": Location(_LIB), "tool": "uv lock"}),
-            (not_updated, {"location": Location(_APP), "tool": "uv lock"}),
+            (not_updated, {"location": Location(_LIB), "task": ToolTask.UPDATE, "tool": "uv lock"}),
+            (not_updated, {"location": Location(_APP), "task": ToolTask.UPDATE, "tool": "uv lock"}),
             (message_of(Logger.rolled_back_with_cycle), {"location": Location(_APP), "failed": (Location(_LIB),)}),
         )
 
@@ -900,7 +903,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         get.side_effect = pypi_answer
         glob.return_value = discovered
         with files.patched():
-            update_pyproject_tomls()
+            _update_pyproject_tomls()
         return files
 
     def test_a_bound_that_cannot_narrow_the_requirement_holds_the_declaration_on_its_current_version(
@@ -1068,12 +1071,12 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     def test_a_failed_uv_lock_writes_the_files_the_run_rewrote_back(self, run: Mock, get: Mock, glob: Mock):
         """Test that a uv lock failing without an earlier uv.lock gives the workspace's files back, and logs that."""
         files = {PYPROJECT_TOML: _root_declaring("package==1.0"), _MEMBER: pyproject("package==1.0")}
-        message = message_of(Logger.uv_dependencies_not_updated)
+        message = message_of(Logger.tool_failed)
         left = self.files_after_update(run, get, glob, files, (LOCK_FAILS,), discovered=list(files))
         self.assertEqual(dict(left), files)
         self.assert_errors_logged(
-            (message, {"location": Location(PYPROJECT_TOML), "tool": "uv lock"}),
-            (message, {"location": Location(_MEMBER), "tool": "uv lock"}),
+            (message, {"location": Location(PYPROJECT_TOML), "task": ToolTask.UPDATE, "tool": "uv lock"}),
+            (message, {"location": Location(_MEMBER), "task": ToolTask.UPDATE, "tool": "uv lock"}),
         )
         self.assert_no_new_version_logged()
 
@@ -1087,12 +1090,15 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.leave_off_the_path("uv")
         run.side_effect = FileNotFoundError("uv")
         mock_pyproject_toml = _discovered_pyproject_toml(glob, pyproject("package==1.0") + _UV_TABLE)
-        update_pyproject_tomls()
+        _update_pyproject_tomls()
         run.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
         self.assert_error_logged(
-            message_of(Logger.package_manager_not_on_path), location=Location(mock_pyproject_toml), executable="uv"
+            message_of(Logger.tool_not_on_path),
+            task=ToolTask.UPDATE,
+            location=Location(mock_pyproject_toml),
+            executable="uv",
         )
 
     def test_skip_invalid_pyproject_toml(self, run: Mock, get: Mock, glob: Mock):
@@ -1105,7 +1111,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         ):
             with self.subTest(case):
                 glob.return_value = [mock_pyproject_toml]
-                update_pyproject_tomls()
+                _update_pyproject_tomls()
                 run.assert_not_called()
                 get.assert_not_called()
                 mock_pyproject_toml.write_text.assert_not_called()
@@ -1154,7 +1160,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 run.reset_mock()
                 get.reset_mock()
                 mock_pyproject_toml = _discovered_pyproject_toml(glob, contents)
-                update_pyproject_tomls()
+                _update_pyproject_tomls()
                 run.assert_not_called()
                 get.assert_not_called()
                 mock_pyproject_toml.write_text.assert_not_called()
@@ -1324,7 +1330,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             self.assert_debug_logged_after_path(_MEMBER, message, manager="uv", root=Location(PYPROJECT_TOML))
 
     @kills.delete(
-        update_pyproject_tomls,
+        _update_pyproject_tomls,
         "marker_policy.report_file_markers(pyproject_toml, _LOG, policy)",
         "the markers of a pyproject.toml uv does not manage go unreported",
     )
@@ -1332,7 +1338,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         """Test that the marker on a build requirement of a pyproject.toml that uv does not run for is reported."""
         build_requirement = '[build-system]\nrequires = ["hatchling==1.20.0"]  # update-time: set[stale-after=0]\n'
         mock_pyproject_toml = _discovered_pyproject_toml(glob, build_requirement)
-        update_pyproject_tomls()
+        _update_pyproject_tomls()
         run.assert_not_called()
         get.assert_not_called()
         marker = Marker(stale=Threshold(value=0))
@@ -1789,7 +1795,10 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         )
         self.assert_ignored_logged("package", Location(PYPROJECT_TOML, 2), "ignore[update]", among_others=True)
         self.assert_error_logged(
-            message_of(Logger.package_manager_not_on_path), location=Location(PYPROJECT_TOML), executable="uv"
+            message_of(Logger.tool_not_on_path),
+            task=ToolTask.UPDATE,
+            location=Location(PYPROJECT_TOML),
+            executable="uv",
         )
 
     @kills.delete(
@@ -1813,7 +1822,10 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
             Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
         )
         self.assert_error_logged(
-            message_of(Logger.package_manager_not_on_path), location=Location(PYPROJECT_TOML), executable="uv"
+            message_of(Logger.tool_not_on_path),
+            task=ToolTask.UPDATE,
+            location=Location(PYPROJECT_TOML),
+            executable="uv",
         )
 
 
@@ -1840,6 +1852,6 @@ class CheckedPinsTest(ExecutablesOnPathTestCase):
         run.return_value = Mock(stdout="", stderr="")
         glob.return_value = [PYPROJECT_TOML, build_requirements_alone, not_a_uv_project]
         with files.patched():
-            update_pyproject_tomls()
+            _update_pyproject_tomls()
         get.assert_not_called()
         warn.assert_called_once_with([PyprojectToml(path) for path in glob.return_value], ANY, ANY)

@@ -47,7 +47,7 @@ def credentials() -> tuple[str, str] | None:
 
 
 @cache
-def api_headers() -> dict[str, str]:
+def _api_headers() -> dict[str, str]:
     """Return Docker Hub API request headers, with a bearer token when the token endpoint answers with one.
 
     A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous. So does an answer
@@ -174,7 +174,7 @@ def _listing_page(url: str) -> LookedUp[_ListingPage]:
     A 404 means Docker Hub does not serve the repository, so the page is absent. Any other failure is logged, and
     reads as a page listing nothing.
     """
-    found = fetch_json(url, _LOG, headers=api_headers(), statuses_meaning_absent=(HTTPStatus.NOT_FOUND,))
+    found = fetch_json(url, _LOG, headers=_api_headers(), statuses_meaning_absent=(HTTPStatus.NOT_FOUND,))
     if found.absent:
         return found
     if (listing := found.value) is None:
@@ -205,7 +205,7 @@ def archival(repository: str) -> Archival | None:
     `repository` is the `namespace/repository` path (e.g. `nginxinc/nginx-unprivileged`).
     """
     url = _repository_url(repository)
-    found = fetch_json(url, _LOG, headers=api_headers(), statuses_meaning_absent=(HTTPStatus.NOT_FOUND,))
+    found = fetch_json(url, _LOG, headers=_api_headers(), statuses_meaning_absent=(HTTPStatus.NOT_FOUND,))
     if (metadata := found.value) is None:
         return None
     archived = metadata.get("status_description") == _ARCHIVED_STATUS
@@ -217,7 +217,7 @@ def last_pushed(repository: str, tag: str) -> LookedUp[datetime]:
 
     `repository` is the `namespace/repository` path (e.g. `library/redis`).
     """
-    found = fetch_json(f"{_tags_url(repository)}/{tag}", _LOG, headers=api_headers())
+    found = fetch_json(f"{_tags_url(repository)}/{tag}", _LOG, headers=_api_headers())
     if found.value is None:
         return found
     if (pushed := parse_timestamp(found.value.get("tag_last_pushed"))) is None:

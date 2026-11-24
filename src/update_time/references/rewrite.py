@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import FloatingPin, Unserved
 from update_time.domain.marker import Scope
-from update_time.domain.reference import hash_drifted
-from update_time.io.log import Logger
+from update_time.domain.reference import DriftKind, hash_drifted
 from update_time.markers.parser import parse_marker
+from update_time.markers.report import report_marker
 from update_time.primitives.line import located_lines
 from update_time.primitives.text import rewrite_string
 from update_time.references.drift import adopts_drift
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from update_time.domain.marker import Marker
     from update_time.domain.reference import Reference
     from update_time.domain.source import Source
+    from update_time.io.log import Logger
     from update_time.primitives.line import Line
 
 
@@ -131,15 +132,7 @@ class _Rewriter:
 
     def _adopts_drift(self, latest: DependencyVersion, reference: Reference) -> bool:
         """Report the reference's digest as drifted and return whether the digest the registry serves is adopted."""
-        log = self.logger
-        return adopts_drift(
-            Logger.DIGEST_DRIFT,
-            reference,
-            latest.sha,
-            log,
-            publication=latest.publication,
-            report_undated=log.no_push_date,
-        )
+        return adopts_drift(DriftKind.DIGEST, reference, latest.sha, self.logger, publication=latest.publication)
 
     def _apply_update(
         self, match: re.Match[str], latest: DependencyVersion, reference: Reference, *, pin_unpinned: bool
@@ -185,13 +178,13 @@ def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cann
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
     It reads a marker written as a comment, on the reference's own line or above it, and takes one the file names
-    elsewhere from the updater that read it, in `marker`. `Logger.report_marker` reports that marker, and
+    elsewhere from the updater that read it, in `marker`. `report_marker` reports that marker, and
     `steers_the_update` says whether the marker steers the update. `update_line` receives the reference carrying the
     marker as read, so `latest_version` acts on its bound, its `allow` directives, and what it gets wrong.
     """
     marker = parse_marker(line) if marker is None else marker
     reference = matched_reference(match, line.location, dependency, marker=marker)
-    logger.report_marker(reference, steers_the_update=steers_the_update(reference))
+    report_marker(reference, logger, steers_the_update=steers_the_update(reference))
     return update_line(match, reference)
 
 

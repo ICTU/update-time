@@ -16,6 +16,7 @@ from update_time.domain.directive import DIRECTIVES, Consequence, ImageNotLooked
 from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER, release_judged_alike, stale_release, staleness_is_checked
+from update_time.markers.report import warn_if_the_bound_is_redundant, warn_if_the_opt_in_is_redundant
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, ImageNotLookedUp, ProjectGetter
@@ -38,12 +39,12 @@ def _warn_about_redundant_update_directives(
 ) -> None:
     """Warn about the marker's bound and `ignore[update]` where they decide nothing, as on an image never updated."""
     marker = reference.marker
-    if never_updated is None:
-        log.warn_if_redundant_bound(reference)
-        return
-    reason = ImageNotLookedUpReason(never_updated, Consequence.NEVER_UPDATED)
-    for directive in filter(None, (marker.scope_directive(Scope.UPDATE), marker.version_bound_directive)):
-        log.redundant_directive(reference, directive, reason)
+    if never_updated is not None:
+        reason = ImageNotLookedUpReason(never_updated, Consequence.NEVER_UPDATED)
+        for directive in filter(None, (marker.scope_directive(Scope.UPDATE), marker.version_bound_directive)):
+            log.redundant_directive(reference, directive, reason)
+    else:
+        warn_if_the_bound_is_redundant(reference, log)
 
 
 def _why_the_pin_never_floats(
@@ -110,12 +111,28 @@ def latest_version(reference: Reference, source: Source, log: Logger) -> Depende
         log.held_back_by_cooldown(reference, fresh, days, marker.cooldown_directive)
     resolved = ResolvedReference.from_reference(reference, release=latest, project=project)
     _report_project(resolved, log)
-    log.report_yank(resolved)
+    report_yank(resolved, log)
     never_floats = _why_the_pin_never_floats(latest, image_not_looked_up)
-    log.warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, never_floats)
-    log.warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, _why_drift_is_never_adopted(reference, source))
+    warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, never_floats, log)
+    warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, _why_drift_is_never_adopted(reference, source), log)
     held_back = marker.ignores(Scope.UPDATE) and never_updated is None
     return None if held_back else latest
+
+
+def report_yank(resolved: ResolvedReference, log: Logger) -> None:
+    """Warn about the version's yank, or report the marker that silences it or has nothing to silence.
+
+    A source that did not say whether it yanked the version leaves nothing to report.
+    """
+    if (yank := resolved.release.yank) is None:
+        return
+    directive = resolved.marker.directive_for(Scope.YANKED)
+    if yank.yanked and directive:
+        log.ignored_warning(resolved, Scope.YANKED, directive)
+    elif yank.yanked:
+        log.yanked_dependency(resolved)
+    elif directive:
+        log.redundant_ignore(resolved, Scope.YANKED, directive, resolved.release.version)
 
 
 def _project_is_checked(get_project: ProjectGetter, reference: Reference) -> bool:
@@ -130,10 +147,32 @@ def _project_is_checked(get_project: ProjectGetter, reference: Reference) -> boo
 
 def _report_project(resolved: ResolvedReference, log: Logger) -> None:
     """Report the staleness and the archival of a project a source has already answered for."""
-    log.report_staleness(resolved, resolved.stale_after)
+    _warn_if_stale(resolved, log)
     _log_if_the_staleness_threshold_silences_a_warning(resolved, log)
     _warn_if_the_staleness_threshold_is_redundant(resolved, log)
-    log.report_archival(resolved)
+    _report_archival(resolved, log)
+
+
+def _warn_if_stale(resolved: ResolvedReference, log: Logger) -> None:
+    """Warn when the project's newest release is older than the reference's staleness threshold."""
+    if (newest := stale_release(resolved.project, resolved.stale_after)) is not None:
+        log.stale_dependency(resolved, newest, resolved.stale_after)
+
+
+def _report_archival(resolved: ResolvedReference, log: Logger) -> None:
+    """Warn about the project's archival, or report the marker that silences it or has nothing to silence.
+
+    A source that does not declare whether it archived the project leaves nothing to report.
+    """
+    if (archival := resolved.project.archival) is None:
+        return
+    directive = resolved.marker.directive_for(Scope.ARCHIVED)
+    if archival.archived and directive:
+        log.ignored_warning(resolved, Scope.ARCHIVED, directive)
+    elif archival.archived:
+        log.archived_dependency(resolved, archival)
+    elif directive:
+        log.redundant_ignore(resolved, Scope.ARCHIVED, directive, archival.subject)
 
 
 def _log_if_the_staleness_threshold_silences_a_warning(resolved: ResolvedReference, log: Logger) -> None:
@@ -142,7 +181,7 @@ def _log_if_the_staleness_threshold_silences_a_warning(resolved: ResolvedReferen
     if threshold.value is None or stale_release(resolved.project, threshold.value) is not None:
         return
     if stale_release(resolved.project, STALE_AFTER.get()) is not None:
-        log.ignored_staleness(resolved, threshold.directive)
+        log.ignored_warning(resolved, Scope.STALE, threshold.directive)
 
 
 def _warn_if_the_staleness_threshold_is_redundant(resolved: ResolvedReference, log: Logger) -> None:

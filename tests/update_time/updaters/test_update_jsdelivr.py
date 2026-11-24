@@ -6,11 +6,12 @@ from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
+from update_time.domain.marker import Scope
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.references import resolve
 from update_time.sources import jsdelivr
-from update_time.updaters.update_jsdelivr import update_jsdelivrs
+from update_time.updaters.update_jsdelivr import _update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
 from tests.update_time.fixtures import FRESH_DATE, HASH1, HASH2, STALE_DATE
@@ -71,7 +72,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         """Update the jsDelivr URLs in a Sphinx config with the given content, and return its mocked path."""
         mock_conf = mock_path(content)
         mock_glob.return_value = [mock_conf]
-        update_jsdelivrs()
+        _update_jsdelivrs()
         return mock_conf
 
     @staticmethod
@@ -329,7 +330,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[yanked]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
-        self.assert_ignored_yank_logged("clipboard", Location(mock_conf, 3), "ignore[yanked]")
+        self.assert_ignored_warning_logged(Scope.YANKED, "clipboard", Location(mock_conf, 3), "ignore[yanked]")
 
     def test_vulnerability_level_none_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
         """Test that a `set[vulnerability-level=none]` marker silences the vulnerability warning and nothing else."""

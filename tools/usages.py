@@ -29,7 +29,7 @@ _FAILED = 1
 
 
 @dataclass(frozen=True)
-class Position:
+class _Position:
     """A place in a file, as the language server counts it: the line and the column, both from zero."""
 
     path: Path
@@ -52,40 +52,40 @@ def _module(path: Path) -> str:
     return ".".join(parts[1:] if parts[0] == _SOURCE_ROOT else parts)
 
 
-def _definitions(files: Iterable[Path]) -> dict[str, Position]:
+def _definitions(files: Iterable[Path]) -> dict[str, _Position]:
     """Return the position of each name the files define, by its qualified name."""
     return {name: position for file in files for name, position in _defined_in(file).items()}
 
 
-def _defined_in(file: Path) -> dict[str, Position]:
+def _defined_in(file: Path) -> dict[str, _Position]:
     """Return the position of each name the file defines: where its definition writes it."""
     source, module = file.read_text(), _module(file)
     named = _named(ast.parse(source).body, "", Path(str(file)), source.splitlines())
     return {f"{module}.{name}": position for name, position in named}
 
 
-def _named(nodes: list[ast.stmt], prefix: str, path: Path, lines: list[str]) -> Iterator[tuple[str, Position]]:
+def _named(nodes: list[ast.stmt], prefix: str, path: Path, lines: list[str]) -> Iterator[tuple[str, _Position]]:
     """Yield the name and the position of each definition among the nodes, qualified by the classes around it."""
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             line = node.lineno - 1
-            yield f"{prefix}{node.name}", Position(path, line, lines[line].index(node.name, node.col_offset))
+            yield f"{prefix}{node.name}", _Position(path, line, lines[line].index(node.name, node.col_offset))
         for target in _targets(node):
             for name in _assigned_names(target):
-                yield f"{prefix}{name.id}", Position(path, name.lineno - 1, name.col_offset)
+                yield f"{prefix}{name.id}", _Position(path, name.lineno - 1, name.col_offset)
         if isinstance(node, ast.ClassDef):
             yield from _named(node.body, f"{prefix}{node.name}.", path, lines)
         if isinstance(node, ast.FunctionDef) and node.name == "__init__":
             yield from _instance_attributes(node, prefix, path)
 
 
-def _instance_attributes(init: ast.FunctionDef, prefix: str, path: Path) -> Iterator[tuple[str, Position]]:
+def _instance_attributes(init: ast.FunctionDef, prefix: str, path: Path) -> Iterator[tuple[str, _Position]]:
     """Yield the name and the position of each attribute `__init__` assigns on `self`, qualified by its class."""
     for node in ast.walk(init):
         for target in _targets(node):
             if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
                 column = cast("int", target.end_col_offset) - len(target.attr)
-                yield f"{prefix}{target.attr}", Position(path, cast("int", target.end_lineno) - 1, column)
+                yield f"{prefix}{target.attr}", _Position(path, cast("int", target.end_lineno) - 1, column)
 
 
 def _targets(node: ast.AST) -> list[ast.expr]:
@@ -153,7 +153,7 @@ class _Client:
         return json.loads(self._output.read(length))
 
 
-def _usages(definition: Position) -> list[Position]:
+def _usages(definition: _Position) -> list[_Position]:
     """Ask the language server for the usages of the name defined at the position, and return them."""
     root = Path.cwd()
     uri = (root / definition.path).as_uri()
@@ -183,14 +183,14 @@ def _usages(definition: Position) -> list[Position]:
     return [_position(root, location) for location in found or []]
 
 
-def _position(root: Path, location: dict) -> Position:
+def _position(root: Path, location: dict) -> _Position:
     """Return the position of a location the server answers with, its file relative to the root."""
     path = Path(unquote(urlparse(location["uri"]).path)).relative_to(root)
     start = location["range"]["start"]
-    return Position(path, start["line"], start["character"])
+    return _Position(path, start["line"], start["character"])
 
 
-def _matches(name: str, definitions: dict[str, Position]) -> list[str]:
+def _matches(name: str, definitions: dict[str, _Position]) -> list[str]:
     """Return the qualified names the name stands for: itself where it is one, else each qualified name it ends."""
     if name in definitions:
         return [name]

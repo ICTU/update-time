@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from mutation_time.mutation import sentinels
+from mutation_time.mutation import _sentinels
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
@@ -60,7 +60,7 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
     """
     clear = not environment_variables if clear is None else clear
     # Carry the sentinels through a cleared environment, so the registered mutations run as they would outside it.
-    return patch.dict("os.environ", sentinels() | (environment_variables or {}), clear=clear)
+    return patch.dict("os.environ", _sentinels() | (environment_variables or {}), clear=clear)
 
 
 @contextlib.contextmanager

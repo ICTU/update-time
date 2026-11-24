@@ -25,10 +25,10 @@ from update_time.sources.docker_hub import _MAX_TAG_LISTING_PAGES, _TAG_LISTING_
 from update_time.sources.oci import (
     _MAX_FLOATING_TAG_PROBES,
     ImagesNotPulled,
-    Tag,
     TagGetter,
+    _is_docker_hub_image,
     _registry_token,
-    is_docker_hub_image,
+    _Tag,
 )
 
 from tests.helpers import patch_environ, requested_urls, unparsable_response
@@ -86,27 +86,27 @@ class IsDockerHubImageTest(unittest.TestCase):
         images = ("python", "library/ubuntu", "cimg/go", "docker.io/library/redis", "index.docker.io/org/app")
         for image in images:
             with self.subTest(image=image):
-                self.assertTrue(is_docker_hub_image(image))
+                self.assertTrue(_is_docker_hub_image(image))
 
     def test_other_registry_images(self):
         """Test that images with a registry host as their first path component are not Docker Hub images."""
         for image in ("registry.gitlab.com/group/image", "gcr.io/proj/image", "localhost:5000/i", "Host/image"):
             with self.subTest(image=image):
-                self.assertFalse(is_docker_hub_image(image))
+                self.assertFalse(_is_docker_hub_image(image))
 
 
 class TagTest(unittest.TestCase):
     """Unit tests for tags."""
 
     @kills.replace(
-        oci.Tag.version,
+        oci._Tag.version,
         r'r"+\1"',
         r'r".\1"',
         "a build number is read as a version component, so 26.0.2_10 sorts above 26.0.2.1_1",
         case="26.0.2_10-jre below 26.0.2.1_1-jre",
     )
     @kills.delete(
-        oci.Tag._sort_key,
+        oci._Tag._sort_key,
         "len(self.sortable_suffix_version.release),",
         "a more precise spelling of a suffix's version does not sort above it, so alpine2.3 stays off alpine2.3.0",
         case="python1.3.0-alpine2.3 below python1.3.0-alpine2.3.0",
@@ -116,7 +116,7 @@ class TagTest(unittest.TestCase):
         lower_and_higher = (("python1.3.0-alpine2.3", "python1.3.0-alpine2.3.0"), ("26.0.2_10-jre", "26.0.2.1_1-jre"))
         for lower, higher in lower_and_higher:
             with self.subTest(f"{lower} below {higher}"):
-                self.assertLess(Tag(lower), Tag(higher))
+                self.assertLess(_Tag(lower), _Tag(higher))
 
 
 @patch_environ()
@@ -253,21 +253,21 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(DIGEST, latest.sha)
 
     @kills.replace(
-        oci.Tag.suffix_label,
+        oci._Tag.suffix_label,
         "self._suffix_tag.suffix",
         '""',
         "a suffix's remainder is dropped from its label, so a slim reference drifts onto the fat image",
         case="a suffix that drops the remainder",
     )
     @kills.replace(
-        oci.Tag._date_spelling,
+        oci._Tag._date_spelling,
         're.sub(r"\\d", "0", cast("re.Match[str]", self._match).group("version"))',
         '""',
         "every snapshot spells its date the same way, so a reference on a date moves onto a timestamp",
         case="a dashed date for an undashed one",
     )
     @kills.replace(
-        oci.Tag._date_spelling,
+        oci._Tag._date_spelling,
         'cast("re.Match[str]", self._match).group("version")',
         "str(self.version)",
         "a snapshot's date spelling is read from its parsed version, so an undashed date moves onto a dashed one",
@@ -288,7 +288,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         case="a prerelease after an underscore",
     )
     @kills.replace(
-        oci.Tag.is_candidate_for,
+        oci._Tag.is_candidate_for,
         "if self.version is None:\n            return False",
         "if False:\n            return False",
         "a listed tag without a version ends the run with a traceback",
@@ -296,7 +296,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         case="an unparsable version",
     )
     @kills.replace(
-        oci.Tag.suffix_label,
+        oci._Tag.suffix_label,
         "return (self._suffix_tag.prefix, self._suffix_tag.suffix)",
         'return ("", self._suffix_tag.suffix)',
         "a suffix's label is dropped from it, so an alpine reference moves onto a debian image",
@@ -410,7 +410,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_could_not_fetch_logged(url, status=HTTPStatus.NOT_FOUND)
 
     @kills.force_none(
-        oci.Tag._is_dated_snapshot,
+        oci._Tag._is_dated_snapshot,
         "_DASHED_SNAPSHOT",
         "a timestamp is read as a release, so a release pin moves onto it",
     )
@@ -457,7 +457,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("2024.01", DIGEST))
         self.assertEqual(get_latest_tag("cimg/base", "2023.12").version, "2024.01")
 
-    @kills.append(oci.Tag.version, 'r"+', "b", "a build number is compared as text, so build 10 sorts below build 9")
+    @kills.append(oci._Tag.version, 'r"+', "b", "a build number is compared as text, so build 10 sorts below build 9")
     def test_tag_with_a_build_number_is_a_candidate(self):
         """Test that a tag spelling its version with a build number, such as `26.0.2_10-jre`, updates a reference."""
         self.requests.side_effect = mock_docker_registry(

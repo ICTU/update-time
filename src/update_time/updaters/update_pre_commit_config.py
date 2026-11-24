@@ -43,7 +43,7 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     return result
 
 
-def update_pre_commit_configs() -> None:
+def _update_pre_commit_configs() -> None:
     """Update the hook revs in all `.pre-commit-config.yaml` files found recursively from the start directory."""
     for config in glob_for(PRE_COMMIT_CONFIG):
         rewrite_file(config, _updated_lines, _LOG)
@@ -51,7 +51,7 @@ def update_pre_commit_configs() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the hook revs in the repository's pre-commit configuration files."""
-    update_pre_commit_configs()
+    _update_pre_commit_configs()
 
 
 if __name__ == "__main__":  # pragma: no cover

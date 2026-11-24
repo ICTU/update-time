@@ -8,10 +8,10 @@ from mutation_time.mutation import kills
 from update_time.domain.dependency import Release, Yank
 from update_time.sources import npmjs
 from update_time.sources.npmjs import (
+    _get_changes,
+    _newest_release,
     deprecation,
-    get_changes,
     get_publication_datetime,
-    newest_release,
 )
 
 from tests.helpers import mock_response, patch_get, requested_urls, unparsable_response
@@ -80,7 +80,7 @@ class NpmjsNewestReleaseTest(LoggingTestCase):
 
         The backport 1.0.1 was published after 2.0, which the dist-tag still names.
         """
-        self.assertEqual(Release("1.0.1", datetime(2024, 6, 1, tzinfo=UTC)), newest_release("package"))
+        self.assertEqual(Release("1.0.1", datetime(2024, 6, 1, tzinfo=UTC)), _newest_release("package"))
 
     @patch_get(
         {
@@ -94,12 +94,12 @@ class NpmjsNewestReleaseTest(LoggingTestCase):
     )
     def test_bookkeeping_entries_are_ignored(self):
         """Test that the `created` and `modified` entries are passed over, whatever they are dated."""
-        self.assertEqual(Release("1.1", datetime(2024, 6, 1, tzinfo=UTC)), newest_release("package"))
+        self.assertEqual(Release("1.1", datetime(2024, 6, 1, tzinfo=UTC)), _newest_release("package"))
 
     @patch_get(ok=False)
     def test_unreachable(self):
         """Test that an unreachable registry yields no release instead of crashing."""
-        self.assertIsNone(newest_release("package"))
+        self.assertIsNone(_newest_release("package"))
 
 
 class NpmjsDeprecationTest(LoggingTestCase):
@@ -142,12 +142,12 @@ class GetChangesRepositoryTest(LoggingTestCase):
     @patch_get(ok=False)
     def test_get_changes_when_unreachable(self):
         """Test that an unreachable registry yields no changelog instead of crashing."""
-        self.assertEqual(get_changes("package", "1.0"), "")
+        self.assertEqual(_get_changes("package", "1.0"), "")
 
     @patch("requests.Session.get", Mock(return_value=unparsable_response(ok=True, url=_version_url("package"))))
     def test_get_changes_when_the_version_document_is_not_json(self):
         """Test that a version document that is not JSON is warned about, and the version gets an empty changelog."""
-        self.assertEqual(get_changes("package", "1.0"), "")
+        self.assertEqual(_get_changes("package", "1.0"), "")
         self.assert_invalid_json_logged(_version_url("package"))
 
     def test_unreadable_repository(self):
@@ -158,7 +158,7 @@ class GetChangesRepositoryTest(LoggingTestCase):
             ("url_not_a_string", {"repository": {"url": 42}}),
         ):
             with self.subTest(metadata=metadata), patch_get(metadata) as mock_get:
-                self.assertEqual(get_changes(package, "1.0"), "")
+                self.assertEqual(_get_changes(package, "1.0"), "")
                 self.assertEqual(requested_urls(mock_get), [_version_url(package)])
 
     @patch("requests.Session.get")
@@ -181,7 +181,7 @@ class GetChangesRepositoryTest(LoggingTestCase):
                         releases_url(_REPOSITORY): mock_response([release]),
                     },
                 )
-                self.assertEqual(get_changes(package, "1.0"), "Changelog")
+                self.assertEqual(_get_changes(package, "1.0"), "Changelog")
                 self.assertEqual(requested_urls(mock_get), [_version_url(package), releases_url(_REPOSITORY)])
 
 
@@ -217,18 +217,18 @@ class GetChangesFallbackTest(LoggingTestCase):
     def test_changelog_file_when_no_release_matches(self, mock_get: Mock):
         """Test that a repository publishing no release for the version has its changelog file read."""
         self.create_responses(mock_get, _REPOSITORY, [], {"": "CHANGELOG.md"})
-        self.assertEqual(get_changes("package", "1.0"), self.CHANGES)
+        self.assertEqual(_get_changes("package", "1.0"), self.CHANGES)
 
     @patch("requests.Session.get")
     def test_no_changelog_file_when_a_release_matches(self, mock_get: Mock):
         """Test that a repository publishing a release for the version has no changelog file read."""
         release = github_release_json("1.0", body="Release notes")
         self.create_responses(mock_get, _REPOSITORY, [release], {"": "CHANGELOG.md"})
-        self.assertEqual(get_changes("package", "1.0"), "Release notes")
+        self.assertEqual(_get_changes("package", "1.0"), "Release notes")
         self.assertNotIn(contents_url(_REPOSITORY), requested_urls(mock_get))
 
     @kills.replace(
-        npmjs.get_changes,
+        npmjs._get_changes,
         "source.directory",
         '""',
         "the changelog file of a package a monorepo builds from a directory is looked for in the root",
@@ -239,4 +239,4 @@ class GetChangesFallbackTest(LoggingTestCase):
         repository = {"url": "https://github.com/org/monorepo", "directory": "packages/package"}
         listings = {"": "README.md", "packages/package": "CHANGELOG.md"}
         self.create_responses(mock_get, "org/monorepo", [], listings, repository)
-        self.assertEqual(get_changes("package", "1.0"), self.CHANGES)
+        self.assertEqual(_get_changes("package", "1.0"), self.CHANGES)

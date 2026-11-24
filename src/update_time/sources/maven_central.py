@@ -64,7 +64,7 @@ def _archival(artefact: DependencyName) -> Archival | None:
     return None if repository is None else github_archival(repository)
 
 
-def get_changes(artefact: DependencyName, version: VersionString) -> Changes:
+def _get_changes(artefact: DependencyName, version: VersionString) -> Changes:
     """Return the version's changes, from the release notes the artefact's GitHub repository published for it.
 
     The changes come from the repository's changelog file when it did not publish a release for the version.
@@ -182,7 +182,7 @@ def _pom(artefact: DependencyName, version: VersionString) -> XmlElement | None:
         return None
     pom = xml.parse(response.content)
     if pom is None:
-        _LOG.invalid_pom(url)
+        _LOG.invalid_response(url, xml.FORMAT)
     return pom
 
 
@@ -263,4 +263,4 @@ def _published(published: str) -> datetime | None:
         return None
 
 
-SOURCE = Source(project=project, changes=get_changes, publication_date=publication, ecosystem=Ecosystem.MAVEN)
+SOURCE = Source(project=project, changes=_get_changes, publication_date=publication, ecosystem=Ecosystem.MAVEN)

@@ -8,7 +8,7 @@ from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
 from update_time.manifests import devcontainer_json as devcontainer_json_manifest
 from update_time.primitives.location import Location
-from update_time.updaters.update_devcontainer import update_devcontainers
+from update_time.updaters.update_devcontainer import _update_devcontainers
 
 from tests.helpers import mock_path
 from tests.update_time import registry
@@ -33,7 +33,7 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
     def run_updater(self, mock_file: Mock) -> None:
         """Run the devcontainer updater with the mock file as the only discovered devcontainer.json."""
         with patch("update_time.updaters.update_devcontainer.glob_for", return_value=[mock_file]):
-            update_devcontainers()
+            _update_devcontainers()
 
     def test_feature_updated_and_pinned(self):
         """Test that a feature key (an OCI reference) is bumped and pinned with its digest."""
@@ -119,7 +119,7 @@ class ScannedDevcontainersTest(unittest.TestCase):
         """Test that each devcontainer.json is scanned for both its image and its feature references in one pass."""
         mock_file = mock_path("{}")
         mock_glob.return_value = [mock_file]
-        update_devcontainers()
+        _update_devcontainers()
         mock_update_file.assert_called_once_with(mock_file, ANY, ANY, source=ANY, logger=ANY)
         image_pattern, feature_pattern = mock_update_file.call_args.args[1:3]
         self.assertRegex('"image": "python:3.12"', image_pattern)

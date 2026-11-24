@@ -8,8 +8,10 @@ from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion, PinnedDependency, normalized_python_name
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import PEP_440
+from update_time.io.log import ToolTask
 from update_time.io.process import is_installed, run
 from update_time.lock_files.uv_lock import RecordedVersions, UvLock
+from update_time.markers.report import warn_if_the_bound_is_redundant
 from update_time.package_managers.moved_versions import log_moved_versions, log_new_version
 from update_time.package_managers.uv import marker_policy
 from update_time.package_managers.uv.uv import (
@@ -103,7 +105,7 @@ class _Member:
         """Warn about each bound that never has an effect, or blocks every update, at its declaration's version."""
         for declaration in self.bounded_declarations:
             if current_version := marker_policy.current_version(declaration, self.locked_as_written):
-                log.warn_if_redundant_bound(replace(declaration, current_version=current_version))
+                warn_if_the_bound_is_redundant(replace(declaration, current_version=current_version), log)
 
     @property
     def bounds(self) -> dict[Declaration, str]:
@@ -189,7 +191,7 @@ class _LockTarget:
         if run(command).succeeded:
             return True
         for file in files:
-            log.uv_dependencies_not_updated(file.path, str(_UV_LOCK))
+            log.tool_failed(file.path, ToolTask.UPDATE, str(_UV_LOCK))
         return False
 
 
@@ -243,7 +245,7 @@ class _LockSnapshot:
         files = [member.file for member in self.members]
         if not is_installed("uv"):
             for file in files:
-                self.log.package_manager_not_on_path(file.path, "uv")
+                self.log.tool_not_on_path(file.path, ToolTask.UPDATE, "uv")
             return False
         return self.target.lock(files, self.log, *self.target.cooldown_options)
 

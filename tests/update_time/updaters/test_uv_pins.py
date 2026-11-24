@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from mutation_time.mutation import kills
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
+from update_time.domain.marker import Scope
 from update_time.formats import toml as toml_module
 from update_time.io.log import Logger, get_logger
 from update_time.manifests.inline_script import InlineScript
@@ -113,7 +114,7 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         file = self.dependency_toml_file("package==1.0", marker="set[stale-after=0]")
         warn_about_pins([file], _LOG, {})
         self.assert_no_warnings_logged()
-        self.assert_ignored_staleness_logged("package", Location(file.path, 2), "set[stale-after=0]")
+        self.assert_ignored_warning_logged(Scope.STALE, "package", Location(file.path, 2), "set[stale-after=0]")
 
     def test_a_marker_silences_the_declaration_it_steers_and_no_other(self, get: Mock):
         """Test that a marker on one declaration's line leaves the dependency declared below it warned about."""
@@ -193,10 +194,10 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """Test that an `ignore[yanked]` silences the warning, and is reported as silencing it."""
         file = self.check_a_yanked_pin(get, "ignore[yanked]")
         self.assert_no_warnings_logged()
-        self.assert_ignored_yank_logged("package", Location(file.path, 2), "ignore[yanked]")
+        self.assert_ignored_warning_logged(Scope.YANKED, "package", Location(file.path, 2), "ignore[yanked]")
 
     @kills.append(
-        delegated_module.pin_resolver,
+        delegated_module._pin_resolver,
         "yank=get_yank(pin.dependency, pin.current_version))",
         ", marker=next(iter(pins)).marker",
         "one pin's marker steers every pin the file declares, rather than the one carrying it",
@@ -207,7 +208,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker="ignore[yanked]"))
         warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("other", "1.0", Location(file.path, 4))
-        self.assert_ignored_yank_logged("package", Location(file.path, 3))
+        self.assert_ignored_warning_logged(Scope.YANKED, "package", Location(file.path, 3))
 
     def test_ignore_update_marker_still_warns_about_a_yanked_pin(self, get: Mock):
         """Test that a pin `ignore[update]` holds back still reports the yank of the version it is left on."""
@@ -317,7 +318,7 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         file = self.dependency_toml_file("package==1.0", marker="ignore[archived]")
         warn_about_pins([file], _LOG, {})
         self.assert_no_warnings_logged()
-        self.assert_ignored_archival_logged("package", Location(file.path, 2))
+        self.assert_ignored_warning_logged(Scope.ARCHIVED, "package", Location(file.path, 2))
 
     def test_a_marker_silences_a_dependency_that_pins_no_version(self, get: Mock):
         """Test that both project scopes silence their warning for a dependency declared without an exact pin."""

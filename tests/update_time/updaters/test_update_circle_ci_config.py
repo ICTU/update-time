@@ -8,7 +8,7 @@ from update_time.io.log import Logger
 from update_time.manifests import circle_ci_config as circle_ci_config_manifest
 from update_time.primitives.location import Location
 from update_time.updaters import update_circle_ci_config as circle_ci
-from update_time.updaters.update_circle_ci_config import update_circle_ci_config
+from update_time.updaters.update_circle_ci_config import _update_circle_ci_config
 
 from tests.helpers import mock_path
 from tests.update_time import registry
@@ -29,7 +29,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     def run_updater(self, mock_file: Mock) -> None:
         """Run the CircleCI updater with the mock file as the only YAML file under the CircleCI directory."""
         with patch("pathlib.Path.glob", side_effect=[[mock_file], []]):
-            update_circle_ci_config()
+            _update_circle_ci_config()
 
     def test_multiple_files(self):
         """Test that images are updated in every file the walk finds, not just in the first."""
@@ -37,7 +37,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
         next_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
         with patch("update_time.references.file.glob_for", return_value=[config_yml, next_yml]):
-            update_circle_ci_config()
+            _update_circle_ci_config()
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         next_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         self.assert_path_logged(next_yml)
@@ -90,7 +90,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.assert_no_warnings_logged()
 
     @kills.replace(
-        circle_ci.update_circle_ci_config,
+        circle_ci._update_circle_ci_config,
         "MACHINE_EXECUTOR_IMAGE",
         "BUILT_IMAGE",
         "a machine-executor image is reported as one a Compose file builds",

@@ -14,7 +14,7 @@ from update_time.sources.oci import TagGetter
 _LOG = get_logger("devcontainer")
 
 
-def update_devcontainers() -> None:
+def _update_devcontainers() -> None:
     """Update the base image and feature references in the repository's devcontainer.json files."""
     for devcontainer in glob_for(DEVCONTAINER_CONFIGS):
         update_file(
@@ -28,7 +28,7 @@ def update_devcontainers() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the images and features in the repository's devcontainer.json files."""
-    update_devcontainers()
+    _update_devcontainers()
 
 
 if __name__ == "__main__":  # pragma: no cover

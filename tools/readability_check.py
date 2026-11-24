@@ -81,7 +81,7 @@ _REGEXP_BACKSLASHES = 5
 _EXCEPTION_MESSAGE = re.compile(r"\w+(Error|Exception): ")
 
 
-class Prose:
+class _Prose:
     """A run of prose from a file, and the line it starts on."""
 
     def __init__(self, file_path: Path, text: str, line_number: int) -> None:
@@ -112,13 +112,13 @@ def _drop_irrelevant_parentheses(text: str) -> str:
     return re.sub(r"(?<=\w)\([^()]*\)|\([^()]*\)(?=\w)", lambda match: match[0].strip("()"), text)
 
 
-def extract_prose_from_markdown(markdown_file: Path) -> Iterator[Prose]:
+def _extract_prose_from_markdown(markdown_file: Path) -> Iterator[_Prose]:
     """Yield the prose in the Markdown file, with the line each run starts on."""
     for line_number, line in lines_without_code_blocks(markdown_file.read_text()):
         if line.startswith("|"):  # A table row: not prose.
             continue
         if text := _MARKUP_PREFIX.sub("", line, count=1).strip():
-            yield Prose(markdown_file, text, line_number)
+            yield _Prose(markdown_file, text, line_number)
 
 
 def _is_standalone(comment: tokenize.TokenInfo) -> bool:
@@ -202,7 +202,7 @@ class _Fragment:
     text: str
 
 
-def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
+def _extract_prose_from_python(python_file: Path) -> Iterator[_Prose]:
     """Yield the prose in the Python file, its comments and strings, with the line each starts on."""
     source_code = python_file.read_text()
     # Comments come from the token stream, as the parse tree discards them. A block of standalone comment lines
@@ -224,7 +224,7 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
         if (text := _INTERPOLATION.sub("", fragment.text).strip()) and not (
             _is_regexp(fragment.text) or _is_code(fragment.text) or _is_exception_message(fragment.text)
         ):
-            yield Prose(python_file, text, fragment.line_number)
+            yield _Prose(python_file, text, fragment.line_number)
 
 
 def _matching_files(path: Path, glob: str) -> Iterator[Path]:
@@ -236,12 +236,12 @@ def _matching_files(path: Path, glob: str) -> Iterator[Path]:
         yield from sorted(path.rglob(glob))
 
 
-def extract_prose(*paths: Path) -> Iterator[Prose]:
+def _extract_prose(*paths: Path) -> Iterator[_Prose]:
     """Yield the prose in the files under the paths, each of which may be a file or a directory."""
     extractors = {
-        "*.py": extract_prose_from_python,
-        "*.md": extract_prose_from_markdown,
-        "*.md.in": extract_prose_from_markdown,
+        "*.py": _extract_prose_from_python,
+        "*.md": _extract_prose_from_markdown,
+        "*.md.in": _extract_prose_from_markdown,
     }
     for path in paths:
         for glob, extractor in extractors.items():
@@ -249,7 +249,7 @@ def extract_prose(*paths: Path) -> Iterator[Prose]:
                 yield from extractor(file_path)
 
 
-def sentence_complexity(sentence: str) -> int:
+def _sentence_complexity(sentence: str) -> int:
     """Return the sentence complexity: one, plus a cost per aside or clause join that grows with nesting depth."""
     sentence = _drop_irrelevant_parentheses(_drop_markup(sentence))
     if not sentence:
@@ -372,7 +372,7 @@ class _Limits:
 
 def _faults(sentence: str, limits: _Limits) -> str:
     """Return what makes the sentence hard to read, or empty when nothing does."""
-    complexity, words = sentence_complexity(sentence), _sentence_words(sentence)
+    complexity, words = _sentence_complexity(sentence), _sentence_words(sentence)
     faults = []
     if complexity > limits.complexity:
         faults.append(f"complexity {complexity}")
@@ -419,7 +419,7 @@ def _whitelisted_sentences(whitelist: Path | None) -> set[str]:
     return set(whitelist.read_text().splitlines())
 
 
-type _Flagged = Iterable[tuple[Prose, str, str]]
+type _Flagged = Iterable[tuple[_Prose, str, str]]
 
 
 class _Verdicts:
@@ -443,7 +443,7 @@ class _Verdicts:
 def _flagged(paths: list[Path], limits: _Limits, verdicts: _Verdicts) -> _Flagged:
     """Yield each sentence over a limit, with the prose holding it and what makes it hard to read."""
     tokenizer = _sentence_tokenizer()
-    for prose in extract_prose(*paths):
+    for prose in _extract_prose(*paths):
         for sentence in _sentences(tokenizer, prose.text):
             if faults := verdicts.faults(sentence, limits):
                 yield prose, sentence, faults

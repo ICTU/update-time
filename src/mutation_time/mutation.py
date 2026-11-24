@@ -104,7 +104,7 @@ class Case:
 
 
 @dataclass(frozen=True)
-class Result:
+class _MutationResult:
     """What checking a mutation showed, and what went wrong where the outcome does not say.
 
     Stale and broken each have several causes, so a result of either carries the one that applied. Killed and
@@ -200,7 +200,7 @@ class Mutation:
         first = source.count("\n", 0, offset) + 1
         return range(first, first + self.old.count("\n") + 1)
 
-    def check(self, test_name: str) -> Result:
+    def check(self, test_name: str) -> _MutationResult:
         """Return what checking the mutation showed: whether the test or its case fails, or the file has moved on.
 
         Whatever the mutation is at fault for comes back as an outcome to report: a source it cannot be applied to,
@@ -211,22 +211,22 @@ class Mutation:
             source = self._source()
             mutated = self._mutated(source)
         except StaleError as error:
-            return Result(Outcome.STALE, str(error))
+            return _MutationResult(Outcome.STALE, str(error))
         try:
             run = self._run_test(test_name, source, mutated)
         except _SourceError as error:
-            return Result(Outcome.BROKEN, str(error))
+            return _MutationResult(Outcome.BROKEN, str(error))
         try:
             failures, errors = self._reports(run)
         except StaleError as error:
-            return Result(Outcome.STALE, str(error))
+            return _MutationResult(Outcome.STALE, str(error))
         if errors:
             raised = _raised(errors)
             if raised != self.raises:
-                return Result(Outcome.BROKEN, raised)
+                return _MutationResult(Outcome.BROKEN, raised)
         if not failures and not errors:
-            return Result(Outcome.SURVIVED)
-        return Result(Outcome.KILLED, cases=tuple(run.cases))
+            return _MutationResult(Outcome.SURVIVED)
+        return _MutationResult(Outcome.KILLED, cases=tuple(run.cases))
 
     def _reports(self, run: _RecordedRun) -> tuple[_Reports, _Reports]:
         """Return the failures and the errors to judge the mutation on: those of the case it names, or of the test.
@@ -667,7 +667,7 @@ def _reason(error: Exception) -> str:
     return f"{type(error).__name__}: {error}"
 
 
-def _failure(mutation: Mutation, result: Result) -> str:
+def _failure(mutation: Mutation, result: _MutationResult) -> str:
     """Return the message a mutation the test did not kill fails that test with, leading with the regression.
 
     A survivor is one the test, or the case the mutation names, ran against and passed. A stale or broken mutation
@@ -763,7 +763,9 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
         _fail_for_unnamed_registrations(test_case, mutations)
 
 
-def _fail_for_unnamed_cases(test_case: unittest.TestCase, names: list[_CaseName], results: list[Result]) -> None:
+def _fail_for_unnamed_cases(
+    test_case: unittest.TestCase, names: list[_CaseName], results: list[_MutationResult]
+) -> None:
     """Fail the test case once for each case in the results that none of the names matches."""
     cases = {case.description: case for result in results for case in result.cases}
     case_names = [name for name in names if isinstance(name, str)]
@@ -915,7 +917,7 @@ def registered_mutations(test: unittest.TestCase) -> tuple[Mutation, ...]:
     return getattr(getattr(type(test), test.id().rsplit(".", 1)[-1], None), _REGISTERED, ())
 
 
-def sentinels() -> dict[str, str]:
+def _sentinels() -> dict[str, str]:
     """Return the sentinels the environment sets, with their values."""
     return {
         sentinel: value for sentinel in (CHECKS_OFF, _CHECKED_TEST) if (value := os.environ.get(sentinel)) is not None

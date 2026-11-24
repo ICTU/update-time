@@ -12,7 +12,7 @@ from update_time.sources.oci import TagGetter
 _LOG = get_logger("manifest images")
 
 
-def update_manifest_images() -> None:
+def _update_manifest_images() -> None:
     """Update the image tags and digests in the Docker Compose files and the Helm folder.
 
     A Compose file is parsed, so one whose YAML does not parse is skipped. A Helm chart is read line by line,
@@ -31,7 +31,7 @@ def update_manifest_images() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the images in the repository's Docker Compose and Helm manifests."""
-    update_manifest_images()
+    _update_manifest_images()
 
 
 if __name__ == "__main__":  # pragma: no cover

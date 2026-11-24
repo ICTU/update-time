@@ -20,6 +20,7 @@ from requests import Response
 from rich.text import Text
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
+from update_time.domain.bound import BoundRedundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import (
     Archival,
@@ -27,16 +28,15 @@ from update_time.domain.dependency import (
     DependencyVersion,
     FloatingPin,
     ImageNotLookedUp,
-    Project,
     Release,
     Yank,
 )
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.domain.marker import Marker, Scope, Threshold
-from update_time.domain.reference import DriftedPin, Reference, RefKind
+from update_time.domain.reference import DriftedPin, DriftKind, Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import MESSAGE_NAME, named_message, undelimited
-from update_time.io.log import Logger
+from update_time.io.log import FileContent, Logger, ToolTask
 from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.markers.parser import parse_directives
 from update_time.package_managers.maven.versions_plugin import OverrideConsequence
@@ -75,14 +75,14 @@ class _Capture(logging.Handler):
 
 
 @dataclass(frozen=True)
-class LogSamples:
+class _LogSamples:
     """The sample log lines: the README's blocks, by the placeholder each one fills, and the index's line per name."""
 
     blocks: dict[str, str]
     by_name: dict[str, str]
 
 
-def sample_log_lines() -> LogSamples:
+def sample_log_lines() -> _LogSamples:
     """Return the README's sample log blocks, and the sample of each name the index of the log messages shows.
 
     The samples log to a logger of their own, which collects them and passes them on to nobody: they are the
@@ -97,7 +97,7 @@ def sample_log_lines() -> LogSamples:
     try:
         blocks = _blocks(logger, capture)
         _index_samples(logger, capture)
-        return LogSamples(blocks, capture.samples)
+        return _LogSamples(blocks, capture.samples)
     finally:
         logger.log.removeHandler(capture)
 
@@ -161,16 +161,12 @@ def _debug_held_back_samples(log: Logger) -> None:
 def _debug_silenced_samples(log: Logger) -> None:
     """Log a sample of each debug message about a warning that a marker or an option silenced."""
     requirements = Location(Path("docs/requirements.txt"), 12)
-    log.ignored_staleness(reference("humanize", requirements), "set[stale-after=0]")
-    marker = Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]")
-    log.report_yank(
-        resolved("humanize", requirements, DependencyVersion("4.15.0", yank=Yank(yanked=True)), marker=marker)
-    )
-    archived = Project(archival=Archival(archived=True))
-    silenced = Marker(ignored_scopes=Scope.ARCHIVED)
-    log.report_archival(resolved("aioredis", requirements, project=archived, marker=silenced))
-    log.ignored_vulnerability(
-        reference("django", requirements, "3.2.0"), VULNERABILITY, "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]"
+    log.ignored_warning(reference("humanize", requirements), Scope.YANKED, "ignore[yanked]")
+    log.ignored_warning(
+        reference("django", requirements, "3.2.0"),
+        Scope.VULNERABLE,
+        "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]",
+        advisory=VULNERABILITY.advisory,
     )
     log.globally_ignored_vulnerability(
         reference("django", requirements, "3.2.0"), VULNERABILITY, frozenset({"GHSA-2gwj-7jmv-h26r"})
@@ -203,7 +199,6 @@ def _debug_project_samples(log: Logger) -> None:
     log.left_with_the_workspace_root(Path("packages/ui/package.json"), "yarn", Path("package.json"))
     log.updated_by_the_workspace_root(Path("packages/ui/package.json"), "bun", Path("package.json"))
     log.maven_not_run(Path("sub/pom.xml"))
-    log.option_overridden_by_the_pom(Path("pom.xml"), "rulesUri", OverrideConsequence.RULES, "", 0)
     log.option_overridden_by_the_pom(
         Path("pom.xml"), "rulesUri", OverrideConsequence.RULES, "org.example:parent:1.0", 12
     )
@@ -228,7 +223,7 @@ def _index_info_samples(log: Logger) -> None:
     log.version_moved_back("uv", reference("humanize", Location(Path("docs/requirements.in"), 2), "4.16.0"), "4.11.0")
     compiled = Path("docs/requirements.txt")
     log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")], Unrecompilable.OTHER_OUTPUT)
-    log.managed_by_comment_written(Path("docs/requirements.in"), compiled, "7 days", "uv exclude-newer")
+    log.configured_compiled_file_cooldown(Path("docs/requirements.in"), compiled, "7 days", "uv exclude-newer")
     log.configured_uv_cooldown(Path("pyproject.toml"), "7 days")
     log.new_version(reference("internal-lib", Location(Path("pyproject.toml"), 2)), DependencyVersion("1.3.0"))
     log.pin_with_environment_marker_left_as_is(reference("humanize", Location(Path("pyproject.toml"), 3), "4.15.0"))
@@ -236,10 +231,13 @@ def _index_info_samples(log: Logger) -> None:
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
     workflow = Location(Path(".github/workflows/ci.yml"), 17)
-    tag_drift = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED)
-    log.adopted_drift(Logger.TAG_DRIFT, tag_drift, "allow[hash-drift]")
-    digest_drift = DriftedPin("python", "3.14", Location(Path("Dockerfile"), 1), _ELIDED_DIGEST, new_sha=_ELIDED_DIGEST)
-    log.adopted_drift(Logger.DIGEST_DRIFT, digest_drift, "allow[hash-drift]")
+    tag_drift = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, kind=DriftKind.TAG, new_sha=_ELIDED)
+    log.adopted_drift(tag_drift, "allow[hash-drift]")
+    dockerfile = Location(Path("Dockerfile"), 1)
+    digest_drift = DriftedPin(
+        "python", "3.14", dockerfile, _ELIDED_DIGEST, kind=DriftKind.DIGEST, new_sha=_ELIDED_DIGEST
+    )
+    log.adopted_drift(digest_drift, "allow[hash-drift]")
 
 
 def _index_warning_samples(log: Logger) -> None:
@@ -269,19 +267,10 @@ def _index_warning_samples(log: Logger) -> None:
 def _warning_file_samples(log: Logger) -> None:
     """Log a sample of each warning about a file Update-time cannot read."""
     unreadable = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-    log.unreadable_script(Path("tool.py"), unreadable)
+    log.unreadable_file(Path("tool.py"), unreadable, FileContent.INLINE_SCRIPT_METADATA)
     log.invalid_file(Path(".github/workflows/ci.yml"), "YAML")
-    log.unreadable_package_json(Path("package.json"), unreadable)
-    log.unreadable_manager_declaration(Path("package.json"), unreadable)
-    log.unreadable_node_engine(Path("package.json"), unreadable)
     log.no_entry("node", Path("package.json"))
-    log.unreadable_requires_python(Path("pyproject.toml"), unreadable)
     log.pinned_version_unreadable(Path("docs/requirements.txt"), "humanize", "4.15.0-final")
-    log.unreadable_catalogs(Path("pnpm-workspace.yaml"), unreadable)
-    log.unreadable_bun_lock(Path("bun.lock"), ValueError("it does not hold the JSON bun writes"))
-    error = ValueError("Expected ']' at the end of a table declaration (at line 1, column 9)")
-    log.unreadable_bunfig(Path("bunfig.toml"), error)
-    log.invalid_pom("https://repo1.maven.org/maven2/com/google/guava/guava/33.5.0-jre/guava-33.5.0-jre.pom")
     log.effective_pom_unreadable(Path("pom.xml"))
     log.effective_pom_without_input_locations(Path("pom.xml"))
 
@@ -313,10 +302,8 @@ def _warning_fetch_samples(log: Logger) -> None:
     url = "https://pypi.org/pypi/humanize/json"
     response = Response()
     response.url, response.status_code, response.reason = url, 503, "Service Unavailable"
-    log.response(response)
-    log.invalid_json(url)
-    log.timeout(url)
-    log.request_error(url, ConnectionError("Connection refused"))
+    log.request_failed(url, response)
+    log.invalid_response(url, "JSON")
 
 
 def _index_error_samples(log: Logger) -> None:
@@ -347,19 +334,17 @@ def _yarn_failure(log: Logger) -> None:
 def _error_python_samples(log: Logger) -> None:
     """Log a sample of each error about a compiled requirements file or projects uv locks together."""
     compiled = Path("docs/requirements.txt")
-    log.compiled_file_not_recompiled(compiled, "uv pip compile")
-    log.compiler_not_on_path(compiled, "uv")
+    log.tool_failed(compiled, ToolTask.RECOMPILE, "uv pip compile")
+    log.tool_not_on_path(compiled, ToolTask.RECOMPILE, "uv")
     log.rolled_back_with_cycle(Path("lib/pyproject.toml"), [Path("app/pyproject.toml")])
 
 
 def _uv_failures(log: Logger) -> None:
     """Log a sample of each failure that leaves the dependencies of a file uv locks as they were."""
-    log.uv_dependencies_not_updated(Path("tool.py"), "uv lock")
     log.lock_not_read(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
     log.file_not_written(Path("pyproject.toml"), PermissionError(13, "Permission denied", "pyproject.toml"))
     log.file_not_restored(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
     log.lock_not_removed(Path("tool.py.lock"), PermissionError(13, "Permission denied", "tool.py.lock"))
-    log.package_manager_not_on_path(Path("pyproject.toml"), "uv")
 
 
 def _error_maven_samples(log: Logger) -> None:
@@ -367,7 +352,6 @@ def _error_maven_samples(log: Logger) -> None:
     log.unreadable_reactor(Path(), 50)
     log.unreadable_reactor_as_found(Path(), 118)
     log.unreadable_reactor_since_update(Path(), Path("dubbo-dependencies-bom/pom.xml"), 50)
-    log.unreadable_reactor_since_update_without_poms_left(Path(), Path("dubbo-dependencies-bom/pom.xml"))
     log.unparsable_reactor(Path(), Path("sub/pom.xml"), 118)
     log.invalid_xml_after_update(Path("pom.xml"))
     log.declarations_changed(Path("pom.xml"), 12, 11)
@@ -386,12 +370,12 @@ def _error_source_samples(log: Logger) -> None:
     log.unpinned_ref(branch, rate_limited, RefKind.REF)
     log.unchecked_branch_drift(branch, _ELIDED, rate_limited)
     log.undated_commit("actions/checkout", "v4.4.0", "4.3.0", rate_limited)
-    moved = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED)
-    log.no_commit_date(Logger.TAG_DRIFT, moved, rate_limited)
+    moved = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, kind=DriftKind.TAG, new_sha=_ELIDED)
+    log.undated_drift(moved, rate_limited)
     dockerfile = Location(Path("Dockerfile"), 2)
     log.undated_push("python", "3.15.0", "3.14.6", "HTTP 429")
-    log.no_push_date(
-        Logger.DIGEST_DRIFT, DriftedPin("python", "3.14", dockerfile, _ELIDED, new_sha=_ELIDED), "HTTP 429"
+    log.undated_drift(
+        DriftedPin("python", "3.14", dockerfile, _ELIDED, kind=DriftKind.DIGEST, new_sha=_ELIDED), "HTTP 429"
     )
 
 
@@ -400,11 +384,12 @@ def _redundant_directives(
 ) -> dict[str, str]:
     """Log a sample per warning about a marker directive that holds nothing back, paired with the block's placeholder.
 
-    A redundancy warning is handed the directive it names, so most samples pass one as text; the two about a
-    vulnerability suppression read theirs off the marker the reference carries.
+    A redundancy warning is handed the directive it names, so most samples pass one as text; the one about a risk
+    level reads its own off the marker the reference carries.
     """
     suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
-    log.redundant_vulnerable_advisory(reference("django", requirements, "4.2.0", suppression))
+    django = reference("django", requirements, "4.2.0", suppression)
+    log.redundant_ignore(django, Scope.VULNERABLE, suppression.advisory_directives, "4.2.0")
     redundant_vulnerable_advisory = capture.take()
 
     level = Marker(vulnerable=Threshold(value="high", directive="set[vulnerability-level=high]"))
@@ -600,8 +585,11 @@ def _directives_asking_for_the_default(
 
 def _bounds_deciding_nothing(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
     """Log a bound that never has an effect and one that blocks every update, and pair the lines."""
-    for directives in ("allow[update>=3.12]", "ignore[update>=3.12]"):
-        log.warn_if_redundant_bound(reference("python", dockerfile, "3.12", parse_directives(directives)))
+    for directives, redundancy in (
+        ("allow[update>=3.12]", BoundRedundancy.NO_EFFECT),
+        ("ignore[update>=3.12]", BoundRedundancy.BLOCKS_ALL),
+    ):
+        log.redundant_bound(reference("python", dockerfile, "3.12", parse_directives(directives)), redundancy)
     return {"@@BOUNDS_DECIDING_NOTHING@@": capture.take()}
 
 
@@ -635,13 +623,19 @@ def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
     log.drift(
-        Logger.DIGEST_DRIFT,
-        DriftedPin("python", "3.14", Location(Path("Dockerfile"), 1), _ELIDED_DIGEST, new_sha=_ELIDED_DIGEST),
+        DriftedPin(
+            "python",
+            "3.14",
+            Location(Path("Dockerfile"), 1),
+            _ELIDED_DIGEST,
+            kind=DriftKind.DIGEST,
+            new_sha=_ELIDED_DIGEST,
+        ),
     )
     workflow = Location(Path(".github/workflows/ci.yml"), 17)
-    log.drift(Logger.TAG_DRIFT, DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED))
-    log.drift(Logger.BRANCH_DRIFT, DriftedPin("actions/checkout", "main", workflow, _ELIDED, new_sha=_ELIDED))
-    log.drift(Logger.REF_DRIFT, DriftedPin("actions/checkout", "stable-2024", workflow, _ELIDED, new_sha=_ELIDED))
+    log.drift(DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, kind=DriftKind.TAG, new_sha=_ELIDED))
+    log.drift(DriftedPin("actions/checkout", "main", workflow, _ELIDED, kind=DriftKind.BRANCH, new_sha=_ELIDED))
+    log.drift(DriftedPin("actions/checkout", "stable-2024", workflow, _ELIDED, kind=DriftKind.REF, new_sha=_ELIDED))
     clipboard = reference("clipboard", Location(Path("docs/conf.py"), 4), "2.0.11")
     log.hash_mismatch(clipboard, _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH)
     drift = capture.take()
@@ -649,23 +643,20 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     requirements = Location(Path("docs/requirements.txt"), 12)
     dockerfile = Location(Path("Dockerfile"), 2)
 
-    published = stale_publication_date()
-    stale = Project(newest=Release("4.15.0", published))
-    log.report_staleness(resolved("humanize", requirements, project=stale), STALE_AFTER.get())
+    stale = Release("4.15.0", stale_publication_date())
+    log.stale_dependency(reference("humanize", requirements), stale, STALE_AFTER.get())
     staleness = capture.take()
 
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))
-    log.report_yank(resolved("humanize", requirements, yanked))
+    log.yanked_dependency(resolved("humanize", requirements, yanked))
     yank = capture.take()
 
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
     vulnerable = capture.take()
 
-    archived_project = Project(archival=Archival(archived=True))
-    log.report_archival(resolved("aioredis", requirements, project=archived_project))
+    log.archived_dependency(reference("aioredis", requirements), Archival(archived=True))
     repository = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
-    archived_repository = Project(archival=repository)
-    log.report_archival(resolved("actions/setup-ruby", workflow, project=archived_repository))
+    log.archived_dependency(reference("actions/setup-ruby", workflow), repository)
     archival = capture.take()
 
     redundant = _redundant_directives(log, capture, requirements, dockerfile)
@@ -702,15 +693,14 @@ def _redundant_suppressions(
     """Log a sample per warning about a staleness threshold, yank, or archival directive that decides nothing."""
     recent = Release("4.15.0", datetime.now(UTC) - timedelta(days=30))
     standing = DependencyVersion("4.15.0", yank=Yank())
-    active_project = Project(newest=recent, archival=Archival())
-    log.report_yank(resolved("humanize", requirements, standing, marker=Marker(ignored_scopes=Scope.YANKED)))
+    log.redundant_ignore(resolved("humanize", requirements, standing), Scope.YANKED, "ignore[yanked]", "4.15.0")
     yank = capture.take()
-    log.report_archival(
-        resolved("humanize", requirements, project=active_project, marker=Marker(ignored_scopes=Scope.ARCHIVED))
+    log.redundant_ignore(
+        reference("humanize", requirements), Scope.ARCHIVED, "ignore[archived]", ArchivedSubject.PROJECT
     )
-    active_repository = Project(archival=Archival(subject=ArchivedSubject.REPOSITORY))
-    log.report_archival(
-        resolved("actions/checkout", workflow, project=active_repository, marker=Marker(ignored_scopes=Scope.ARCHIVED))
+    active_repository = Archival(subject=ArchivedSubject.REPOSITORY)
+    log.redundant_ignore(
+        reference("actions/checkout", workflow), Scope.ARCHIVED, "ignore[archived]", active_repository.subject
     )
     archival = capture.take()
     threshold = Threshold(value=90, directive="set[stale-after=90]")

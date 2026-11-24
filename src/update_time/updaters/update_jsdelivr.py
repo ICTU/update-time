@@ -147,7 +147,7 @@ class _Rewriter:
             self.resolved = None
 
 
-def update_jsdelivrs() -> None:
+def _update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob_for(SPHINX_CONFIG):
         lines = rewrite_file(sphinx_config_py, _Rewriter().updated_lines, _LOG)
@@ -156,7 +156,7 @@ def update_jsdelivrs() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the jsDelivr URLs in the repository's Sphinx configuration."""
-    update_jsdelivrs()
+    _update_jsdelivrs()
 
 
 if __name__ == "__main__":  # pragma: no cover
