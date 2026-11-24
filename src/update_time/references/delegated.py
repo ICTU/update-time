@@ -7,7 +7,7 @@ from update_time.domain.dependency import DependencyVersion
 from update_time.domain.directive import WARNING_DIRECTIVES, Reason
 from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference, ResolvedReference, resolved_references
-from update_time.references.resolve import report_project_checks
+from update_time.references.resolve import report_project_checks, report_yank
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from update_time.package_managers.policy import ManagerPolicy
 
 
-def pin_resolver(
+def _pin_resolver(
     get_yank: YankGetter,
 ) -> ReferenceResolver[Reference, ResolvedReference]:
     """Return a resolver carrying the release each pin names, with the yank state the source reports for it.
@@ -123,9 +123,9 @@ def _warn_about_yanked_dependencies[ReferenceT: Reference](
     pinned_releases: ReferenceResolver[ReferenceT, ResolvedReference],
     log: Logger,
 ) -> None:
-    """Warn about each pin the run leaves on a withdrawn release, unless the pin's marker silences the warning."""
+    """Report whether each pin's release was yanked."""
     for resolved in resolved_references(declared, pinned_releases):
-        log.report_yank(resolved)
+        report_yank(resolved, log)
 
 
 def warn_about_delegated_checks[ReferenceT: Reference](
@@ -146,5 +146,5 @@ def warn_about_pinned_versions[ReferenceT: Reference](
 ) -> None:
     """Run the yank and vulnerability checks over the versions the dependencies are pinned to."""
     if source.yank is not None:
-        _warn_about_yanked_dependencies(pinned, pin_resolver(source.yank), log)
+        _warn_about_yanked_dependencies(pinned, _pin_resolver(source.yank), log)
     warn_about_vulnerable_dependencies(pinned, source, log)

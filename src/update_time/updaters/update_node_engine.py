@@ -3,9 +3,11 @@
 Note: this script does not update package-lock.json.
 """
 
+from functools import partial
+
 from update_time.domain.file_type import PACKAGE_JSON
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger
+from update_time.io.log import FileContent, get_logger
 from update_time.manifests import package_json as package_json_manifest
 from update_time.references.file import update_file
 from update_time.sources import oci
@@ -33,17 +35,19 @@ def _update_node_engine(package_json: package_json_manifest.PackageJson) -> None
     )
 
 
-def update_node_engines() -> None:
+def _update_node_engines() -> None:
     """Find all package.json files and update the Node engine."""
     for path in glob_for(PACKAGE_JSON):
-        package_json = package_json_manifest.PackageJson.readable(path, _LOG.unreadable_node_engine)
+        package_json = package_json_manifest.PackageJson.readable(
+            path, partial(_LOG.unreadable_file, content=FileContent.NODE_ENGINE)
+        )
         if package_json is not None and package_json.declares_a_node_engine():
             _update_node_engine(package_json)
 
 
 def main() -> None:  # pragma: no cover
     """Update the Node engines in the repository's package.json files."""
-    update_node_engines()
+    _update_node_engines()
 
 
 if __name__ == "__main__":  # pragma: no cover

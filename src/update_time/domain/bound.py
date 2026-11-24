@@ -54,7 +54,7 @@ def _parse_version(version: VersionString) -> Version | None:
     return None if numbers is None else Version(numbers.group())
 
 
-class _Redundancy(enum.StrEnum):
+class BoundRedundancy(enum.StrEnum):
     """The two ways a version bound can be redundant for the current version (see `VersionBound.redundancy`)."""
 
     NO_EFFECT = "never has an effect"  # The bound admits the current version and everything above it.
@@ -148,7 +148,7 @@ class VersionBound:
         specifier = f"=={epoch}{'.'.join(str(component) for component in pinned)}{wildcard}"
         return VersionBound(Verb.ALLOW, SpecifierSet(specifier))
 
-    def redundancy(self, current_version: VersionString) -> _Redundancy | None:
+    def redundancy(self, current_version: VersionString) -> BoundRedundancy | None:
         """Classify the bound for the current version, or None when it is live (bounds some updates but not all).
 
         A level-based bound is classified by its anchored equivalent, so `allow[major-update]` never has an effect
@@ -163,9 +163,9 @@ class VersionBound:
             return None
         keeps_above = [self.keeps(version, current_version) for version in self._probe_versions(current)]
         if self.keeps(current, current_version) and all(keeps_above):
-            return _Redundancy.NO_EFFECT
+            return BoundRedundancy.NO_EFFECT
         if not any(keeps_above):
-            return _Redundancy.BLOCKS_ALL
+            return BoundRedundancy.BLOCKS_ALL
         return None
 
     def _probe_versions(self, current: Version) -> set[Version]:

@@ -20,12 +20,14 @@ flowchart TD
   manifests --> markers
   manifests --> primitives
   markers --> domain
+  markers --> io
   markers --> primitives
   package_managers --> domain
   package_managers --> formats
   package_managers --> io
   package_managers --> lock_files
   package_managers --> manifests
+  package_managers --> markers
   package_managers --> primitives
   package_managers --> sources
   references --> domain

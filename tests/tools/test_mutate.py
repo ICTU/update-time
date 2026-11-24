@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import Mock, call, patch
 
-from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, main, snippets
+from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, _snippets, main
 
 from mutation_time.mutation import CHECKS_OFF, kills
 
@@ -23,11 +23,11 @@ class SnippetsTest(unittest.TestCase):
 
     def test_split_on_the_separator(self):
         """Test that the text before the separator is the snippet and the text after it the replacement."""
-        self.assertEqual(snippets(f"one\ntwo\n{_SEPARATOR}\nthree\n"), ("one\ntwo", "three"))
+        self.assertEqual(_snippets(f"one\ntwo\n{_SEPARATOR}\nthree\n"), ("one\ntwo", "three"))
 
     def test_input_without_a_separator(self):
         """Test that input holding no separator line is reported, rather than read as one snippet."""
-        self.assertRaises(ValueError, snippets, "one\ntwo\n")
+        self.assertRaises(ValueError, _snippets, "one\ntwo\n")
 
 
 class MainTest(unittest.TestCase):

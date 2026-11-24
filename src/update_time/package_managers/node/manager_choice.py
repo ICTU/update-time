@@ -1,9 +1,10 @@
 """The Node package managers Update-time supports, and the one that a project's files name."""
 
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
-from update_time.io.log import get_logger
+from update_time.io.log import FileContent, get_logger
 from update_time.manifests.package_json import PackageJson
 from update_time.package_managers.node.bun import BUN
 from update_time.package_managers.node.npm import NPM
@@ -63,7 +64,7 @@ def _declared_manager_in(directory: Path) -> str:
     package_json = directory / "package.json"
     if not package_json.exists():
         return ""
-    readable = PackageJson.readable(package_json, _LOG.unreadable_manager_declaration)
+    readable = PackageJson.readable(package_json, partial(_LOG.unreadable_file, content=FileContent.PACKAGE_MANAGER))
     return "" if readable is None else readable.declared_manager()
 
 

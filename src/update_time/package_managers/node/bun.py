@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.formats import toml
-from update_time.io.log import get_logger
+from update_time.io.log import FileContent, get_logger
 from update_time.lock_files import bun_lock
 from update_time.manifests.package_json import PackageJson
 from update_time.package_managers.node.package_manager import (
@@ -37,7 +37,7 @@ def _bun_locked_versions(directory: Path) -> LockedVersions:
     try:
         return bun_lock.locked_versions(lock)
     except (OSError, ValueError) as error:
-        _LOG.unreadable_bun_lock(lock, error)
+        _LOG.unreadable_file(lock, error, FileContent.LOCKED_VERSIONS)
         return {}
 
 
@@ -69,10 +69,10 @@ def _bunfig_sets_a_cooldown(bunfig: Path) -> bool:
     except FileNotFoundError:
         return False
     except (OSError, ValueError) as error:
-        _LOG.unreadable_bunfig(bunfig, error)
+        _LOG.unreadable_file(bunfig, error, FileContent.BUN_COOLDOWN)
         return False
     if not isinstance(install, dict):
-        _LOG.unreadable_bunfig(bunfig, ValueError(_INSTALL_NOT_A_TABLE))
+        _LOG.unreadable_file(bunfig, ValueError(_INSTALL_NOT_A_TABLE), FileContent.BUN_COOLDOWN)
         return False
     return _BUNFIG_COOLDOWN in install
 

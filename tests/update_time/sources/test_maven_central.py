@@ -12,7 +12,7 @@ from update_time.domain.dependency import Archival, ArchivedSubject, Project, Re
 from update_time.io.log import Logger
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.sources import maven_central
-from update_time.sources.maven_central import _newest_release, _published, get_changes, project, versions_held_back
+from update_time.sources.maven_central import _get_changes, _newest_release, _published, project, versions_held_back
 
 from tests.helpers import mock_response, patch_get, requested_urls, time_zone
 from tests.update_time.helpers import GUAVA, LoggingTestCase, days_ago, message_of, properties_element
@@ -250,14 +250,16 @@ class ProjectTest(LoggingTestCase):
         self.assert_could_not_fetch_logged(_GUAVA_POM, status=404, reason="Not Found")
 
     @kills.delete_statement(
-        maven_central._pom, "_LOG.invalid_pom(url)", "an artefact pom whose XML does not parse goes unreported"
+        maven_central._pom,
+        "_LOG.invalid_response(url, xml.FORMAT)",
+        "an artefact pom whose XML does not parse goes unreported",
     )
     def test_a_pom_whose_xml_does_not_parse(self):
         """Test that an artefact whose pom does not parse is warned about, and leaves GitHub unasked."""
         with patch_maven_central(_DATED_LISTING, "<project><scm>", archived=True) as mock_get:
             archival = project(GUAVA).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
-        self.assert_logged(message_of(Logger.invalid_pom), url=_GUAVA_POM)
+        self.assert_logged(message_of(Logger.invalid_response), url=_GUAVA_POM, format="XML")
 
     @kills.uncache(maven_central._pom, "every pom declaring an artefact costs a pom request of its own")
     def test_an_artefact_is_asked_for_its_pom_once_per_run(self):
@@ -350,7 +352,7 @@ class GetChangesTest(LoggingTestCase):
     def test_an_artefact_without_a_github_repository_has_no_changes(self):
         """Test that an artefact whose pom does not name a GitHub repository lacks changes, and GitHub goes unasked."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom()) as mock_get:
-            self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "")
+            self.assertEqual(_get_changes(GUAVA, _GUAVA_VERSION), "")
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING, _GUAVA_POM])
 
     @staticmethod
@@ -379,10 +381,10 @@ class GetChangesTest(LoggingTestCase):
             with self.subTest(case=case):
                 releases = [github_release_json(tag, body=f"Changes in {version}")]
                 with patch_maven_central(_listing_of(version), maven_central_pom(GUAVA_SCM), releases=releases):
-                    self.assertEqual(get_changes(GUAVA, version), f"Changes in {version}")
+                    self.assertEqual(_get_changes(GUAVA, version), f"Changes in {version}")
 
     @kills.append(
-        maven_central.get_changes,
+        maven_central._get_changes,
         "_release_tags(artefact, repository, ",
         "_newest_release(artefact).",
         "the newest release's changes are reported for a version the run left behind it",
@@ -394,12 +396,12 @@ class GetChangesTest(LoggingTestCase):
             github_release_json(f"v{_GUAVA_VERSION}", body="Changes in 33.7.1"),
         ]
         with patch_maven_central(_DATED_LISTING, maven_central_pom(GUAVA_SCM), releases=releases):
-            self.assertEqual(get_changes(GUAVA, "33.6.0-jre"), "Changes in 33.6.0")
+            self.assertEqual(_get_changes(GUAVA, "33.6.0-jre"), "Changes in 33.6.0")
 
     def test_the_repository_is_read_from_the_newest_releases_pom(self):
         """Test that the pom naming the repository is the newest release's, whatever version the changes are for."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(GUAVA_SCM)) as mock_get:
-            get_changes(GUAVA, "33.6.0-jre")
+            _get_changes(GUAVA, "33.6.0-jre")
         self.assertIn(_GUAVA_POM, requested_urls(mock_get))
 
     @kills.replace(
@@ -450,7 +452,7 @@ class GetChangesTest(LoggingTestCase):
                     github_release_json(more_specific, body="More specific"),
                 ]
                 with patch_maven_central(_listing_of(_NETTY_VERSION), maven_central_pom(_NETTY_SCM), releases=releases):
-                    self.assertEqual(get_changes(_NETTY_ALL, _NETTY_VERSION), "More specific")
+                    self.assertEqual(_get_changes(_NETTY_ALL, _NETTY_VERSION), "More specific")
 
     def test_a_release_tagged_with_the_version_without_its_qualifier_matches(self):
         """Test that a release tagged with the version less the qualifier Maven appends holds the version's changes."""
@@ -495,7 +497,7 @@ class GetChangesTest(LoggingTestCase):
         self.assert_changes_from_releases(cases)
 
     @kills.delete(
-        maven_central.get_changes,
+        maven_central._get_changes,
         " or _changes_from_changelog_file(repository, version)",
         "the changes of a version its repository tagged without publishing a release go unreported",
     )
@@ -509,16 +511,16 @@ class GetChangesTest(LoggingTestCase):
         """Test that the changes come from the changelog file when the repository did not release the version."""
         with patch("requests.Session.get") as mock_get:
             self.serve_releases_and_changelog(mock_get, [github_release_json("v33.6.0-jre")], "33.7.1")
-            self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), markdown_changes("33.7.1"))
+            self.assertEqual(_get_changes(GUAVA, _GUAVA_VERSION), markdown_changes("33.7.1"))
 
     @kills.prepend(
-        maven_central.get_changes,
+        maven_central._get_changes,
         "changes_from_tagged_release(",
         "changes_from_changelog_file(repository, version) or ",
         "the changelog file wins over the release the repository published for the version",
     )
     @kills.prepend(
-        maven_central.get_changes,
+        maven_central._get_changes,
         "tags =",
         "changelog = changes_from_changelog_file(repository, version)\n    ",
         "every dependency Maven moved costs a changelog file request, whether or not a release matched",
@@ -528,7 +530,7 @@ class GetChangesTest(LoggingTestCase):
         releases = [github_release_json(f"v{_GUAVA_VERSION}", body="Changes in 33.7.1")]
         with patch("requests.Session.get") as mock_get:
             self.serve_releases_and_changelog(mock_get, releases)
-            self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
+            self.assertEqual(_get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
         self.assertNotIn(contents_url("google/guava"), requested_urls(mock_get))
 
     def test_the_changes_come_from_the_first_repository_on_github_the_pom_names(self):
@@ -545,11 +547,11 @@ class GetChangesTest(LoggingTestCase):
         for case, (pom, repository) in cases.items():
             with self.subTest(case=case):
                 with patch_maven_central(_DATED_LISTING, pom, releases=releases) as mock_get:
-                    self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
+                    self.assertEqual(_get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
                 self.assertIn(releases_url(repository), requested_urls(mock_get))
 
     @kills.replace(
-        maven_central.get_changes,
+        maven_central._get_changes,
         "_repository(artefact)",
         "_named_repository(_pom(artefact, _newest_release(artefact).version), artefact)",
         "an artefact whose pom leaves its repository to the parent pom has its changes go unreported",
@@ -561,7 +563,7 @@ class GetChangesTest(LoggingTestCase):
             _serve_guava_with_parent(
                 mock_get, maven_central_pom(GUAVA_SCM), {releases_url("google/guava"): mock_response(releases)}
             )
-            self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
+            self.assertEqual(_get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
 
 
 class VersionsHeldBackTest(LoggingTestCase):
@@ -603,7 +605,7 @@ class VersionsHeldBackTest(LoggingTestCase):
         """Test that a listing request that times out is reported as a timeout, and that nothing is held back."""
         with patch("requests.Session.get", Mock(side_effect=requests.exceptions.Timeout)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
-        self.assert_logged(message_of(Logger.timeout), url=_GUAVA_LISTING)
+        self.assert_logged(message_of(Logger.request_failed), url=_GUAVA_LISTING, failure="the request timed out")
 
     @kills.replace(
         maven_central._published,

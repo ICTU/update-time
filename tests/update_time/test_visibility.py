@@ -240,6 +240,13 @@ class VisibilityTest(unittest.TestCase):
         """
         self.assertEqual(_module_local_constants([f for f in _python_files() if f.parts[0] != "tests"]), [])
 
+    def test_definitions_have_a_caller_outside_the_tests(self):
+        """Test that no function, class, or type alias is public only so that a test can reach it.
+
+        The `tools` scripts count as callers, so what they import stays public.
+        """
+        self.assertEqual(_module_local_definitions([f for f in _python_files() if f.parts[0] != "tests"]), [])
+
     def test_a_constant_imported_from_another_root_is_not_reported(self):
         """Test that an import is matched to the module assigning it although the two sit under different roots."""
         files = {

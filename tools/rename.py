@@ -36,7 +36,7 @@ _PROSE_ROOTS = ("src", "tests", "tools", "docs", ".claude")
 _PROSE_FILES = ("*.py", "*.md", "*.in")
 
 
-def surviving_occurrences(name: str, source: str) -> list[int]:
+def _surviving_occurrences(name: str, source: str) -> list[int]:
     """Return the lines of the source where the name is an identifier, each line once however often it occurs."""
     lines = (_occurrence_line(node, name) for node in ast.walk(ast.parse(source)))
     return sorted({line for line in lines if line is not None})
@@ -116,7 +116,7 @@ def _surviving_references(name: str, source: str) -> list[int]:
     return sorted(finder.lines)
 
 
-def stale_mentions(name: str, files: Iterable[Path]) -> list[str]:
+def _stale_mentions(name: str, files: Iterable[Path]) -> list[str]:
     """Return where the files mention the name in backticks, which a rename leaves as it found them.
 
     A rename resolves the name against each module's scopes, so prose about it is left alone — rightly, since the
@@ -206,7 +206,7 @@ def _renamed(old: str, new: str, source: str) -> str:
     source imports the old name's module.
     """
     renamed = _InPlaceRenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
-    return renamed if surviving_occurrences(old.rpartition(".")[-1], source) else source
+    return renamed if _surviving_occurrences(old.rpartition(".")[-1], source) else source
 
 
 class _AttributeRenamer(libcst.CSTTransformer):
@@ -379,7 +379,7 @@ def main() -> int:
         return _FAILED
     for path, source in changed.items():
         Path(path).write_text(source)
-    if stale := stale_mentions(name, _prose_files()):
+    if stale := _stale_mentions(name, _prose_files()):
         sys.stdout.write(f"Note: prose still mentions {name} at {', '.join(stale)}\n")
     return 0
 

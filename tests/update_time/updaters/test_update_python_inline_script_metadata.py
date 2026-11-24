@@ -6,7 +6,7 @@ from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
-from update_time.io.log import Logger
+from update_time.io.log import FileContent, Logger
 from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.package_managers.uv import lock, marker_policy
 from update_time.package_managers.uv import uv as uv_module
@@ -53,7 +53,7 @@ class _ScriptLockTestCase(UvLockTestCase):
 
     def update(self) -> None:
         """Run the inline script metadata updater."""
-        update_python_inline_script_metadata.update_python_inline_script_metadatas()
+        update_python_inline_script_metadata._update_python_inline_script_metadatas()
 
 
 # The checks over the settled pins are stubbed out so these tests focus on the update flow: each check makes registry
@@ -216,7 +216,7 @@ class ScriptLockTest(_ScriptLockTestCase):
     )
     @kills.replace(
         update_python_inline_script_metadata._scripts,
-        "_LOG.unreadable_script(path, error)",
+        "_LOG.unreadable_file(path, error, FileContent.INLINE_SCRIPT_METADATA)",
         "_ = error",
         "the run skips an unreadable .py file without a word",
         case="a .py file without read permission",
@@ -235,7 +235,12 @@ class ScriptLockTest(_ScriptLockTestCase):
                 left = self.files_after_update(run, get, glob, files, _script_lock("1.1"), discovered=[other, _SCRIPT])
                 self.assertEqual(left[_SCRIPT], script("package==1.1"))
                 self.assertEqual({command[3] for command in uv_locks(run)}, {str(_SCRIPT)})
-                self.assert_logged(message_of(Logger.unreadable_script), location=Location(other), error=str(error))
+                self.assert_logged(
+                    message_of(Logger.unreadable_file),
+                    content=FileContent.INLINE_SCRIPT_METADATA,
+                    location=Location(other),
+                    error=str(error),
+                )
 
     def test_without_an_earlier_lock_a_dependency_without_an_exact_pin_gets_no_new_version(
         self, run: Mock, get: Mock, glob: Mock

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.formats import xml
-from update_time.io.log import get_logger
+from update_time.io.log import ToolTask, get_logger
 from update_time.io.process import is_installed, run
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.package_managers.maven.plugins import HELP_PLUGIN
@@ -134,7 +134,7 @@ class Reactor:
         ship a wrapper and mvn is not on the path, each pom gets an error.
         """
         if (maven := _maven(self._root)) is None:
-            _LOG.package_manager_not_on_path(pom_xml, _MVN)
+            _LOG.tool_not_on_path(pom_xml, ToolTask.UPDATE, _MVN)
             return None
         if self._readable is None:
             self._readable = self._every_pom_parses()
@@ -169,10 +169,8 @@ class Reactor:
         break the reactor.
         """
         poms_left = len(self._pom_xmls_after(pom_xml))
-        if self._changed_pom is not None and poms_left:
+        if self._changed_pom is not None:
             _LOG.unreadable_reactor_since_update(self._root, self._changed_pom, poms_left)
-        elif self._changed_pom is not None:
-            _LOG.unreadable_reactor_since_update_without_poms_left(self._root, self._changed_pom)
         elif poms_left and self._first_run:
             _LOG.unreadable_reactor_as_found(self._root, poms_left)
         elif poms_left:

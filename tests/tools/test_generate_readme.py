@@ -7,18 +7,18 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from tools.generate_log_svg import LogOutput
-from tools.generate_readme import _README, _SCREENSHOT, _TEMPLATE, _help_output, _table_of_contents, main, render
+from tools.generate_log_svg import _LogOutput
+from tools.generate_readme import _README, _SCREENSHOT, _TEMPLATE, _help_output, _render, _table_of_contents, main
 from tools.log_index import _TEMPLATE as _LOG_INDEX_TEMPLATE
 from tools.log_index import LOG_INDEX
-from tools.log_samples import LogSamples, sample_log_lines
+from tools.log_samples import _LogSamples, sample_log_lines
 
 from update_time.io.log import Logger
 
 from tests.helpers import patch_environ
 
 if TYPE_CHECKING:
-    from update_time.io.log import LogMessage
+    from update_time.io.log import _LogMessage
 
 _PLACEHOLDER = re.compile(r"@@\w+@@")
 
@@ -38,7 +38,7 @@ def _quoted_log_messages(text: str) -> list[str]:
     return [message.name for message in Logger.messages() if _message_pattern(message).search(text)]
 
 
-def _message_pattern(message: LogMessage) -> re.Pattern[str]:
+def _message_pattern(message: _LogMessage) -> re.Pattern[str]:
     """Return a pattern matching the message on a single line, with any text in place of each argument."""
     literal_parts = _MESSAGE_ARGUMENT.split(message.format)
     pattern = "[^\n]+?".join(re.escape(part) for part in literal_parts)
@@ -95,10 +95,10 @@ class RenderTest(unittest.TestCase):
     def test_every_placeholder_is_filled(self, template: Mock, log_output: Mock, help_output: Mock, samples: Mock):
         """Test that the template's placeholders are replaced, and the screenshot and the index returned beside it."""
         template.read_text.return_value = "Usage\n@@HELP_OUTPUT@@\nOutput\n@@LOG_OUTPUT@@\nWarning\n@@A_WARNING@@\n"
-        log_output.return_value = LogOutput(svg="<svg/>", text="the sample output")
+        log_output.return_value = _LogOutput(svg="<svg/>", text="the sample output")
         help_output.return_value = "the help"
-        samples.return_value = LogSamples({"@@A_WARNING@@": "the warning"}, {})
-        generated = render()
+        samples.return_value = _LogSamples({"@@A_WARNING@@": "the warning"}, {})
+        generated = _render()
         self.assertEqual(generated[_README], "Usage\nthe help\nOutput\nthe sample output\nWarning\nthe warning\n")
         self.assertEqual(generated[_SCREENSHOT], "<svg/>")
         self.assertEqual(generated[LOG_INDEX], "the index")
@@ -106,11 +106,11 @@ class RenderTest(unittest.TestCase):
     def test_table_of_contents_lists_the_chapters(self, template: Mock, log: Mock, help_output: Mock, samples: Mock):
         """Test that the table of contents links to each chapter, in the order the template has them."""
         template.read_text.return_value = "@@TABLE_OF_CONTENTS@@\n\n## ⚡ Usage\n\n## 📌 Pinning\n"
-        log.return_value = LogOutput(svg="<svg/>", text="")
+        log.return_value = _LogOutput(svg="<svg/>", text="")
         help_output.return_value = ""
-        samples.return_value = LogSamples({}, {})
+        samples.return_value = _LogSamples({}, {})
         contents = f"{_TABLE_OF_CONTENTS_HEADER}- [⚡ Usage](#-usage)\n- [📌 Pinning](#-pinning)"
-        self.assertEqual(render()[_README], f"{contents}\n\n## ⚡ Usage\n\n## 📌 Pinning\n")
+        self.assertEqual(_render()[_README], f"{contents}\n\n## ⚡ Usage\n\n## 📌 Pinning\n")
 
 
 @patch_environ({}, clear=False)
@@ -120,7 +120,7 @@ class LogIndexTest(unittest.TestCase):
     def test_the_index_has_an_entry_for_every_log_message(self):
         """Test that the index gives each log message a heading naming the message."""
         with patch.object(logging.getLogger(), "handlers", []):  # The screenshot configures the root logger
-            index = render()[LOG_INDEX]
+            index = _render()[LOG_INDEX]
         headings = {line.removeprefix("### ") for line in index.splitlines() if line.startswith("### ")}
         names = [message.name for message in Logger.messages()]
         self.assertIn("command-run", names)
@@ -147,7 +147,7 @@ class TableOfContentsTest(unittest.TestCase):
         self.assertEqual(contents, f"{_TABLE_OF_CONTENTS_HEADER}- [⚡ Usage](#-usage)")
 
 
-@patch("tools.generate_readme.render")
+@patch("tools.generate_readme._render")
 class MainTest(unittest.TestCase):
     """Unit tests for regenerating the README and its screenshot."""
 

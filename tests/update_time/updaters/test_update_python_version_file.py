@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING
 
 from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
-from update_time.io.log import Logger
+from update_time.io.log import FileContent, Logger
 from update_time.package_managers.uv import uv
 from update_time.primitives.location import Location
 from update_time.updaters import update_python_version_file
-from update_time.updaters.update_python_version_file import update_python_version_files
+from update_time.updaters.update_python_version_file import _update_python_version_files
 
 from tests.helpers import FakeFiles, mock_path, patch_pathlib_path
 from tests.update_time.fixtures import DIGEST, PAST_COOLDOWN_DATE, STALE_DATE
@@ -63,7 +63,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         )
         version_file = mock_path(contents, parent=directory)
         mock_glob.return_value = [version_file]
-        update_python_version_files()
+        _update_python_version_files()
         return version_file
 
     def test_unchanged(self, mock_glob: Mock):
@@ -232,7 +232,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     )
     @kills.delete(
         update_python_version_file._requires_python,
-        "_LOG.unreadable_requires_python(pyproject_toml, error)",
+        "_LOG.unreadable_file(pyproject_toml, error, FileContent.REQUIRES_PYTHON)",
         "a `pyproject.toml` that cannot be read goes unreported, so its `requires-python` drops out silently",
         case="a file it may not read",
     )
@@ -248,7 +248,8 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
                 version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
                 version_file.write_text.assert_called_once_with("3.15.1\n")
                 self.assert_logged(
-                    message_of(Logger.unreadable_requires_python),
+                    message_of(Logger.unreadable_file),
+                    content=FileContent.REQUIRES_PYTHON,
                     location=Location(PYPROJECT_TOML),
                     error=str(error),
                 )
@@ -271,7 +272,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
             docker_tag("3.15.1", DIGEST, tag_last_pushed=PAST_COOLDOWN_DATE)
         )
         mock_glob.return_value = [mock_path("3.10\n", parent=SCAN_ROOT / name) for name in ("a", "b")]
-        update_python_version_files()
+        _update_python_version_files()
         self.assert_logged(message_of(Logger.invalid_requires_python), location=Location(PYPROJECT_TOML, 2))
 
     def test_requires_python_and_the_marker_bound_both_bound_the_update(self, mock_glob: Mock):

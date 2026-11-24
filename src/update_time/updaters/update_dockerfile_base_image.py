@@ -92,7 +92,7 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     return result
 
 
-def update_dockerfiles() -> None:
+def _update_dockerfiles() -> None:
     """Update the base image of Dockerfiles."""
     for dockerfile in glob_for(DOCKERFILES):
         rewrite_file(dockerfile, _updated_lines, _LOG)
@@ -100,7 +100,7 @@ def update_dockerfiles() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the base images in the repository's Dockerfiles."""
-    update_dockerfiles()
+    _update_dockerfiles()
 
 
 if __name__ == "__main__":  # pragma: no cover

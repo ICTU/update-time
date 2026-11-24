@@ -26,14 +26,15 @@ from update_time.domain.dependency import (
     tag_of,
 )
 from update_time.domain.directive import Reason
-from update_time.domain.marker import NO_MARKER, Marker
+from update_time.domain.marker import NO_MARKER, Marker, Scope
 from update_time.domain.reference import Reference, RefKind, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL, Vulnerability
+from update_time.io import log as log_module
 from update_time.io.console import CHANGES, MESSAGE_NAME, NOTE
-from update_time.io.log import Logger, LogMessage
+from update_time.io.log import Logger, ToolTask, _LogMessage
 from update_time.manifests.python_dependency_toml import Declaration
-from update_time.markers.bound import parse_bound
+from update_time.markers.parser import _parse_bound
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
@@ -52,7 +53,6 @@ if TYPE_CHECKING:
     from update_time.domain.bound import Verb, VersionBound
     from update_time.domain.directive import RedundancyReason
     from update_time.domain.reference import DriftedPin
-    from update_time.io.log import Drift
 
 
 def declaration(  # noqa: PLR0913 — a declaration is that many facts
@@ -256,13 +256,13 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assertEqual(records[:1], [checked_line])
         self.assertEqual(records.count(checked_line), 1)
 
-    def assert_debug_logged_after_path(self, path: Path, message: LogMessage, **fields: object) -> None:
+    def assert_debug_logged_after_path(self, path: Path, message: _LogMessage, **fields: object) -> None:
         """Assert that the path was logged as checked, and then the message about it, as the only records at DEBUG."""
         message_record = self._expected_call(message, {"location": Location(path), **fields})
         self.assertEqual(self.records(DEBUG), [self._checked_call(path), message_record])
 
     @staticmethod
-    def _expected_call(message: LogMessage, fields: dict[str, object]) -> _Call:
+    def _expected_call(message: _LogMessage, fields: dict[str, object]) -> _Call:
         """Return the call the logger makes for the message, with its fields passed by name.
 
         The fields are rendered the way the logger renders them, so an assertion here names the plain domain values
@@ -270,34 +270,34 @@ class LoggingTestCase(CacheClearingTestCase):
         """
         return call(message, Logger._rendered(fields))
 
-    def assert_logged(self, message: LogMessage, **fields: object) -> None:
+    def assert_logged(self, message: _LogMessage, **fields: object) -> None:
         """Assert the message was the only record logged at its level, with the given fields."""
         self.assertEqual(self.records(message.level), [self._expected_call(message, fields)])
 
-    def _assert_last_logged(self, message: LogMessage, **fields: object) -> None:
+    def _assert_last_logged(self, message: _LogMessage, **fields: object) -> None:
         """Assert the message was the most recent record at its level, with the given fields."""
         self.assertEqual(self.records(message.level)[-1:], [self._expected_call(message, fields)])
 
-    def assert_logged_among_others(self, message: LogMessage, **fields: object) -> None:
+    def assert_logged_among_others(self, message: _LogMessage, **fields: object) -> None:
         """Assert the message was logged with the given fields, among the other records at its level."""
         self.assertIn(self._expected_call(message, fields), self.records(message.level))
 
-    def _assert_reported(self, message: LogMessage, *, among_others: bool, **fields: object) -> None:
+    def _assert_reported(self, message: _LogMessage, *, among_others: bool, **fields: object) -> None:
         """Assert the message was logged with the given fields, as the only record at its level unless among others."""
         assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
         assert_logged(message, **fields)
 
-    def assert_error_logged(self, message: LogMessage, **fields: object) -> None:
+    def assert_error_logged(self, message: _LogMessage, **fields: object) -> None:
         """Assert an error was logged, and mark it expected so tearDown's strict no-error check passes."""
         self.assert_errors_logged((message, fields))
 
-    def assert_errors_logged(self, *errors: tuple[LogMessage, dict[str, object]]) -> None:
+    def assert_errors_logged(self, *errors: tuple[_LogMessage, dict[str, object]]) -> None:
         """Assert the errors were the run's only errors, in this order, and mark them expected."""
         self._error_expected = True
         expected = [self._expected_call(message, fields) for message, fields in errors]
         self.assertEqual(self.records(ERROR), expected)
 
-    def assert_warnings_logged(self, *warnings: tuple[LogMessage, Mapping[str, object]]) -> None:
+    def assert_warnings_logged(self, *warnings: tuple[_LogMessage, Mapping[str, object]]) -> None:
         """Assert the warnings were the run's only warnings, in this order."""
         expected = [self._expected_call(message, dict(fields)) for message, fields in warnings]
         self.assertEqual(self.records(WARNING), expected)
@@ -360,7 +360,7 @@ class LoggingTestCase(CacheClearingTestCase):
         expected = [self._expected_call(message, {**fields, "location": location}) for location in locations]
         self.assertEqual(self.records(message.level), expected)
 
-    def records_of(self, message: LogMessage, **fields: object) -> list[_Call]:
+    def records_of(self, message: _LogMessage, **fields: object) -> list[_Call]:
         """Return the records logged for the message, ignoring the other records at its level.
 
         The fields narrow it further, so a message one field parameterises — a redundancy warning's reason — is
@@ -377,7 +377,7 @@ class LoggingTestCase(CacheClearingTestCase):
         """Return the records reporting an available new version, ignoring the other records at their level."""
         return self.records_of(message_of(Logger.new_version))
 
-    def assert_none_logged(self, message: LogMessage, what: str, **fields: object) -> None:
+    def assert_none_logged(self, message: _LogMessage, what: str, **fields: object) -> None:
         """Assert the message was not logged at all, whatever else was logged at its level."""
         self.assertEqual(self.records_of(message, **fields), [], f"Expected no {what} to be logged")
 
@@ -418,7 +418,7 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_invalid_json_logged(self, url: str, *, among_others: bool = False) -> None:
         """Assert that an answer that is not JSON was reported, naming the URL, as the run's only warning by default."""
-        self._assert_reported(message_of(Logger.invalid_json), among_others=among_others, url=url)
+        self._assert_reported(message_of(Logger.invalid_response), among_others=among_others, url=url, format="JSON")
 
     def assert_unpinned_floating_tag_logged(
         self, dependency: str, version: str, location: Location, reason: FloatingPin, looked_up: str = ""
@@ -493,27 +493,22 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that a reference with nowhere to hold a hash was reported as one that cannot be pinned."""
         self.assert_logged(message_of(Logger.cannot_pin), dependency=dependency, location=location)
 
-    def assert_drift_logged(self, kind: Drift, drifted: DriftedPin, *, among_others: bool = False) -> None:
+    def assert_drift_logged(self, drifted: DriftedPin, *, among_others: bool = False) -> None:
         """Assert that the drift was logged, as the file's only warning by default."""
-        message, fields = drift_warning(kind, drifted)
+        message, fields = drift_warning(drifted)
         self._assert_reported(message, among_others=among_others, **fields)
 
     def assert_adopted_drift_logged(
-        self, kind: Drift, drifted: DriftedPin, directive: object = ANY, *, among_others: bool = False
+        self, drifted: DriftedPin, directive: object = ANY, *, among_others: bool = False
     ) -> None:
         """Assert that the adopted drift was logged, as the file's only record at its level by default."""
-        message, fields = adopted_drift_report(kind, drifted, directive)
+        message, fields = adopted_drift_report(drifted, directive)
         self._assert_reported(message, among_others=among_others, **fields)
 
-    def assert_undated_commit_logged(self, kind: Drift, drifted: DriftedPin, reason: str) -> None:
-        """Assert that a commit whose date could not be determined was logged as the file's only error."""
-        fields = Logger._drifted_reference_fields(kind, drifted, new_sha=drifted.new_sha, reason=reason)
-        self.assert_error_logged(message_of(Logger.no_commit_date), **fields)
-
-    def assert_undated_push_logged(self, drifted: DriftedPin, reason: str) -> None:
-        """Assert that a re-pushed digest that could not be dated was logged as the file's only error."""
-        fields = Logger._drifted_reference_fields(Logger.DIGEST_DRIFT, drifted, reason=reason)
-        self.assert_error_logged(message_of(Logger.no_push_date), **fields)
+    def assert_undated_drift_logged(self, drifted: DriftedPin, reason: str) -> None:
+        """Assert that what the drifted pin now points at could not be dated, logged as the file's only error."""
+        fields = Logger._undated_drift_fields(drifted, reason)
+        self.assert_error_logged(message_of(Logger.undated_drift, *fields), **fields)
 
     def assert_hash_mismatch_logged(
         self,
@@ -543,7 +538,7 @@ class LoggingTestCase(CacheClearingTestCase):
         warnings out of the comparison while still holding every staleness warning to the locations given.
         """
         fields: dict[str, object] = {"dependency": dependency, "version": version, "days": ANY, "threshold": ANY}
-        message = message_of(Logger.report_staleness, "days")
+        message = message_of(Logger.stale_dependency)
         expected = [self._expected_call(message, fields | {"location": location}) for location in locations]
         stale_warnings = self.records_of(message)
         self.assertEqual(stale_warnings if among_others else self.records(message.level), expected)
@@ -553,7 +548,7 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that a pin left on a yanked version was warned about once for the file."""
         self.assert_logged(
-            message_of(Logger.report_yank, "reason"),
+            message_of(Logger.yanked_dependency),
             dependency=dependency,
             location=location,
             version=version,
@@ -571,7 +566,7 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that an archived dependency was warned about, as the file's only warning by default."""
         self._assert_reported(
-            message_of(Logger.report_archival, "reason"),
+            message_of(Logger.archived_dependency),
             among_others=among_others,
             dependency=dependency,
             location=location,
@@ -608,8 +603,11 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that a suppression naming an advisory the version does not have was warned about, among the others."""
         self.assert_logged_among_others(
-            message_of(Logger.redundant_vulnerable_advisory),
-            **self._redundant_suppression_fields(dependency, version, location, directive),
+            message_of(Logger.redundant_ignore),
+            dependency=dependency,
+            location=location,
+            directive=directive,
+            finding=log_module._finding(Scope.VULNERABLE, version),
         )
 
     def assert_redundant_vulnerable_level_logged(  # noqa: PLR0913 — the fields of the warning
@@ -623,12 +621,16 @@ class LoggingTestCase(CacheClearingTestCase):
         run_level: str | None = None,
     ) -> None:
         """Assert that a risk level judging the vulnerabilities as the run's does was warned about, among others."""
-        run_fields = {"default_level": VULNERABILITY_LEVEL.default} if run_level is None else {"run_level": run_level}
+        run_setting = (
+            f"the default level {VULNERABILITY_LEVEL.default}"
+            if run_level is None
+            else f"--vulnerability-level {run_level}"
+        )
         self.assert_logged_among_others(
-            message_of(Logger.redundant_vulnerable_level, *run_fields),
+            message_of(Logger.redundant_vulnerable_level),
             **self._redundant_suppression_fields(dependency, version, location, directive),
             level=level,
-            **run_fields,
+            run_setting=run_setting,
         )
 
     def assert_redundant_directive_logged(
@@ -651,24 +653,20 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_no_redundant_vulnerable_level_logged(self) -> None:
-        """Assert that no risk level was warned about as redundant, whichever way the warning names the run's level."""
-        what = "redundant risk level"
-        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level, "run_level"), what)
-        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level, "default_level"), what)
+        """Assert that no risk level was warned about as redundant."""
+        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level), "redundant risk level")
 
     def assert_no_redundant_suppression_logged(self) -> None:
         """Assert that no vulnerability suppression was reported as silencing nothing, whatever else was logged."""
         what = "redundant vulnerability suppression"
-        self.assert_none_logged(message_of(Logger.redundant_vulnerable_advisory), what)
+        self.assert_none_logged(message_of(Logger.redundant_ignore), what)
         self.assert_no_redundant_vulnerable_level_logged()
         self.assert_none_logged(message_of(Logger.redundant_directive), what, reason=Reason.NO_VULNERABILITY_REPORTS)
 
     def assert_no_redundant_directive_logged(self) -> None:
         """Assert that no directive was reported as redundant, whatever else was logged."""
         self.assert_none_logged(message_of(Logger.redundant_directive), "redundant directive")
-        what = "redundant staleness threshold"
-        self.assert_none_logged(message_of(Logger.redundant_stale_threshold, "run_threshold"), what)
-        self.assert_none_logged(message_of(Logger.redundant_stale_threshold, "default_threshold"), what)
+        self.assert_none_logged(message_of(Logger.redundant_stale_threshold), "redundant staleness threshold")
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
@@ -732,27 +730,31 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_no_staleness_warning_logged(self, dependency: str, location: Location) -> None:
         """Assert that the dependency at the location was not warned about as stale."""
-        message = message_of(Logger.report_staleness, "days")
+        message = message_of(Logger.stale_dependency)
         self.assert_none_logged(message, "staleness warning", dependency=dependency, location=location)
 
     def assert_no_ignored_staleness_logged(self) -> None:
         """Assert that no staleness warning was reported as silenced, whatever else was logged at that level."""
-        self.assert_none_logged(message_of(Logger.ignored_staleness), "staleness warning silenced by a marker")
+        self.assert_none_logged(
+            message_of(Logger.ignored_warning), "staleness warning silenced by a marker", warning="staleness"
+        )
 
     def assert_no_ignored_vulnerability_logged(self) -> None:
         """Assert that no vulnerability warning was reported as silenced, whatever else was logged at that level."""
-        self.assert_none_logged(message_of(Logger.ignored_vulnerability), "vulnerability warning silenced by a marker")
+        silenced = self.records_of(message_of(Logger.ignored_warning))
+        vulnerabilities = [record for record in silenced if record.args[1]["warning"].endswith(" vulnerability")]
+        self.assertEqual(vulnerabilities, [], "Expected that a marker did not silence a vulnerability warning")
 
     def assert_ignored_vulnerability_logged(
         self, dependency: str, location: Location, advisory: str, directive: str
     ) -> None:
         """Assert that a vulnerability warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            message_of(Logger.ignored_vulnerability),
+            message_of(Logger.ignored_warning),
             dependency=dependency,
             location=location,
-            advisory=advisory,
             directive=directive,
+            warning=log_module._WARNINGS[Scope.VULNERABLE].format(advisory=advisory),
         )
 
     def assert_no_globally_ignored_vulnerability_logged(self) -> None:
@@ -773,41 +775,26 @@ class LoggingTestCase(CacheClearingTestCase):
             location=location,
         )
 
-    def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that a staleness warning silenced by a marker was logged, among the other records."""
+    def assert_ignored_warning_logged(
+        self, scope: Scope, dependency: str, location: Location, directive: object = ANY
+    ) -> None:
+        """Assert that the warning the scope steers was logged as silenced by a marker, among the other records."""
         self.assert_logged_among_others(
-            message_of(Logger.ignored_staleness),
+            message_of(Logger.ignored_warning),
             dependency=dependency,
             location=location,
             directive=directive,
-        )
-
-    def assert_ignored_yank_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that a yank warning silenced by a marker was logged, among the other records."""
-        self.assert_logged_among_others(
-            message_of(Logger.report_yank, "dependency", "location", "directive"),
-            dependency=dependency,
-            location=location,
-            directive=directive,
-        )
-
-    def assert_ignored_archival_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that an archival warning silenced by a marker was logged, among the other records."""
-        self.assert_logged_among_others(
-            message_of(Logger.report_archival, "dependency", "location", "directive"),
-            dependency=dependency,
-            location=location,
-            directive=directive,
+            warning=log_module._WARNINGS[scope],
         )
 
     def assert_redundant_ignore_archived_logged(self, dependency: str, location: Location) -> None:
         """Assert that an `ignore[archived]` on a repository that is not archived was warned about as redundant."""
         self.assert_logged(
-            message_of(Logger.report_archival, "directive", "subject"),
+            message_of(Logger.redundant_ignore),
             dependency=dependency,
             location=location,
             directive="ignore[archived]",
-            subject=ArchivedSubject.REPOSITORY,
+            finding=log_module._finding(Scope.ARCHIVED, ArchivedSubject.REPOSITORY),
         )
 
     def assert_unsupported_package_manager_logged(self, path: Path, manager: str, supported: str) -> None:
@@ -825,8 +812,9 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_could_not_fetch_logged(self, *urls: object, status: object = ANY, reason: object = ANY) -> None:
         """Assert that the run's only warnings say each of the URLs could not be fetched, a single one by default."""
-        message = message_of(Logger.response)
-        fields = [{"url": url, "status": status, "reason": reason} for url in urls or (ANY,)]
+        message = message_of(Logger.request_failed)
+        failure = ANY if status is ANY else _StartingWith(f"HTTP {status} " + ("" if reason is ANY else str(reason)))
+        fields = [{"url": url, "failure": failure} for url in urls or (ANY,)]
         self.assertEqual(self.records(message.level), [self._expected_call(message, each) for each in fields])
 
     def assert_command_failed_logged(self, command: object, output: object) -> None:
@@ -839,7 +827,9 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_uv_dependencies_not_updated_logged(self, path: Path, tool: str) -> None:
         """Assert that the file's dependencies were reported as not updated, because the uv command failed."""
-        self.assert_error_logged(message_of(Logger.uv_dependencies_not_updated), location=Location(path), tool=tool)
+        self.assert_error_logged(
+            message_of(Logger.tool_failed), location=Location(path), task=ToolTask.UPDATE, tool=tool
+        )
 
     def assert_no_info_logged(self) -> None:
         """Assert that nothing was logged at INFO."""
@@ -863,21 +853,33 @@ class ExecutablesOnPathTestCase(LoggingTestCase):
         self.which.side_effect = lambda executable: None if executable in missing else f"/bin/{executable}"
 
 
-def drift_warning(kind: Drift, drifted: DriftedPin) -> tuple[LogMessage, dict[str, object]]:
+def drift_warning(drifted: DriftedPin) -> tuple[_LogMessage, dict[str, object]]:
     """Return the warning about the drift, and the fields it carries."""
-    fields = Logger._drift_fields(kind, drifted, **kind.warning_words)
+    fields = Logger._drift_warning_fields(drifted)
     return message_of(Logger.drift, *fields), fields
 
 
-def adopted_drift_report(kind: Drift, drifted: DriftedPin, directive: object) -> tuple[LogMessage, dict[str, object]]:
+def adopted_drift_report(drifted: DriftedPin, directive: object) -> tuple[_LogMessage, dict[str, object]]:
     """Return the report that the drift was adopted, and the fields it carries."""
-    fields = Logger._drift_fields(kind, drifted, directive=directive, **kind.adopted_words)
-    return message_of(Logger.adopted_drift, *fields), fields
+    fields = Logger._adopted_drift_fields(drifted, directive)
+    return message_of(Logger.adopted_drift), fields
 
 
-def message_of(log_method: object, *holes: str) -> LogMessage:
+class _StartingWith(str):
+    """A string that equals any string starting with it, so an assertion can leave the end of a field open."""
+
+    __slots__ = ()
+
+    def __eq__(self, other: object) -> bool:
+        """Return whether the other string starts with this one."""
+        return isinstance(other, str) and other.startswith(str(self))
+
+    __hash__ = str.__hash__
+
+
+def message_of(log_method: object, *holes: str) -> _LogMessage:
     """Return the log method's message that has the holes, the one with these holes alone where several have them."""
-    messages: list[LogMessage] = vars(log_method)["messages"]
+    messages: list[_LogMessage] = vars(log_method)["messages"]
     having = [message for message in messages if message.holes >= set(holes)]
     (message,) = having if len(having) == 1 else [message for message in having if message.holes == set(holes)]
     return message
@@ -906,7 +908,7 @@ def resolved_reference(
 
 def bound(verb: Verb, item: str) -> VersionBound:
     """Return the version bound the marker item expresses, for tests that need a bound as input."""
-    version_bound = parse_bound(verb, item)
+    version_bound = _parse_bound(verb, item)
     if version_bound is None:
         message = f"Not a version bound item: {item!r}"
         raise ValueError(message)

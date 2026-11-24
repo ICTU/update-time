@@ -10,7 +10,7 @@ from update_time.sources.oci import TagGetter
 _LOG = get_logger("gitlab ci")
 
 
-def update_gitlab_ci_config() -> None:
+def _update_gitlab_ci_config() -> None:
     """Update the images in the GitLab CI configuration file, if the repository has one."""
     for gitlab_ci_config in glob_for(GITLAB_CI_CONFIG):
         update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, source=TagGetter().source, logger=_LOG)
@@ -18,7 +18,7 @@ def update_gitlab_ci_config() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the images in the repository's GitLab CI configuration."""
-    update_gitlab_ci_config()
+    _update_gitlab_ci_config()
 
 
 if __name__ == "__main__":  # pragma: no cover

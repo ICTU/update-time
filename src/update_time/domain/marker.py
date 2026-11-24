@@ -12,7 +12,7 @@ from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, keeping_
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from update_time.domain.bound import VersionBound
+    from update_time.domain.bound import BoundRedundancy, VersionBound
     from update_time.domain.dependency import VersionString
 
 
@@ -163,6 +163,10 @@ class Marker:
         `ignore[update]` beside it leaves it named, so a caller judging the two apart can name each.
         """
         return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
+
+    def bound_redundancy_at(self, current_version: VersionString) -> BoundRedundancy | None:
+        """Return how the marker's bound is redundant at the current version, or None where it sets none or is live."""
+        return None if self.version_bound == NO_BOUND else self.version_bound.redundancy(current_version)
 
     @property
     def bound_directive(self) -> str:

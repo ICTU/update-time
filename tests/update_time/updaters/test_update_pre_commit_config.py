@@ -14,8 +14,7 @@ from update_time.domain.dependency import (
     Release,
 )
 from update_time.domain.directive import Reason
-from update_time.domain.reference import DriftedPin
-from update_time.io.log import Logger
+from update_time.domain.reference import DriftedPin, DriftKind
 from update_time.manifests import pre_commit_config as pre_commit_config_manifest
 from update_time.primitives import digest
 from update_time.primitives.location import Location
@@ -23,7 +22,7 @@ from update_time.references import github as references_github
 from update_time.references import resolve as references_resolve
 from update_time.sources import github as sources_github
 from update_time.updaters import update_pre_commit_config
-from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
+from update_time.updaters.update_pre_commit_config import _update_pre_commit_configs
 
 from tests.helpers import mock_path
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
@@ -60,9 +59,9 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
 
     HOOK = "pre-commit/pre-commit-hooks"
 
-    def drifted(self, config_file: Mock, version: str = "4.5.0") -> DriftedPin:
+    def drifted(self, config_file: Mock, version: str = "4.5.0", kind: DriftKind = DriftKind.TAG) -> DriftedPin:
         """Return the drifted pin the moved tag or branch of the hook repository these tests use produces."""
-        return DriftedPin(self.HOOK, version, Location(config_file, 3), OLD_SHA, new_sha=NEW_SHA)
+        return DriftedPin(self.HOOK, version, Location(config_file, 3), OLD_SHA, kind=kind, new_sha=NEW_SHA)
 
     def assert_resolved(
         self, mock_get_latest_version: Mock, rev: str = "v4.5.0", version_bound: VersionBound = NO_BOUND
@@ -77,7 +76,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = github_version("4.6.0")
         config_file = mock_path(config("rev: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.6.0\n"))
         self.assert_resolved(mock_get_latest_version)
         self.assert_path_logged(config_file)
@@ -89,7 +88,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = github_version("4.5.0")
         config_file = mock_path(config("rev: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0\n"))
         self.assert_pinned_logged(self.HOOK, "4.5.0", NEW_SHA, Location(config_file, 3))
         self.assert_no_warnings_logged()
@@ -101,7 +100,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = github_version("24.1.0")
         config_file = mock_path(config("rev: 22.10.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v24.1.0\n"))
         self.assert_resolved(mock_get_latest_version, "22.10.0")
         self.assert_new_version_logged(self.HOOK, "24.1.0", Location(config_file, 3))
@@ -111,7 +110,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = github_version("4.5.0")
         config_file = mock_path(config('rev: "v4.5.0"\n'))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0\n"))
         self.assert_resolved(mock_get_latest_version)
 
@@ -120,7 +119,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = github_version("4.6.0")
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.6.0\n"))
         self.assert_resolved(mock_get_latest_version)
         self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
@@ -131,7 +130,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -141,9 +140,9 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        self.assert_drift_logged(Logger.TAG_DRIFT, self.drifted(config_file))
+        self.assert_drift_logged(self.drifted(config_file))
         self.assert_no_new_version_logged()
 
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
@@ -151,11 +150,11 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         """Test that a rev frozen to a branch that now points at another commit is warned about, not re-frozen."""
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: main\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        drifted = self.drifted(config_file, "main")
-        self.assert_drift_logged(Logger.BRANCH_DRIFT, drifted)
+        drifted = self.drifted(config_file, "main", kind=DriftKind.BRANCH)
+        self.assert_drift_logged(drifted)
 
     @patch_github(
         releases=[],
@@ -167,11 +166,11 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         marker = "  # update-time: allow[floating-pin, hash-drift]"
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: main{marker}\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: main{marker}\n"))
         mock_get_latest_version.assert_not_called()
-        drifted = self.drifted(config_file, "main")
-        self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, "allow[hash-drift]")
+        drifted = self.drifted(config_file, "main", kind=DriftKind.BRANCH)
+        self.assert_adopted_drift_logged(drifted, "allow[hash-drift]")
         self.assert_no_warnings_logged()
 
     @patch_github(commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
@@ -181,16 +180,16 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         marker = "  # update-time: allow[hash-drift]"
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0{marker}\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0{marker}\n"))
-        self.assert_adopted_drift_logged(Logger.TAG_DRIFT, self.drifted(config_file), "allow[hash-drift]")
+        self.assert_adopted_drift_logged(self.drifted(config_file), "allow[hash-drift]")
         self.assert_no_warnings_logged()
 
     def test_local_repo_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a `repo: local` entry (which carries no rev) is left untouched."""
         config_file = mock_path("repos:\n  - repo: local\n    hooks:\n      - id: my-hook\n")
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_no_warnings_logged()
@@ -199,7 +198,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         """Test that a hook repository hosted outside GitHub is left untouched."""
         config_file = mock_path("repos:\n  - repo: https://gitlab.com/owner/repo\n    rev: v1.0.0\n")
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_no_warnings_logged()
@@ -210,7 +209,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         repo = f"repos:\n  - repo: ssh://git@github.com/{self.HOOK}\n"
         config_file = mock_path(f"{repo}    rev: v4.5.0\n")
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(f"{repo}    rev: {NEW_SHA}  # frozen: v4.6.0\n")
         self.assert_resolved(mock_get_latest_version)
         self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
@@ -246,7 +245,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
                 repo = f"repos:\n  - repo: {quote}https://github.com/{self.HOOK}{quote}\n"
                 config_file = mock_path(f"{repo}    rev: v4.5.0\n")
                 mock_glob.return_value = [config_file]
-                update_pre_commit_configs()
+                _update_pre_commit_configs()
                 config_file.write_text.assert_called_once_with(f"{repo}    rev: {NEW_SHA}  # frozen: v4.6.0\n")
                 self.assert_resolved(mock_get_latest_version)
 
@@ -256,7 +255,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         self.get_project.return_value = Project(newest=Release("4.5.0", STALE_DATE))
         config_file = mock_path(config("rev: main\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_stale_dependency_logged(self.HOOK, "4.5.0", Location(config_file, 3))
 
@@ -292,7 +291,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
             with self.subTest(case), patch_github(releases=[], tags=tags, commit=github_commits_json(sha)):
                 config_file = mock_path(config(f"rev: {rev}\n"))
                 mock_glob.return_value = [config_file]
-                update_pre_commit_configs()
+                _update_pre_commit_configs()
                 config_file.write_text.assert_called_once_with(config(f"rev: {pinned}\n"))
                 mock_get_latest_version.assert_not_called()
 
@@ -302,7 +301,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="20240301", sha=NEW_SHA, tag_name="20240301")
         config_file = mock_path(config("rev: 20240101\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: 20240301\n"))
         self.assert_resolved(mock_get_latest_version, "20240101")
 
@@ -311,7 +310,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         """Test that a rev pinned to a bare commit SHA without a frozen comment is not rewritten, its commit unasked."""
         config_file = mock_path(config(f"rev: {OLD_SHA}\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assertEqual(github_requests("commits"), [])
@@ -330,7 +329,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         """Test that a bare commit SHA is left as it is, its `ignore[update]` redundant, and holding nothing back."""
         config_file = mock_path(config(f"rev: {OLD_SHA}  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         location = Location(config_file, 3)
         self.assert_redundant_directive_logged(Reason.NO_UPDATE_FOR_A_COMMIT, self.HOOK, location, "ignore[update]")
@@ -340,7 +339,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         """Test that a rev appearing before any repo (so no repository is in scope) is left untouched."""
         config_file = mock_path("rev: v4.5.0\n")
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
 
@@ -349,7 +348,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0")
         config_file = mock_path(config("rev: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -367,7 +366,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         )
         config_file = mock_path(content)
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(
             "repos:\n"
             f"  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: {NEW_SHA}  # frozen: v4.6.0\n"
@@ -385,7 +384,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         """Test that a config without any hook repositories is left untouched."""
         config_file = mock_path("repos: []\n")
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_no_new_version_logged()
@@ -399,7 +398,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged(self.HOOK, "4.7.0", Location(config_file, 3))
 
@@ -411,7 +410,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_archived_repository_logged(self.HOOK, Location(config_file, 3))
 
@@ -420,7 +419,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         config_file = mock_path(config("rev: v4.5.0  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
         mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_ignored_logged(self.HOOK, Location(config_file, 3))
         self.assert_no_warnings_logged()
@@ -430,7 +429,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
         mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_ignored_logged(self.HOOK, Location(config_file, 3))
 
@@ -443,7 +442,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         config_file = mock_path(content)
         mock_glob.return_value = [config_file]
         mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_ignored_logged(self.HOOK, Location(config_file, 4))
 
@@ -454,7 +453,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         location = Location(config_file, 3)
         self.assert_stale_dependency_logged(self.HOOK, "4.7.0", location)
@@ -467,7 +466,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_latest.return_value = github_version("4.6.0")
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: set[stale-after=0]\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: set[stale-after=0]\n")
         )
@@ -480,7 +479,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = github_version("4.6.0")
         config_file = mock_path(config("rev: v4.5.0  # update-time: allow[update<5]\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: allow[update<5]\n")
         )
@@ -493,7 +492,7 @@ class UpdatePreCommitConfigsTest(GitHubProjectMixin, LoggingTestCase):
         mock_get_latest_version.return_value = github_version("4.6.0")
         config_file = mock_path(config("rev: v4.5.0  # update-time: ignore[major-update]\n"))
         mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
+        _update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: ignore[major-update]\n")
         )
@@ -525,7 +524,7 @@ class UpdatePreCommitConfigsThroughTheSourceTest(LoggingTestCase):
             with self.subTest(case):
                 config_file = mock_path(config(f"rev: {rev}  # update-time: set[vulnerability-level=none]\n"))
                 mock_glob.return_value = [config_file]
-                update_pre_commit_configs()
+                _update_pre_commit_configs()
                 location = Location(config_file, 3)
                 self.assert_redundant_directive_logged(
                     Reason.NO_VULNERABILITY_REPORTS,

@@ -9,7 +9,7 @@ from unittest.mock import Mock, call, patch
 
 import libcst
 from tools import rename as rename_module
-from tools.rename import _PROSE_ROOTS, _prose_files, _renamed, main, stale_mentions, surviving_occurrences
+from tools.rename import _PROSE_ROOTS, _prose_files, _renamed, _stale_mentions, _surviving_occurrences, main
 
 from mutation_time.mutation import kills
 
@@ -38,19 +38,19 @@ class SurvivingOccurrencesTest(unittest.TestCase):
         }
         for case, source in cases.items():
             with self.subTest(case=case):
-                self.assertEqual(surviving_occurrences("old", source), [1])
+                self.assertEqual(_surviving_occurrences("old", source), [1])
 
     def test_the_name_as_text(self):
         """Test that a docstring mentioning the name is no occurrence, where a grep would report one."""
-        self.assertEqual(surviving_occurrences("old", '"""Hands the line to `old`."""\nnew()\n'), [])
+        self.assertEqual(_surviving_occurrences("old", '"""Hands the line to `old`."""\nnew()\n'), [])
 
     def test_a_line_holding_the_name_twice(self):
         """Test that a line is reported once however often the name occurs on it."""
-        self.assertEqual(surviving_occurrences("old", "old(old())\nnew()\nold()\n"), [1, 3])
+        self.assertEqual(_surviving_occurrences("old", "old(old())\nnew()\nold()\n"), [1, 3])
 
     def test_a_name_the_source_does_not_hold(self):
         """Test that a source the rename reached leaves nothing to report."""
-        self.assertEqual(surviving_occurrences("old", "new()\nother.new\n"), [])
+        self.assertEqual(_surviving_occurrences("old", "new()\nother.new\n"), [])
 
 
 class StaleMentionsTest(unittest.TestCase):
@@ -58,7 +58,7 @@ class StaleMentionsTest(unittest.TestCase):
 
     def mentions(self, name: str, *texts: str) -> list[str]:
         """Return where files holding the given texts mention the name."""
-        return stale_mentions(name, [mock_path(text) for text in texts])
+        return _stale_mentions(name, [mock_path(text) for text in texts])
 
     def test_a_name_in_backticks(self):
         """Test that a mention is found wherever backticks quote the name, bare or qualified."""
@@ -88,7 +88,7 @@ class StaleMentionsTest(unittest.TestCase):
         """Test that a file git lists but the working tree no longer holds is skipped, and the others searched."""
         gone = mock_path("", name="gone.py")
         gone.read_text.side_effect = FileNotFoundError(2, "No such file or directory", "gone.py")
-        self.assertEqual(stale_mentions("old", [gone, mock_path("`old`\n")]), ["f.py:1"])
+        self.assertEqual(_stale_mentions("old", [gone, mock_path("`old`\n")]), ["f.py:1"])
 
 
 class ProseFilesTest(unittest.TestCase):
@@ -245,7 +245,7 @@ class MainTest(unittest.TestCase):
     @kills.replace(
         rename_module.main,
         "for line in _surviving_references(name, source)]",
-        "for line in surviving_occurrences(name, source)]",
+        "for line in _surviving_occurrences(name, source)]",
         "a rename stops wherever a file spells the renamed name, whatever that name refers to there",
     )
     def test_a_parameter_and_a_local_of_the_name_do_not_stop_the_rename(self):

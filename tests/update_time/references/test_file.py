@@ -13,7 +13,7 @@ from update_time.references.file import update_file, update_yaml_files
 
 from tests.helpers import mock_path
 from tests.update_time.fixtures import IMAGE_REGEXP
-from tests.update_time.references.helpers import mock_logger, new_version_getter
+from tests.update_time.references.helpers import new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
@@ -31,7 +31,7 @@ class UpdateFileTest(unittest.TestCase):
             IMAGE_REGEXP,
             mount_regexp,
             source=Source(new_version=new_version_getter("9.9")),
-            logger=mock_logger(),
+            logger=Mock(),
         )
         mock_file.read_text.assert_called_once_with()
         mock_file.write_text.assert_called_once_with("image: python:9.9\nmount: redis:9.9\n")
@@ -74,7 +74,7 @@ class UpdateYamlFilesTest(unittest.TestCase):
         unparsable_file = mock_path(self.UNPARSABLE)
         next_file = mock_path("image: python:3.14\n")
         mock_glob.return_value = [unparsable_file, next_file]
-        logger = mock_logger()
+        logger = Mock()
         self.update(logger, new_version_getter("3.15"))
         unparsable_file.write_text.assert_not_called()
         next_file.write_text.assert_called_once_with("image: python:3.15\n")

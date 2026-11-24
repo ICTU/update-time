@@ -19,6 +19,7 @@ from update_time.io.filesystem import glob_for, is_scanned
 from update_time.io.log import get_logger
 from update_time.lock_files.compiled_requirements_txt import CompiledBy, CompiledRequirementsTxt, is_compiled
 from update_time.manifests import requirements_txt as requirements_txt_manifest
+from update_time.markers.report import report_marker, warn_if_the_opt_in_is_redundant
 from update_time.package_managers.pip_tools import PipCompile
 from update_time.package_managers.uv.uv import UvPipCompile
 from update_time.references.delegated import warn_about_pinned_versions
@@ -51,8 +52,8 @@ def _warn_about_items_that_decide_nothing(reference: Reference, compiler: Requir
         _LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)
     # Update-time never pins a requirement that does not pin a version, and the requirement does not carry a hash pin.
     # So each opt-in is redundant, whether or not the update is held back.
-    _LOG.warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED)
-    _LOG.warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, Reason.NO_HASH_PIN)
+    warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED, _LOG)
+    warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, _LOG)
 
 
 def _warn_about_items_that_need_a_version_to_update(reference: Reference) -> None:
@@ -79,7 +80,7 @@ def _check_loose_requirements(lines: list[Line], compiler: RequirementsCompiler 
     for line, match, marker in reference_matches(lines, requirements_txt_manifest.LOOSE_REQUIREMENT_REFERENCE):
         reference = Reference(match["dependency"], "", line.location, marker=marker)
         # No pass before this one reads these lines, so their markers are reported here.
-        _LOG.report_marker(reference, steers_the_update=compiler is not None)
+        report_marker(reference, _LOG, steers_the_update=compiler is not None)
         if requirements_txt_manifest.names_an_archive(reference.dependency):
             continue
         _warn_about_items_that_decide_nothing(reference, compiler)
@@ -127,7 +128,7 @@ def _compiler_for(compiled: CompiledRequirementsTxt) -> RequirementsCompiler:
     return UvPipCompile(compiled)
 
 
-def update_requirements_txts() -> None:
+def _update_requirements_txts() -> None:
     """Find all requirements files, update the pins in them or in their sources, and recompile the compiled ones.
 
     A compiled file is recompiled, and its sources checked at the versions it pins, only where the run reaches every
@@ -201,7 +202,7 @@ def _pins_by_source(
 
 def main() -> None:  # pragma: no cover
     """Update the dependencies in the repository's requirements files."""
-    update_requirements_txts()
+    _update_requirements_txts()
 
 
 if __name__ == "__main__":  # pragma: no cover

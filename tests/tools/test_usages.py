@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
 from tools import usages as usages_module
-from tools.usages import _ROOTS, Position, _LanguageServerError, _python_files, _usages, main
+from tools.usages import _ROOTS, _LanguageServerError, _Position, _python_files, _usages, main
 
 from mutation_time.mutation import kills
 
@@ -74,8 +74,8 @@ class UsagesTest(unittest.TestCase):
         server_input.write.side_effect = written.append
         server = MagicMock(stdin=server_input, stdout=io.BytesIO(output))
         with patch("subprocess.Popen", Mock(return_value=MagicMock(__enter__=Mock(return_value=server)))):
-            found = _usages(Position(_DEFINING_MODULE, 0, 4))
-        self.assertEqual(found, [Position(_USING_MODULE, 2, 4)])
+            found = _usages(_Position(_DEFINING_MODULE, 0, 4))
+        self.assertEqual(found, [_Position(_USING_MODULE, 2, 4)])
         sent = _unframed(b"".join(written))
         asked = next(message for message in sent if message.get("method") == "textDocument/references")
         self.assertEqual(asked["params"]["position"], {"line": 0, "character": 4})
@@ -100,13 +100,13 @@ class UsagesTest(unittest.TestCase):
                 if isinstance(behaviour, OSError):
                     popen.side_effect = behaviour
                 with patch("subprocess.Popen", popen), self.assertRaisesRegex(_LanguageServerError, reason):
-                    _usages(Position(_DEFINING_MODULE, 0, 4))
+                    _usages(_Position(_DEFINING_MODULE, 0, 4))
 
 
 class MainTest(unittest.TestCase):
     """Unit tests for the report the command line writes."""
 
-    def report(self, name: str, sources: dict[Path, str], usages: list[Position] | Exception) -> int:
+    def report(self, name: str, sources: dict[Path, str], usages: list[_Position] | Exception) -> int:
         """Report the usages of the name over files holding the sources, the server answering or failing as given."""
         self.written, self.reported = io.StringIO(), io.StringIO()
         files = [mock_path(source, name=str(path)) for path, source in sources.items()]
@@ -126,11 +126,11 @@ class MainTest(unittest.TestCase):
             _DEFINING_MODULE: "def target():\n    pass\n\ntarget()\n",
             _USING_MODULE: "from pkg import mod\n\nmod.target()\n",
         }
-        usages = [Position(_DEFINING_MODULE, 3, 0), Position(_USING_MODULE, 2, 4)]
+        usages = [_Position(_DEFINING_MODULE, 3, 0), _Position(_USING_MODULE, 2, 4)]
         for case, name in {"qualified": "pkg.mod.target", "bare": "target"}.items():
             with self.subTest(case):
                 self.assertEqual(self.report(name, sources, usages), 0)
-                self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 4))
+                self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 4))
                 self.assertEqual(
                     self.written.getvalue(),
                     "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n",
@@ -142,7 +142,7 @@ class MainTest(unittest.TestCase):
     def test_the_usages_of_an_annotated_constant(self):
         """Test that an annotated module-level constant is looked up at its name."""
         self.assertEqual(self.report("pkg.mod.TARGET", {_DEFINING_MODULE: "TARGET: int = 1\n"}, []), 0)
-        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 0))
+        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 0))
 
     @kills.replace(
         usages_module._named,
@@ -154,7 +154,7 @@ class MainTest(unittest.TestCase):
         """Test that a class attribute is looked up inside its class."""
         source = "class Holder:\n    TARGET = 1\n"
         self.assertEqual(self.report("pkg.mod.Holder.TARGET", {_DEFINING_MODULE: source}, []), 0)
-        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 1, 4))
+        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 1, 4))
 
     @kills.delete_statement(
         usages_module._named,
@@ -178,19 +178,19 @@ class MainTest(unittest.TestCase):
             "        local = 2\n        other.target = local\n"
         )
         self.assertEqual(self.report("pkg.mod.Holder.target", {_DEFINING_MODULE: source}, []), 0)
-        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 2, 13))
+        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 2, 13))
 
     def test_a_local_assignment_defines_nothing(self):
         """Test that a name a function body assigns is not a definition, so a constant of that name is unambiguous."""
         source = "TARGET = 1\n\n\ndef holder():\n    TARGET = 2\n"
         self.assertEqual(self.report("TARGET", {_DEFINING_MODULE: source}, []), 0)
-        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 0))
+        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 0))
 
     @kills.replace(usages_module._targets, "return [name]", "return []", "the report says nothing defines a type alias")
     def test_the_usages_of_a_type_alias(self):
         """Test that a type alias is looked up at its name."""
         self.assertEqual(self.report("pkg.mod.Target", {_DEFINING_MODULE: "type Target = int\n"}, []), 0)
-        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 5))
+        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 5))
 
     @kills.delete(
         usages_module._assigned_names,
@@ -210,7 +210,7 @@ class MainTest(unittest.TestCase):
         for name, column in (("FIRST", 0), ("SECOND", 7)):
             with self.subTest(name):
                 self.assertEqual(self.report(f"pkg.mod.{name}", {_DEFINING_MODULE: "FIRST, SECOND = 1, 2\n"}, []), 0)
-                self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, column))
+                self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, column))
 
     @kills.force_true(
         usages_module._assigned_names,
@@ -233,7 +233,7 @@ class MainTest(unittest.TestCase):
         """Test that a function the `__init__.py` of a package defines is looked up there, named by the package."""
         package = Path("src/pkg/__init__.py")
         self.assertEqual(self.report("pkg.target", {package: "def target():\n    pass\n"}, []), 0)
-        self.requested.assert_called_once_with(Position(package, 0, 4))
+        self.requested.assert_called_once_with(_Position(package, 0, 4))
 
     def test_a_bare_name_several_definitions_hold(self):
         """Test that a bare name several files define fails the run, naming each, without asking the server."""
@@ -263,9 +263,9 @@ class MainTest(unittest.TestCase):
             ),
             _USING_MODULE: "from pkg.mod import Holder\n\nHolder().target()\n",
         }
-        usages = [Position(_DEFINING_MODULE, 5, 13), Position(_USING_MODULE, 2, 9)]
+        usages = [_Position(_DEFINING_MODULE, 5, 13), _Position(_USING_MODULE, 2, 9)]
         self.assertEqual(self.report("pkg.mod.Holder.target", sources, usages), 0)
-        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 1, 8))
+        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 1, 8))
         self.assertEqual(
             self.written.getvalue(),
             "src/pkg/mod.py:6: self.target()\nsrc/pkg/user.py:3: Holder().target()\nusages: 2\n",

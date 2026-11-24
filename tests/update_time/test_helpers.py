@@ -12,7 +12,7 @@ from update_time.domain.reference import Reference
 from update_time.io.log import Logger
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.sources import pypi
-from update_time.sources.pypi import release_metadata
+from update_time.sources.pypi import _release_metadata
 
 from tests.helpers import FakeFiles, patch_get
 from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
@@ -33,12 +33,12 @@ class CacheClearingTest(unittest.TestCase):
 
     def test_a_populated_cache_is_cleared(self):
         """Test that a cache one test populated is empty by the time the next one runs."""
-        release_metadata.cache_clear()  # Whatever ran before this test may have left entries of its own behind.
+        _release_metadata.cache_clear()  # Whatever ran before this test may have left entries of its own behind.
         with patch_get({"info": {}}):
-            release_metadata("package", "1.0")
-        self.assertEqual(release_metadata.cache_info().currsize, 1)
+            _release_metadata("package", "1.0")
+        self.assertEqual(_release_metadata.cache_info().currsize, 1)
         CacheClearingTestCase().setUp()
-        self.assertEqual(release_metadata.cache_info().currsize, 0)
+        self.assertEqual(_release_metadata.cache_info().currsize, 0)
 
     def test_a_cache_no_list_names_is_cleared(self):
         """Test that a cached function added to a module is cleared, so adding one calls for no bookkeeping."""
@@ -64,7 +64,7 @@ class CachedFunctionsTest(unittest.TestCase):
 
     def test_the_cached_functions_of_the_package_are_found(self):
         """Test that walking the package reaches a cached function a module nested in it defines."""
-        self.assertIn(release_metadata, _all_cached_functions(update_time))
+        self.assertIn(_release_metadata, _all_cached_functions(update_time))
 
     def test_the_loggers_of_the_package_are_found(self):
         """Test that walking the package reaches the loggers a module nested in it holds, or a class in it holds."""
@@ -108,7 +108,7 @@ class LoggingTestCaseTest(unittest.TestCase):
         result = unittest.TestResult()
         table("test_table").run(result)
         self.assertEqual(len(result.failures), 1)
-        self.assertIn("Could not fetch commit SHA", result.failures[0][1])
+        self.assertIn("Could not fetch the commit of the release", result.failures[0][1])
 
     def test_an_error_an_earlier_case_of_a_table_logs_fails_the_test(self):
         """Test that an error the first case of a table logs fails the test, although the last case logs none."""

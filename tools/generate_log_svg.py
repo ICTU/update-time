@@ -13,8 +13,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
-from update_time.domain.dependency import Changes, DependencyVersion, Project, Release
+from tools.log_fixtures import VULNERABILITY, reference, stale_publication_date
+from update_time.domain.dependency import Changes, DependencyVersion, Release
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import LOG_THEME
 from update_time.io.log import Logger, configure_logging
@@ -23,7 +23,7 @@ from update_time.primitives.location import Location
 
 
 @dataclass(frozen=True)
-class LogOutput:
+class _LogOutput:
     """The sample log output in the two forms the README embeds: the SVG screenshot and its plain-text fallback."""
 
     svg: str
@@ -57,7 +57,7 @@ def _portable(svg: str) -> str:
     return re.sub(r",\s*url\([^)]+\)\s*format\([^)]+\)", "", svg)
 
 
-def generate() -> LogOutput:
+def generate() -> _LogOutput:
     """Return the sample log output as the SVG screenshot and as the plain text the README falls back to."""
     console = Console(
         record=True,
@@ -69,7 +69,7 @@ def generate() -> LogOutput:
     configure_logging(console, "INFO").addFilter(_FixedTime())
     log = Logger("update-time")
 
-    # A representative digest, padded to the exact length of a real one so `LogHighlighter` recognises and dims it.
+    # A representative digest, padded to the exact length of a real one so `_LogHighlighter` recognises and dims it.
     digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
     changelog = Changes(
         "Changed in 4.15.0\n"
@@ -84,11 +84,11 @@ def generate() -> LogOutput:
     log.new_version(
         reference("actions/checkout", Location(Path(".github/workflows/ci.yml"), 17)), DependencyVersion("4.3.0")
     )
-    stale = Project(newest=Release("1.3.0", stale_publication_date()))
-    log.report_staleness(resolved("left-pad", Location(Path("package.json"), 24), project=stale), STALE_AFTER.get())
+    stale = Release("1.3.0", stale_publication_date())
+    log.stale_dependency(reference("left-pad", Location(Path("package.json"), 24)), stale, STALE_AFTER.get())
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")
     text = "\n".join(line.rstrip() for line in plain_text.splitlines())  # strip the trailing render padding
-    return LogOutput(svg=_portable(svg), text=text)
+    return _LogOutput(svg=_portable(svg), text=text)

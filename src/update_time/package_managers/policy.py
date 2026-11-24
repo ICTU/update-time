@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.directive import WARNING_DIRECTIVES
 from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference
+from update_time.markers.report import report_marker
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
@@ -60,4 +61,4 @@ def report_markers[ReferenceT: Reference](
 ) -> None:
     """Report each reference's marker."""
     for reference in references:
-        log.report_marker(reference, steers_the_update=policy.steers_the_update(reference))
+        report_marker(reference, log, steers_the_update=policy.steers_the_update(reference))

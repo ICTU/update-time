@@ -25,23 +25,23 @@ from update_time.updaters import (
 if TYPE_CHECKING:
     from types import ModuleType
 
-# The file type each updater scans, and the function that scans it. `update_manifest_images` is left out: it scans
+# The file type each updater scans, and the function that scans it. `_update_manifest_images` is left out: it scans
 # two file types, so `ScannedManifestsTest` pins both of them. So is `update_package_json`, whose tests find each file
 # by its pattern.
 _SCANS = (
-    (update_circle_ci_config, "update_circle_ci_config", file_type.CIRCLE_CI_CONFIGS),
-    (update_devcontainer, "update_devcontainers", file_type.DEVCONTAINER_CONFIGS),
-    (update_dockerfile_base_image, "update_dockerfiles", file_type.DOCKERFILES),
-    (update_github_action, "update_github_actions", file_type.GITHUB_WORKFLOWS),
-    (update_gitlab_ci_config, "update_gitlab_ci_config", file_type.GITLAB_CI_CONFIG),
-    (update_jsdelivr, "update_jsdelivrs", file_type.SPHINX_CONFIG),
-    (update_node_engine, "update_node_engines", file_type.PACKAGE_JSON),
-    (update_pom_xml, "update_pom_xmls", file_type.POM_XML),
-    (update_pre_commit_config, "update_pre_commit_configs", file_type.PRE_COMMIT_CONFIG),
-    (update_pyproject_toml, "update_pyproject_tomls", file_type.PYPROJECT_TOML),
-    (update_python_inline_script_metadata, "update_python_inline_script_metadatas", file_type.INLINE_SCRIPT_METADATA),
-    (update_python_version_file, "update_python_version_files", file_type.PYTHON_VERSION_FILE),
-    (update_requirements_txt, "update_requirements_txts", file_type.REQUIREMENTS_TXT),
+    (update_circle_ci_config, "_update_circle_ci_config", file_type.CIRCLE_CI_CONFIGS),
+    (update_devcontainer, "_update_devcontainers", file_type.DEVCONTAINER_CONFIGS),
+    (update_dockerfile_base_image, "_update_dockerfiles", file_type.DOCKERFILES),
+    (update_github_action, "_update_github_actions", file_type.GITHUB_WORKFLOWS),
+    (update_gitlab_ci_config, "_update_gitlab_ci_config", file_type.GITLAB_CI_CONFIG),
+    (update_jsdelivr, "_update_jsdelivrs", file_type.SPHINX_CONFIG),
+    (update_node_engine, "_update_node_engines", file_type.PACKAGE_JSON),
+    (update_pom_xml, "_update_pom_xmls", file_type.POM_XML),
+    (update_pre_commit_config, "_update_pre_commit_configs", file_type.PRE_COMMIT_CONFIG),
+    (update_pyproject_toml, "_update_pyproject_tomls", file_type.PYPROJECT_TOML),
+    (update_python_inline_script_metadata, "_update_python_inline_script_metadatas", file_type.INLINE_SCRIPT_METADATA),
+    (update_python_version_file, "_update_python_version_files", file_type.PYTHON_VERSION_FILE),
+    (update_requirements_txt, "_update_requirements_txts", file_type.REQUIREMENTS_TXT),
 )
 
 

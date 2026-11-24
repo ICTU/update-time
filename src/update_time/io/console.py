@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 # A Private Use Area code point, which never occurs in real content and which Rich does not strip, so it survives
 # message formatting. A dependency name is bracketed in it, because a name has no fixed shape a pattern could
-# match; `LogHighlighter` styles the bracketed run and strips the delimiters.
+# match; `_LogHighlighter` styles the bracketed run and strips the delimiters.
 _DEPENDENCY_DELIMITER = ""
 
 # The same for a file location, in a code point of its own so the two runs never collide. A location cannot be
@@ -58,7 +58,7 @@ def undelimited(message: str) -> str:
     return message.translate(_DELIMITERS)
 
 
-class LogHighlighter(ReprHighlighter):
+class _LogHighlighter(ReprHighlighter):
     """Rich highlighter that colours a whole `sha256:` digest, dependency name, and file location as single tokens.
 
     Rich's built-in rules otherwise match only fragments of a digest: the `256` reads as a number and a run such as
@@ -261,7 +261,7 @@ _LOG_MESSAGE_FORMAT = "%(message)s"
 
 def configure_logging(console: Console, level: str) -> RichHandler:
     """Send every record at the level or above to the console, replacing any earlier one, and return its handler."""
-    handler = _LogHandler(console=console, highlighter=LogHighlighter(), show_path=False)
+    handler = _LogHandler(console=console, highlighter=_LogHighlighter(), show_path=False)
     logging.basicConfig(
         level=level, datefmt=_LOG_TIME_FORMAT, format=_LOG_MESSAGE_FORMAT, handlers=[handler], force=True
     )

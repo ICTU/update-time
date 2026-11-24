@@ -8,7 +8,7 @@ from unittest.mock import ANY, DEFAULT, Mock, patch
 from mutation_time.mutation import kills
 from update_time.domain import version_scheme
 from update_time.domain.cooldown import COOLDOWN
-from update_time.io.log import Logger
+from update_time.io.log import Logger, ToolTask
 from update_time.lock_files import compiled_requirements_txt
 from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt
 from update_time.package_managers import moved_versions, pip_tools, requirements_compiler
@@ -200,7 +200,7 @@ class RecompileTest(UvSettingsTestCase):
         self.assert_recompiled("--exclude-newer", "14 days", "--upgrade-package", "flask")
         self.assertEqual(files[_SOURCE], f"{_UV_MANAGED_BY_COMMENT_LINE}\nflask==1.0\n")
         self.assert_logged_among_others(
-            message_of(Logger.managed_by_comment_written),
+            message_of(Logger.configured_compiled_file_cooldown),
             location=Location(_SOURCE),
             compiled=Location(_COMPILED),
             cooldown="14 days",
@@ -214,7 +214,7 @@ class RecompileTest(UvSettingsTestCase):
         self.assert_recompiled("--uploaded-prior-to", "P14D", "--upgrade-package", "flask", command=_PIP_COMMAND)
         self.assertEqual(files[_SOURCE], f"{_PIP_MANAGED_BY_COMMENT_LINE}\nflask==1.0\n")
         self.assert_logged_among_others(
-            message_of(Logger.managed_by_comment_written),
+            message_of(Logger.configured_compiled_file_cooldown),
             location=Location(_SOURCE),
             compiled=Location(_COMPILED),
             cooldown="P14D",
@@ -275,10 +275,9 @@ class RecompileTest(UvSettingsTestCase):
         "the warning about a pip that failed leaves out the reason pip gave",
         case="a pip that fails",
     )
-    @kills.replace(
+    @kills.force_false(
         pip_tools.PipCompile.settings_hold_cutoff,
-        "if isinstance(config, OSError):",
-        "if False:",
+        "isinstance(config, OSError)",
         "a pip missing from the path ends the run with a traceback",
         raises="AttributeError: 'FileNotFoundError' object has no attribute 'succeeded'",
         case="no pip on the path",
@@ -340,7 +339,7 @@ class RecompileTest(UvSettingsTestCase):
                 files = self.recompile({_COMPILED: compiled, _SOURCE: source})
                 self.assert_recompiled("--exclude-newer", "14 days", "--upgrade-package", "flask")
                 self.assertEqual(files[_SOURCE], source)
-                self.assertEqual(self.records_of(message_of(Logger.managed_by_comment_written)), [])
+                self.assertEqual(self.records_of(message_of(Logger.configured_compiled_file_cooldown)), [])
 
     def test_an_exclude_newer_the_header_records_is_passed_on_where_no_source_carries_the_managed_by_comment(self):
         """Test that uv gets the `exclude-newer` the user compiled with, and that the source stays without a comment."""
@@ -426,7 +425,7 @@ class RecompileTest(UvSettingsTestCase):
                 source = f"flask>=0.1  # update-time: {directive}\n"
                 self.recompile({_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
                 self.assert_logged_among_others(
-                    message_of(Logger.warn_if_redundant_bound),
+                    message_of(Logger.redundant_bound),
                     dependency="flask",
                     location=Location(_SOURCE, 1),
                     directive=directive,
@@ -438,25 +437,12 @@ class RecompileTest(UvSettingsTestCase):
         requirements_compiler.RequirementsCompiler._warn_if_the_bound_is_redundant,
         "not declaration.current_version",
         "a bound on an exact pin is warned about twice, by the recompile as well as by the update",
-        case="a bound on an exact pin",
     )
-    @kills.replace(
-        Logger.warn_if_redundant_bound,
-        "if (redundancy := bound.redundancy(current_version)) is None:",
-        "if (redundancy := bound.redundancy(current_version)) is None and False:",
-        "the recompile reports a bound that keeps some versions as redundant",
-        case="a bound keeping some versions",
-    )
-    def test_a_bound_in_the_source_is_not_judged_by_the_recompile_where_it_decides_or_sits_on_an_exact_pin(self):
-        """Test that the recompile does not warn about a bound keeping some versions, nor about one on an exact pin."""
-        cases = {
-            "a bound keeping some versions": "flask>=0.1  # update-time: allow[update<2]\n",
-            "a bound on an exact pin": "flask==1.0  # update-time: allow[update>=0.1]\n",
-        }
-        for case, source in cases.items():
-            with self.subTest(case):
-                self.recompile({_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
-                self.assertEqual(self.records_of(message_of(Logger.warn_if_redundant_bound)), [])
+    def test_a_bound_on_an_exact_pin_in_the_source_is_not_judged_by_the_recompile(self):
+        """Test that the recompile does not warn about a bound on an exact pin, which the update judges."""
+        source = "flask==1.0  # update-time: allow[update>=0.1]\n"
+        self.recompile({_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
+        self.assertEqual(self.records_of(message_of(Logger.redundant_bound)), [])
 
     def test_a_bound_in_the_source_narrows_the_upgrade(self):
         """Test that uv may upgrade a package only to the versions its bound in the source keeps."""
@@ -548,8 +534,8 @@ class RecompileTest(UvSettingsTestCase):
     )
     @kills.replace(
         requirements_compiler.RequirementsCompiler.recompile,
-        "self.log.compiler_not_on_path(self.compiled.path, command.executable)",
-        "self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)",
+        "self.log.tool_not_on_path(self.compiled.path, ToolTask.RECOMPILE, command.executable)",
+        "self.log.tool_failed(self.compiled.path, ToolTask.RECOMPILE, self.tool)",
         "a tool missing from the path is reported as a tool that failed",
     )
     def test_a_tool_missing_from_the_path_is_reported_without_asking_for_its_settings(self):
@@ -558,7 +544,10 @@ class RecompileTest(UvSettingsTestCase):
         self.recompile({_COMPILED: requirements_compiled_by_pip_compile("base.in"), _SOURCE: "flask==1.0\n"})
         self.mock_run.assert_not_called()
         self.assert_errors_logged(
-            (message_of(Logger.compiler_not_on_path), {"location": Location(_COMPILED), "executable": "pip-compile"}),
+            (
+                message_of(Logger.tool_not_on_path),
+                {"location": Location(_COMPILED), "task": ToolTask.RECOMPILE, "executable": "pip-compile"},
+            ),
         )
 
     @kills.replace(
@@ -601,10 +590,10 @@ class RecompileTest(UvSettingsTestCase):
                 self.mock_run.side_effect = fail_the_compile
                 files = self.recompile({_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
                 self.assert_error_logged(
-                    message_of(Logger.compiled_file_not_recompiled), location=Location(_COMPILED), tool=tool
+                    message_of(Logger.tool_failed), location=Location(_COMPILED), task=ToolTask.RECOMPILE, tool=tool
                 )
                 self.assertEqual((files[_SOURCE], files[_COMPILED]), ("flask==1.0\n", compiled))
-                self.assertEqual(self.records_of(message_of(Logger.managed_by_comment_written)), [])
+                self.assertEqual(self.records_of(message_of(Logger.configured_compiled_file_cooldown)), [])
 
     @patch("requests.Session.get", Mock(side_effect=[pypi_release(PYPI_OLD_UPLOAD)]))
     def test_a_version_the_recompile_moves_is_reported_at_the_source(self):

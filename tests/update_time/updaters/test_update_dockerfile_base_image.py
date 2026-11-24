@@ -11,7 +11,7 @@ from update_time.io import log
 from update_time.manifests import dockerfile as dockerfile_manifest
 from update_time.primitives.location import Location
 from update_time.updaters import update_dockerfile_base_image
-from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
+from update_time.updaters.update_dockerfile_base_image import _update_dockerfiles
 
 from tests.helpers import mock_path, requested_urls
 from tests.update_time import registry
@@ -32,7 +32,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     def run_updater(self, mock_file: Mock) -> None:
         """Run the Dockerfile updater with the mock file as the only discovered Dockerfile."""
         with patch("update_time.updaters.update_dockerfile_base_image.glob_for", return_value=[mock_file]):
-            update_dockerfiles()
+            _update_dockerfiles()
 
     def assert_update_written(
         self, new_tag: str, dockerfile: str, expected: str, *, image: str = "python", line: int = 2

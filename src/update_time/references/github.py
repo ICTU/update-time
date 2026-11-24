@@ -11,9 +11,9 @@ from packaging.version import Version
 from update_time.domain.dependency import DependencyVersion, Unserved, is_valid
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Scope
-from update_time.domain.reference import RefKind, hash_drifted
+from update_time.domain.reference import DriftKind, RefKind, hash_drifted
 from update_time.domain.source import Source, every_dependency
-from update_time.io.log import Logger
+from update_time.markers.report import warn_if_the_bound_is_redundant, warn_if_the_opt_in_is_redundant
 from update_time.primitives.digest import COMMIT_SHA, SHORT_COMMIT_SHA
 from update_time.primitives.lookup import DeferredLookup
 from update_time.primitives.text import replace_match
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from update_time.domain.reference import Reference
     from update_time.domain.vulnerability import Ecosystem
-    from update_time.io.log import Drift
+    from update_time.io.log import Logger
     from update_time.primitives.lookup import LookedUp, Lookup
 
 
@@ -104,10 +104,6 @@ def _ref_kind(reference: Reference) -> RefKind:
             return RefKind.BRANCH
 
 
-# Map each kind of ref to the drift it reports when it moves.
-_DRIFT = {drift.ref: drift for drift in (Logger.TAG_DRIFT, Logger.BRANCH_DRIFT, Logger.REF_DRIFT)}
-
-
 @dataclass(frozen=True)
 class PinUpdater:
     """Decide what one kind of GitHub reference is pinned to, as its marker steers, and spell the pin on its line."""
@@ -164,7 +160,7 @@ class PinUpdater:
             # The drift names the normalised version, so a rev frozen as v4.5.0 is reported as 4.5.0.
             moved = replace(reference, current_version=latest.version)
             committed = DeferredLookup(partial(commit_date, reference.dependency, latest.sha))
-            return self._drifted_pin(Logger.TAG_DRIFT, moved, latest, publication=committed)
+            return self._drifted_pin(DriftKind.TAG, moved, latest, publication=committed)
         return latest
 
     def _unversioned_pin(self, reference: Reference, commit_sha: _CommitSha) -> DependencyVersion | None:
@@ -184,7 +180,7 @@ class PinUpdater:
         report_directives_the_source_cannot_apply(reference, self.source, log)
         report_project_checks(reference, log, project)
         pin_does_not_float = Reason.PIN_NOT_FLOATING if names_a_commit else None
-        log.warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, pin_does_not_float)
+        warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, pin_does_not_float, log)
 
     def _comment_names_no_ref(self, reference: Reference) -> bool:
         """Return whether the comment beside a commit SHA does not name a tag or branch, which leaves the SHA bare."""
@@ -204,12 +200,12 @@ class PinUpdater:
         """
         marker, log = reference.marker, self.logger
         if pin is not None and pin.tag_name:
-            log.warn_if_redundant_bound(replace(reference, current_version=pin.version))
+            warn_if_the_bound_is_redundant(replace(reference, current_version=pin.version), log)
             return
         if names_a_commit and (cooldown := marker.cooldown_directive):
             log.redundant_directive(reference, cooldown, Reason.NO_COOLDOWN_FOR_A_COMMIT)
         no_drift = Reason.NO_DRIFT_FOR_A_COMMIT if names_a_commit else None
-        log.warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, no_drift)
+        warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, no_drift, log)
         if bound := marker.version_bound_directive:
             reason = Reason.PINS_A_COMMIT if names_a_commit else Reason.FOLLOWS_A_BRANCH
             log.redundant_directive(reference, bound, reason)
@@ -264,7 +260,7 @@ class PinUpdater:
         # A ref kept floating keeps following the ref.
         kept = DependencyVersion(reference.current_version, sha=moved.sha)
         pin = kept if kept_floating_by else moved
-        adopted = self._drifted_pin(_DRIFT[kind], reference, pin, publication=moved.publication)
+        adopted = self._drifted_pin(DriftKind(kind), reference, pin, publication=moved.publication)
         if adopted is not None and adopted.tag_name:  # The reference comes to name a version rather than the ref
             self.logger.pinned(reference, adopted)
         return adopted
@@ -287,13 +283,11 @@ class PinUpdater:
             self.logger.unpinned_ref(reference, found.reason, kind)
 
     def _drifted_pin(
-        self, kind: Drift, reference: Reference, pin: DependencyVersion, *, publication: Lookup[datetime]
+        self, kind: DriftKind, reference: Reference, pin: DependencyVersion, *, publication: Lookup[datetime]
     ) -> DependencyVersion | None:
         """Return the pin to re-pin the reference to now that its tag or branch moved to another commit, or None.
 
         The new commit is adopted only once it is older than the cooldown.
         """
-        adopted = adopts_drift(
-            kind, reference, pin.sha, self.logger, publication=publication, report_undated=self.logger.no_commit_date
-        )
+        adopted = adopts_drift(kind, reference, pin.sha, self.logger, publication=publication)
         return pin if adopted else None

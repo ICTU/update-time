@@ -1,23 +1,13 @@
-"""Test helpers the reference tests share: the logger, and the getters a decision is handed."""
+"""Test helpers the reference tests share: the getters a decision is handed."""
 
-from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
-from update_time.domain.dependency import DependencyVersion, Project
-from update_time.io.log import Logger
+from update_time.domain.dependency import NO_PROJECT, DependencyVersion, Project
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import VersionString
-
-
-def mock_logger() -> Mock:
-    """Return a mock logger that reports a marker and a redundant opt-in as a logger does, through its own methods."""
-    logger = Mock()
-    logger.report_marker.side_effect = partial(Logger.report_marker, logger)
-    logger.warn_if_the_opt_in_is_redundant.side_effect = partial(Logger.warn_if_the_opt_in_is_redundant, logger)
-    return logger
 
 
 def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:
@@ -35,8 +25,8 @@ def mock_new_version_getter(release: DependencyVersion) -> Mock:
     return _mock_callable(release)
 
 
-def mock_project_getter() -> Mock:
-    """Return a mock project getter answering with an empty project (see `_mock_callable`)."""
-    get_project = _mock_callable(Project())
-    get_project.declares_archival = Mock(return_value=False)
+def mock_project_getter(project: Project = NO_PROJECT) -> Mock:
+    """Return a mock project getter answering with the project, whose archival it declares where it has one."""
+    get_project = _mock_callable(project)
+    get_project.declares_archival = Mock(return_value=project.archival is not None)
     return get_project

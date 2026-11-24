@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, ClassVar
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.domain.reference import combined_marker
-from update_time.io.log import get_logger
+from update_time.io.log import ToolTask, get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files import compiled_requirements_txt
 from update_time.manifests import requirements_txt
+from update_time.markers.report import warn_if_the_bound_is_redundant
 from update_time.package_managers.moved_versions import by_package, log_moved_versions
 from update_time.primitives.command import Command
 
@@ -46,9 +47,9 @@ class RequirementsCompiler(ABC):
         if not (command := self.compiled.recompile_command):
             return
         if not is_installed(command.executable):
-            self.log.compiler_not_on_path(self.compiled.path, command.executable)
+            self.log.tool_not_on_path(self.compiled.path, ToolTask.RECOMPILE, command.executable)
         elif not self._recompiled(command):
-            self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)
+            self.log.tool_failed(self.compiled.path, ToolTask.RECOMPILE, self.tool)
 
     @property
     def _managed_by_comment_line(self) -> str:
@@ -83,7 +84,7 @@ class RequirementsCompiler(ABC):
             compiled.path.write_text(result.stdout)
         if cooldown and not commented:
             requirements_txt.prepend_line(compiled.first_source, line)
-            self.log.managed_by_comment_written(compiled.first_source, compiled.path, cooldown, self.setting)
+            self.log.configured_compiled_file_cooldown(compiled.first_source, compiled.path, cooldown, self.setting)
         self._report_moved_versions(command.executable, declarations)
         return True
 
@@ -150,7 +151,7 @@ class RequirementsCompiler(ABC):
         The bound on an exact pin is judged where Update-time updates the pin.
         """
         if not declaration.current_version:
-            self.log.warn_if_redundant_bound(replace(declaration, current_version=pin.version))
+            warn_if_the_bound_is_redundant(replace(declaration, current_version=pin.version), self.log)
 
 
 def _marker_of(pin: PinnedDependency, declarations: _ByPackage) -> Marker:

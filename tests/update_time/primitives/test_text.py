@@ -4,7 +4,7 @@ import re
 import unittest
 from typing import cast
 
-from update_time.primitives.text import prose_list, replace_match, rewrite_match, rewrite_string
+from update_time.primitives.text import _rewrite_match, prose_list, replace_match, rewrite_string
 
 
 def _search(pattern: str, text: str) -> re.Match[str]:
@@ -36,17 +36,17 @@ class RewriteMatchTest(unittest.TestCase):
     def test_replaces_only_the_captured_span(self):
         """Test that a group is replaced only where it was captured, not where its value recurs within the match."""
         match = _search(r"pkg@(?P<version>[\d.]+)/dist/pkg-[\d.]+\.js", "pkg@2.0.11/dist/pkg-2.0.11.js")
-        self.assertEqual(rewrite_match(match, {"version": "2.0.12"}), "pkg@2.0.12/dist/pkg-2.0.11.js")
+        self.assertEqual(_rewrite_match(match, {"version": "2.0.12"}), "pkg@2.0.12/dist/pkg-2.0.11.js")
 
     def test_replaces_multiple_groups(self):
         """Test that several groups are replaced, each at its own captured span."""
         match = _search(_PATTERN, "before pkg@2.0.11 after")
-        self.assertEqual(rewrite_match(match, {"name": "lib", "version": "3.0"}), "lib@3.0")
+        self.assertEqual(_rewrite_match(match, {"name": "lib", "version": "3.0"}), "lib@3.0")
 
     def test_leaves_the_rest_of_the_string_out(self):
         """Test that only the matched text is returned, not the string it was found in."""
         match = _search(_PATTERN, "before pkg@2.0.11 after")
-        self.assertEqual(rewrite_match(match, {"version": "3.0"}), "pkg@3.0")
+        self.assertEqual(_rewrite_match(match, {"version": "3.0"}), "pkg@3.0")
 
 
 class ReplaceMatchTest(unittest.TestCase):

@@ -4,7 +4,8 @@ import unittest
 
 from packaging.specifiers import SpecifierSet
 
-from update_time.domain.bound import NO_BOUND, Verb, VersionBound
+from mutation_time.mutation import kills
+from update_time.domain.bound import NO_BOUND, BoundRedundancy, Verb, VersionBound
 from update_time.domain.marker import Marker, Scope, spell
 from update_time.markers.parser import parse_directives
 
@@ -65,6 +66,29 @@ class RawTextTest(unittest.TestCase):
         """Test that a marker renders as the whole of its verbatim directive text, every verb's directives kept."""
         marker = Marker(raw="ignore[update] allow[hash-drift]")
         self.assertEqual(str(marker), "ignore[update] allow[hash-drift]")
+
+
+class BoundRedundancyTest(unittest.TestCase):
+    """Unit tests for how the marker's bound is redundant at the current version."""
+
+    @kills.force_none(
+        Marker.bound_redundancy_at,
+        "self.version_bound.redundancy(current_version)",
+        "a bound that decides nothing is never reported as redundant",
+    )
+    def test_a_bound_deciding_nothing_is_redundant(self):
+        """Test that a bound that blocks every update at version 3.12 is redundant there."""
+        marker = Marker(version_bound=bound(Verb.IGNORE, "patch-update"))
+        self.assertEqual(marker.bound_redundancy_at("3.12"), BoundRedundancy.BLOCKS_ALL)
+
+    @kills.delete(
+        Marker.bound_redundancy_at,
+        "None if self.version_bound == NO_BOUND else ",
+        "every reference without a bound is warned about a bound it does not carry",
+    )
+    def test_a_marker_without_a_bound_is_not_redundant(self):
+        """Test that the unmarked default is not redundant at version 3.12."""
+        self.assertIsNone(Marker().bound_redundancy_at("3.12"))
 
 
 class SpellBoundTest(unittest.TestCase):

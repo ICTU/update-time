@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from mutation_time.mutation import kills
+from update_time.domain.dependency import Archival, Project, Release
 from update_time.domain.reference import Reference
 from update_time.domain.source import Source
 from update_time.domain.staleness import STALE_AFTER
@@ -13,6 +14,7 @@ from update_time.references import delegated as delegated_module
 from update_time.references import vulnerability as vulnerability_module
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_projects
 
+from tests.update_time.fixtures import STALE_DATE
 from tests.update_time.helpers import resolved_reference
 from tests.update_time.references.helpers import mock_project_getter
 
@@ -28,12 +30,14 @@ class WarnAboutProjectsTest(unittest.TestCase):
 
     def test_reports_each_resolved_reference(self):
         """Test that each resolved reference gets both project checks, with a marker holding nothing back."""
-        get_project = mock_project_getter()
+        archival, newest = Archival(archived=True), Release("4.15.0", STALE_DATE)
+        project = Project(newest=newest, archival=archival)
+        get_project = mock_project_getter(project)
         warn_about_projects([self.declared], get_project, self.log)
         get_project.assert_called_once_with("humanize")
-        resolved = resolved_reference("humanize", self.location)
-        self.log.report_staleness.assert_called_once_with(resolved, STALE_AFTER.default)
-        self.log.report_archival.assert_called_once_with(resolved)
+        resolved = resolved_reference("humanize", self.location, project=project)
+        self.log.stale_dependency.assert_called_once_with(resolved, newest, STALE_AFTER.default)
+        self.log.archived_dependency.assert_called_once_with(resolved, archival)
 
 
 class WarnAboutDelegatedChecksTest(unittest.TestCase):
@@ -59,5 +63,4 @@ class WarnAboutDelegatedChecksTest(unittest.TestCase):
         pinned = Reference("humanize", "1.0.0", Location(Path("pyproject.toml"), 4))
         warn_about_delegated_checks([[pinned]], log, Source(yank=get_yank))
         get_yank.assert_called_once_with("humanize", "1.0.0")
-        log.report_staleness.assert_not_called()
-        log.report_archival.assert_not_called()
+        self.assertEqual(log.method_calls, [])

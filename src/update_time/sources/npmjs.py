@@ -86,7 +86,7 @@ class _PackageSource:
 
 
 @cache
-def get_changes(package: str, version: str) -> Changes:
+def _get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the package and version, or empty string if it can't be fetched or found."""
     if (metadata := fetch_json(f"{_REGISTRY}/{package}/{version}", _LOG).value) is None:
         return NO_CHANGES
@@ -133,10 +133,10 @@ def deprecation(package: str, version: str) -> Yank | None:
 @ProjectGetter
 def project(package: str) -> Project:
     """Return what the registry reports about the package: its newest release."""
-    return Project(newest=newest_release(package))
+    return Project(newest=_newest_release(package))
 
 
-def newest_release(package: str) -> Release | None:
+def _newest_release(package: str) -> Release | None:
     """Return the version the package published most recently with its date, or None when the registry dates none.
 
     The release is read from the registry document's `time` map, which dates every version the package published.
@@ -152,7 +152,7 @@ def newest_release(package: str) -> Release | None:
 SOURCE = Source(
     project=project,
     yank=deprecation,
-    changes=get_changes,
+    changes=_get_changes,
     publication_date=get_publication_datetime,
     ecosystem=Ecosystem.NPM,
     dates_versions_of=every_dependency,

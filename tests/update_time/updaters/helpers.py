@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from update_time.domain.file_type import FileType
     from update_time.domain.vulnerability import Vulnerability
     from update_time.primitives.command import Command
-    from update_time.sources.pypi import ReleaseMetadata
+    from update_time.sources.pypi import _ReleaseMetadata
 
 # Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
@@ -64,7 +64,7 @@ def _executed_commands(run: Mock) -> list[Command]:
     return [call.args[0] for call in run.call_args_list]
 
 
-def _pypi_metadata_without_changelog() -> ReleaseMetadata:
+def _pypi_metadata_without_changelog() -> _ReleaseMetadata:
     """Create PyPI release metadata without project URLs, so the test needs no changelog response mocked."""
     return {
         "info": {"description": "Package", "project_urls": {}},

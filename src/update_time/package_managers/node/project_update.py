@@ -1,11 +1,12 @@
 """Compare the versions a Node package manager locks per project before and after its update, and log the changes."""
 
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import SEMVER
-from update_time.io.log import get_logger
+from update_time.io.log import FileContent, get_logger
 from update_time.manifests.package_json import PackageJson
 from update_time.primitives.location import Location
 from update_time.sources import npmjs
@@ -48,7 +49,11 @@ class ProjectUpdate:
         locked_after = listed_after.get(before.listed, {})
         if before.package_json is None and not _moved_versions(before.locked, locked_after):
             return cls(before, None, locked_after)
-        return cls(before, PackageJson.readable(before.path, _LOG.unreadable_package_json), locked_after)
+        return cls(
+            before,
+            PackageJson.readable(before.path, partial(_LOG.unreadable_file, content=FileContent.DEPENDENCY_LINES)),
+            locked_after,
+        )
 
     @property
     def moved_versions(self) -> dict[DependencyName, VersionString]:

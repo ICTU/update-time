@@ -4,14 +4,16 @@ Check the catalogs of the pnpm-workspace.yaml and .yarnrc.yml files as well.
 """
 
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.directive import Reason
 from update_time.domain.file_type import PACKAGE_JSON, PNPM_WORKSPACE_YAML, YARNRC_YML
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger
+from update_time.io.log import FileContent, get_logger
 from update_time.manifests.catalogs_yaml import CatalogsYaml
 from update_time.manifests.package_json import PackageJson
+from update_time.markers.report import report_marker
 from update_time.package_managers.node.manager_choice import SUPPORTED_MANAGERS, manager_choice
 from update_time.package_managers.node.marker_policy import (
     MARKER_POLICY,
@@ -33,6 +35,10 @@ if TYPE_CHECKING:
 
 _LOG = get_logger("package.json")
 
+# The warnings that a package.json, or a file holding catalogs, cannot be read, naming what was looked for.
+_UNREADABLE_PACKAGE_JSON = partial(_LOG.unreadable_file, content=FileContent.DEPENDENCY_LINES)
+_UNREADABLE_CATALOGS = partial(_LOG.unreadable_file, content=FileContent.CATALOGS)
+
 
 @dataclass(frozen=True)
 class _CheckedFile:
@@ -42,7 +48,7 @@ class _CheckedFile:
     policy: ManagerPolicy[Declaration]
 
 
-def update_package_jsons() -> None:
+def _update_package_jsons() -> None:
     """Find all package.json files, update each with its package manager, and check them and the catalogs.
 
     The package manager runs only for a package.json that declares a dependency or roots a workspace, since it writes
@@ -54,7 +60,7 @@ def update_package_jsons() -> None:
     supported: list[CheckedPackageJson] = []
     for package_json in sorted(glob_for(PACKAGE_JSON), key=lambda path: len(path.parts)):
         _LOG.path(package_json)
-        if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:
+        if (file := PackageJson.readable(package_json, _UNREADABLE_PACKAGE_JSON)) is None:
             continue
         choice = manager_choice(file)
         if (manager := SUPPORTED_MANAGERS.get(name := choice.name)) is None:
@@ -89,7 +95,7 @@ def _checked_workspace_files(catalog_policies: dict[Path, ManagerPolicy[Declarat
     files: list[_CheckedFile] = []
     for path, policy in catalog_policies.items():
         _LOG.path(path)
-        if (workspace_file := CatalogsYaml.readable(path, _LOG.unreadable_catalogs)) is not None:
+        if (workspace_file := CatalogsYaml.readable(path, _UNREADABLE_CATALOGS)) is not None:
             files.append(_CheckedFile(list(workspace_file.declarations()), policy))
     return files
 
@@ -116,14 +122,14 @@ def _report_undeclared_references(files: list[PackageJson]) -> None:
 def _report_undeclared_reference(reference: Reference) -> None:
     """Report the marker of a dependency its section does not declare, and as redundant where it reads every item."""
     marker = reference.marker
-    _LOG.report_marker(reference, steers_the_update=False)
+    report_marker(reference, _LOG, steers_the_update=False)
     if marker.invalid_item is None and marker.raw:
         _LOG.redundant_directive(reference, marker.raw, Reason.UNDECLARED_DEPENDENCY)
 
 
 def main() -> None:  # pragma: no cover
     """Update the dependencies in the repository's package.json files."""
-    update_package_jsons()
+    _update_package_jsons()
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from mutation_time.mutation import kills
+from update_time.domain.dependency import Project, Release
 from update_time.markers.parser import parse_directives
 from update_time.sources import github
 
@@ -35,6 +36,9 @@ COOLDOWN_30 = parse_directives("set[cooldown=30]")
 # cooldown.
 STALE_DATE = datetime.now(UTC) - timedelta(days=512)
 FRESH_DATE = datetime.now(UTC)
+
+# A project with a stale newest release, as the default staleness threshold judges it.
+STALE_PROJECT = Project(newest=Release("4.15.0", STALE_DATE))
 
 # A publication date past the default cooldown that the default staleness threshold passes over, and a threshold of
 # 90 days does not.

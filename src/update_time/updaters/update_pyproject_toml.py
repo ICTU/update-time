@@ -28,7 +28,7 @@ _POLICIES: dict[uv.Decision, ManagerPolicy[Declaration] | None] = {
 }
 
 
-def update_pyproject_tomls() -> None:
+def _update_pyproject_tomls() -> None:
     """Find the pyproject.toml files, check their pins, and update the pins, and any uv.lock, of each that uv manages.
 
     Where uv cannot lock a workspace's new pins, each pyproject.toml the run rewrote gets back the pins it held before.
@@ -58,7 +58,7 @@ def update_pyproject_tomls() -> None:
 
 def main() -> None:  # pragma: no cover
     """Update the dependencies in the repository's pyproject.toml files."""
-    update_pyproject_tomls()
+    _update_pyproject_tomls()
 
 
 if __name__ == "__main__":  # pragma: no cover

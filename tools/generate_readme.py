@@ -92,7 +92,7 @@ def _file_types_table(dependency_type: DependencyType) -> str:
     return "\n".join(header + rows)
 
 
-def render() -> dict[Path, str]:
+def _render() -> dict[Path, str]:
     """Return the content each generated file should have, keyed by the file it belongs in."""
     STALE_AFTER.set(STALE_AFTER.default)  # Pin the threshold the samples report, whatever the environment holds
     log_output = generate_log_output()
@@ -109,7 +109,7 @@ def render() -> dict[Path, str]:
 
 def main() -> None:
     """Write the generated files, or, given `--check`, report the ones that are out of date without writing any."""
-    write_or_check(render(), _ROOT, "just readme")
+    write_or_check(_render(), _ROOT, "just readme")
 
 
 if __name__ == "__main__":  # pragma: no cover

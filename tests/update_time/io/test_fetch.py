@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from mutation_time.mutation import kills
-from update_time.io.fetch import failure_reason, fetch, fetch_json, next_page_url
+from update_time.io.fetch import _failure_reason, fetch, fetch_json, next_page_url
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.lookup import LookedUp
 
@@ -44,7 +44,7 @@ class FetchTest(LoggingTestCase):
         )
         self.assertIsNone(fetch("https://example.org", _LOG))
         self.assert_logged(
-            message_of(Logger.response), url="https://example.org", status=503, reason="Service Unavailable"
+            message_of(Logger.request_failed), url="https://example.org", failure="HTTP 503 Service Unavailable"
         )
 
     @patch("requests.Session.get")
@@ -60,7 +60,9 @@ class FetchTest(LoggingTestCase):
         """Test that a timeout is logged and reported as None rather than raised."""
         mock_get.side_effect = requests.exceptions.Timeout
         self.assertIsNone(fetch("https://example.org", _LOG))
-        self.assert_logged(message_of(Logger.timeout), url="https://example.org")
+        self.assert_logged(
+            message_of(Logger.request_failed), url="https://example.org", failure="the request timed out"
+        )
 
     @patch("requests.Session.get")
     def test_network_error_is_logged_and_dropped(self, mock_get: Mock):
@@ -68,7 +70,7 @@ class FetchTest(LoggingTestCase):
         error = requests.exceptions.ConnectionError("connection refused")
         mock_get.side_effect = error
         self.assertIsNone(fetch("https://example.org", _LOG))
-        self.assert_logged(message_of(Logger.request_error), url="https://example.org", error=error)
+        self.assert_logged(message_of(Logger.request_failed), url="https://example.org", failure=str(error))
 
 
 class FetchJsonTest(LoggingTestCase):
@@ -91,7 +93,9 @@ class FetchJsonTest(LoggingTestCase):
     def test_a_failed_request_gives_its_reason_and_is_logged_once(self):
         """Test that a request failing at the transport level gives the reason it failed, and logs one warning."""
         self.assertEqual(fetch_json("https://example.org", _LOG), LookedUp(None, "the request failed"))
-        self.assert_logged(message_of(Logger.timeout), url="https://example.org")
+        self.assert_logged(
+            message_of(Logger.request_failed), url="https://example.org", failure="the request timed out"
+        )
 
     @patch_get(ok=False, status_code=503, url="https://example.org", reason="Service Unavailable")
     def test_a_refused_request_gives_its_status_and_is_logged_once(self):
@@ -101,7 +105,7 @@ class FetchJsonTest(LoggingTestCase):
             LookedUp(None, "HTTP 503"),
         )
         self.assert_logged(
-            message_of(Logger.response), url="https://example.org", status=503, reason="Service Unavailable"
+            message_of(Logger.request_failed), url="https://example.org", failure="HTTP 503 Service Unavailable"
         )
 
     @patch_get(ok=False, status_code=404)
@@ -124,7 +128,7 @@ class FailureReasonTest(unittest.TestCase):
     """Unit tests for the reason a failed request is reported with."""
 
     @kills.replace(
-        failure_reason,
+        _failure_reason,
         'message = body.get("message", "") if isinstance(body, dict) else ""',
         'message = (body or {}).get("message", "")',
         "an error body that is a JSON list or string ends the run",
@@ -132,17 +136,17 @@ class FailureReasonTest(unittest.TestCase):
     )
     def test_a_json_body_other_than_an_object_gives_the_status_alone(self):
         """Test that a JSON body that is a list rather than an object gives the status code alone."""
-        self.assertEqual(failure_reason(mock_response(["x"], ok=False, status_code=429)), "HTTP 429")
+        self.assertEqual(_failure_reason(mock_response(["x"], ok=False, status_code=429)), "HTTP 429")
 
     @kills.delete(
-        failure_reason,
+        _failure_reason,
         "ValueError",
         "an error body that is not JSON ends the run",
         raises="requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
     )
     def test_a_body_that_is_not_json_gives_the_status_alone(self):
         """Test that a body that is not JSON, such as plain text, gives the status code alone."""
-        self.assertEqual(failure_reason(unparsable_response(ok=False, status_code=429)), "HTTP 429")
+        self.assertEqual(_failure_reason(unparsable_response(ok=False, status_code=429)), "HTTP 429")
 
 
 class NextPageUrlTest(unittest.TestCase):

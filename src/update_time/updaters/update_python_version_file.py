@@ -11,7 +11,7 @@ from update_time.domain.bound import Verb, VersionBound, joint_bound
 from update_time.domain.file_type import PYTHON_VERSION_FILE
 from update_time.domain.marker import Scope
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger
+from update_time.io.log import FileContent, get_logger
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_version import PYTHON, PYTHON_VERSION_REFERENCE
 from update_time.package_managers.uv import uv
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 _LOG = get_logger("python version file")
 
 
-def update_python_version_files() -> None:
+def _update_python_version_files() -> None:
     """Update the CPython version in all `.python-version` files found recursively from the start directory."""
     for version_file in glob_for(PYTHON_VERSION_FILE):
         requires_pythons = _requires_pythons(version_file.parent)
@@ -60,7 +60,7 @@ def _requires_python(pyproject_toml: Path) -> Reference | None:
     try:
         requires_python = PyprojectToml(pyproject_toml).requires_python()
     except (OSError, UnicodeDecodeError) as error:
-        _LOG.unreadable_requires_python(pyproject_toml, error)
+        _LOG.unreadable_file(pyproject_toml, error, FileContent.REQUIRES_PYTHON)
         return None
     if requires_python is None:
         return None
@@ -110,7 +110,7 @@ def _tag_getter(requires_python_bound: VersionBound) -> NewVersionGetter:
 
 def main() -> None:  # pragma: no cover
     """Update the CPython version in the repository's `.python-version` files."""
-    update_python_version_files()
+    _update_python_version_files()
 
 
 if __name__ == "__main__":  # pragma: no cover
