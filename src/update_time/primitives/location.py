@@ -22,13 +22,6 @@ class Location:
         relative = self.relative()
         return f"{relative}:{self.line_number}" if self.line_number is not None else str(relative)
 
-    def is_on_the_same_line_as(self, other: Location) -> bool:
-        """Return whether this location sits on the same line of the same file as the other one.
-
-        The comparison leaves the columns out.
-        """
-        return (self.path, self.line_number) == (other.path, other.line_number)
-
     def relative(self) -> Path:
         """Return the path relative to the working directory, walking up with `..` to a path outside it.
 
@@ -39,3 +32,10 @@ class Location:
         if self.path.is_absolute() and (cwd == Path(cwd.anchor) or self.path.parts[:2] == cwd.parts[:2]):
             return self.path.relative_to(cwd, walk_up=True)
         return self.path
+
+    def is_on_the_same_line_as(self, other: Location) -> bool:
+        """Return whether this location sits on the same line of the same file as the other one.
+
+        The comparison leaves the columns out.
+        """
+        return (self.path, self.line_number) == (other.path, other.line_number)

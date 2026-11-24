@@ -9,26 +9,28 @@ import subprocess  # nosec
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, cast
+from typing import IO, TYPE_CHECKING, Final, cast
 from urllib.parse import unquote, urlparse
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterator
+
+    from update_time.formats.json import JSON
 
 # The roots holding this repository's Python, which is where one of its own names is used.
-_ROOTS = ("src", "tests", "tools")
+_ROOTS: Final[tuple[str, ...]] = ("src", "tests", "tools")
 
 # A module under this root takes its import path from below it, so `src/update_time/io/log.py` is `update_time.io.log`.
-_SOURCE_ROOT = "src"
+_SOURCE_ROOT: Final[str] = "src"
 
 # The language server that finds the usages, run from the project's environment.
-_SERVER = ("uv", "run", "--quiet", "--no-sync", "ty", "server")
+_SERVER: Final[tuple[str, ...]] = ("uv", "run", "--quiet", "--no-sync", "ty", "server")
 
 # What the report exits with when it could not be made, so the recipe that runs it stops.
-_FAILED = 1
+_FAILED: Final[int] = 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Position:
     """A place in a file, as the language server counts it: the line and the column, both from zero."""
 
@@ -52,11 +54,6 @@ def _module(path: Path) -> str:
     return ".".join(parts[1:] if parts[0] == _SOURCE_ROOT else parts)
 
 
-def _definitions(files: Iterable[Path]) -> dict[str, _Position]:
-    """Return the position of each name the files define, by its qualified name."""
-    return {name: position for file in files for name, position in _defined_in(file).items()}
-
-
 def _defined_in(file: Path) -> dict[str, _Position]:
     """Return the position of each name the file defines: where its definition writes it."""
     source, module = file.read_text(), _module(file)
@@ -69,10 +66,11 @@ def _named(nodes: list[ast.stmt], prefix: str, path: Path, lines: list[str]) -> 
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             line = node.lineno - 1
-            yield f"{prefix}{node.name}", _Position(path, line, lines[line].index(node.name, node.col_offset))
+            column = lines[line].index(node.name, node.col_offset)
+            yield f"{prefix}{node.name}", _Position(path=path, line=line, column=column)
         for target in _targets(node):
             for name in _assigned_names(target):
-                yield f"{prefix}{name.id}", _Position(path, name.lineno - 1, name.col_offset)
+                yield f"{prefix}{name.id}", _Position(path=path, line=name.lineno - 1, column=name.col_offset)
         if isinstance(node, ast.ClassDef):
             yield from _named(node.body, f"{prefix}{node.name}.", path, lines)
         if isinstance(node, ast.FunctionDef) and node.name == "__init__":
@@ -84,8 +82,9 @@ def _instance_attributes(init: ast.FunctionDef, prefix: str, path: Path) -> Iter
     for node in ast.walk(init):
         for target in _targets(node):
             if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                line = cast("int", target.end_lineno) - 1
                 column = cast("int", target.end_col_offset) - len(target.attr)
-                yield f"{prefix}{target.attr}", _Position(path, cast("int", target.end_lineno) - 1, column)
+                yield f"{prefix}{target.attr}", _Position(path=path, line=line, column=column)
 
 
 def _targets(node: ast.AST) -> list[ast.expr]:
@@ -118,7 +117,7 @@ class _Client:
         """Talk to the server through its input and output."""
         self._input, self._output, self._last_id = server_input, server_output, 0
 
-    def request(self, method: str, params: dict | None = None) -> object:
+    def request(self, method: str, params: dict | None = None) -> JSON:
         """Send the request and return the result the server answers it with."""
         self._last_id += 1
         self._send({"id": self._last_id, "method": method}, params)
@@ -130,10 +129,6 @@ class _Client:
             complaint = f"the language server answered {method} with an error: {reason}"
             raise _LanguageServerError(complaint)
         return message.get("result")
-
-    def notify(self, method: str, params: dict | None = None) -> None:
-        """Send the notification, which the server answers with nothing."""
-        self._send({"method": method}, params)
 
     def _send(self, message: dict, params: dict | None = None) -> None:
         """Write the message with its params, if the method takes any, framed by the header giving its length."""
@@ -151,6 +146,10 @@ class _Client:
             complaint = "the language server stopped answering"
             raise _LanguageServerError(complaint)
         return json.loads(self._output.read(length))
+
+    def notify(self, method: str, params: dict | None = None) -> None:
+        """Send the notification, which the server answers with nothing."""
+        self._send({"method": method}, params)
 
 
 def _usages(definition: _Position) -> list[_Position]:
@@ -187,14 +186,7 @@ def _position(root: Path, location: dict) -> _Position:
     """Return the position of a location the server answers with, its file relative to the root."""
     path = Path(unquote(urlparse(location["uri"]).path)).relative_to(root)
     start = location["range"]["start"]
-    return _Position(path, start["line"], start["character"])
-
-
-def _matches(name: str, definitions: dict[str, _Position]) -> list[str]:
-    """Return the qualified names the name stands for: itself where it is one, else each qualified name it ends."""
-    if name in definitions:
-        return [name]
-    return [qualified for qualified in definitions if qualified.endswith(f".{name}")]
+    return _Position(path=path, line=start["line"], column=start["character"])
 
 
 def _report(message: str) -> None:
@@ -206,9 +198,11 @@ def main() -> int:
     """Report where the name given on the command line is used, and how many usages there are."""
     name, files = sys.argv[1], _python_files()
     sources = {str(file): file for file in files}
-    lines = []
-    definitions = _definitions(files)
-    match _matches(name, definitions):
+    definitions = {name: position for file in files for name, position in _defined_in(file).items()}
+    matches = (
+        [name] if name in definitions else [qualified for qualified in definitions if qualified.endswith(f".{name}")]
+    )
+    match matches:
         case []:
             _report(f"nothing defines {name}; check the spelling")
             return _FAILED
@@ -222,12 +216,13 @@ def main() -> int:
     except _LanguageServerError as error:
         _report(str(error))
         return _FAILED
+    lines = []
     for usage in usages:
         text = sources[str(usage.path)].read_text().splitlines()[usage.line].strip()
         lines.append(f"{usage.path}:{usage.line + 1}: {text}")
-    sys.stdout.write("\n".join([*lines, f"usages: {len(lines)}"]) + "\n")
+    sys.stdout.write(f"{'\n'.join([*lines, f'usages: {len(lines)}'])}\n")
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

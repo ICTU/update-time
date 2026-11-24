@@ -15,89 +15,24 @@ from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
 from update_time.domain.reference import Reference
-from update_time.formats import toml
-from update_time.manifests import pyproject_config
+from update_time.formats.toml import dumps, is_string, nested_array, parse_document, string
 from update_time.markers.parser import parse_marker
 from update_time.primitives.line import Line, located_lines
 from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
+
+from .pyproject_config import from_table
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from update_time.domain.dependency import VersionString
-    from update_time.manifests.pyproject_config import PyprojectConfig
+
+    from .pyproject_config import PyprojectConfig
 
 
 type _DeclarationPosition = int
-
-
-class _Rewrite(NamedTuple):
-    """The file's text with specs replaced, and the config of the TOML whose specs were replaced."""
-
-    text: str
-    config: PyprojectConfig
-
-
-def _placeholder(position: _DeclarationPosition) -> str:
-    """Return the text put in a spec's place to find the line declaring it, distinct from every other spec's.
-
-    The position is wrapped rather than appended, so one placeholder is never the start of another.
-    """
-    return f"update-time-spec-{position}-update-time-spec"
-
-
-@dataclass(frozen=True, kw_only=True)
-class Declaration(Reference):
-    """A dependency a file declares, and where the file says its release comes from.
-
-    `uv_sourced` says the file names this dependency in its `[tool.uv] sources` table, so uv resolves it from a
-    path, a workspace member, a git repository, or an index of its own. `direct_url` says the declaration points
-    at a URL or a git repository rather than at a release. `build_requirement` says the declaration sits in the
-    `[build-system] requires` array, which uv does not lock. `environment_marker` is the condition after the `;`,
-    such as `python_version < "3.13"`, or the empty string where the declaration has none.
-    `position` says which spec of the file this declaration is, counting from one.
-    """
-
-    uv_sourced: bool
-    direct_url: bool
-    build_requirement: bool
-    environment_marker: str
-    position: _DeclarationPosition
-
-    @property
-    def pins_a_version(self) -> bool:
-        """Return whether the declaration pins an exact version, so a check about that version has one to run on."""
-        return bool(self.current_version)
-
-    @property
-    def names_a_release(self) -> bool:
-        """Return whether the declaration points at a release of the package it names."""
-        return not (self.direct_url or self.uv_sourced)
-
-    @property
-    def narrowable(self) -> bool:
-        """Return whether Update-time narrows the requirement uv locks for the declaration by its marker's bound."""
-        return self.unnarrowable_reason is None
-
-    @property
-    def unnarrowable_reason(self) -> Reason | None:
-        """Return why Update-time does not narrow the requirement uv locks for the declaration, if it does not."""
-        if self.build_requirement:
-            return Reason.BUILD_REQUIREMENT_NOT_LOCKED
-        if self.direct_url:
-            return Reason.URL_RATHER_THAN_VERSION
-        if not self.pins_a_version:
-            return None
-        if self.environment_marker:
-            return Reason.ENVIRONMENT_MARKER_PIN_KEPT
-        return None if self.updatable else Reason.BOUND_ON_A_HELD_BACK_UPDATE
-
-    @property
-    def updatable(self) -> bool:
-        """Return whether the declaration's own marker leaves the version it pins to be updated."""
-        return not self.marker.ignores(Scope.UPDATE)
 
 
 @dataclass(frozen=True)
@@ -109,6 +44,11 @@ class PythonDependencyToml:
 
     path: Path
 
+    def write_if_changed(self, contents: str) -> None:
+        """Write the contents to the file, where it holds other contents."""
+        if self.read() != contents:
+            self.write(contents)
+
     def read(self) -> str:
         """Return the file's contents."""
         return self.path.read_text()
@@ -116,19 +56,6 @@ class PythonDependencyToml:
     def write(self, contents: str) -> None:
         """Write the contents to the file."""
         self.path.write_text(contents)
-
-    def write_if_changed(self, contents: str) -> None:
-        """Write the contents to the file, where it holds other contents."""
-        if self.read() != contents:
-            self.write(contents)
-
-    def toml(self, contents: str) -> str:
-        """Return the TOML the contents declare the dependencies in."""
-        raise NotImplementedError
-
-    def with_toml(self, contents: str, /, toml_text: str) -> str:
-        """Return the contents with the TOML declaring the dependencies replaced."""
-        raise NotImplementedError
 
     def declarations(self) -> list[Declaration]:
         """Return every dependency the file declares, each parsed once and located and marked at the line declaring it.
@@ -172,6 +99,41 @@ class PythonDependencyToml:
             for position, requirement in requirements.items()
         ]
 
+    def _replaced_specs(
+        self, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]
+    ) -> _Rewrite | None:
+        """Return the file's text with each declared spec `replace` gives a replacement for, or None when it gives none.
+
+        Every call walks the arrays in the same order, so a spec has the same position in each of them.
+
+        Only the specs in the dependency arrays change. A string spelled like a spec elsewhere in the file, and the
+        comments, quoting, and whitespace around the specs, come back as they were. A file that is not valid TOML, or
+        not well formed, comes back as None as well, so one malformed file does not abort the run.
+        """
+        document = parse_document(self.toml(contents))
+        if document is None or (config := from_table(document)) is None:
+            return None
+        replaced = False
+        position = 0
+        for dependency_array in config.dependency_arrays:
+            array = nested_array(document, *dependency_array.keys)
+            for index, spec in enumerate(array):
+                if not is_string(spec):
+                    continue
+                position += 1
+                if (new_spec := replace(position, spec)) is not None:
+                    array[index] = string(new_spec, quoted_as=spec)
+                    replaced = True
+        return _Rewrite(self.with_toml(contents, dumps(document)), config) if replaced else None
+
+    def with_toml(self, contents: str, /, toml_text: str) -> str:
+        """Return the contents with the TOML declaring the dependencies replaced."""
+        raise NotImplementedError
+
+    def toml(self, contents: str) -> str:
+        """Return the TOML the contents declare the dependencies in."""
+        raise NotImplementedError
+
     def with_pinned_versions(self, contents: str, versions: Mapping[Declaration, VersionString]) -> str:
         """Return the contents with the exact pin of each declaration rewritten to the version `versions` holds for it.
 
@@ -207,43 +169,13 @@ class PythonDependencyToml:
 
         return contents if (rewrite := self._replaced_specs(contents, new_spec)) is None else rewrite.text
 
-    def _replaced_specs(
-        self, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]
-    ) -> _Rewrite | None:
-        """Return the file's text with each declared spec `replace` gives a replacement for, or None when it gives none.
 
-        Every call walks the arrays in the same order, so a spec has the same position in each of them.
+def _placeholder(position: _DeclarationPosition) -> str:
+    """Return the text put in a spec's place to find the line declaring it, distinct from every other spec's.
 
-        Only the specs in the dependency arrays change. A string spelled like a spec elsewhere in the file, and the
-        comments, quoting, and whitespace around the specs, come back as they were. A file that is not valid TOML, or
-        not well formed, comes back as None as well, so one malformed file does not abort the run.
-        """
-        document = toml.parse_document(self.toml(contents))
-        if document is None or (config := pyproject_config.from_table(document)) is None:
-            return None
-        replaced = False
-        position = 0
-        for dependency_array in config.dependency_arrays:
-            array = toml.nested_array(document, *dependency_array.keys)
-            for index, spec in enumerate(array):
-                if not toml.is_string(spec):
-                    continue
-                position += 1
-                if (new_spec := replace(position, spec)) is not None:
-                    array[index] = toml.string(new_spec, quoted_as=spec)
-                    replaced = True
-        return _Rewrite(self.with_toml(contents, toml.dumps(document)), config) if replaced else None
-
-
-def _marker(lines: list[Line], position: _DeclarationPosition, location: Location) -> Marker:
-    """Return the marker steering the declaration at the position, read from the line holding its placeholder.
-
-    The lines are the TOML's rather than the file's, so a marker inside a `# /// script` block is read without the
-    `#` that comments the block out. They are located from the TOML's own start, so the declaration's location
-    replaces the one its line was given.
+    The position is wrapped rather than appended, so one placeholder is never the start of another.
     """
-    line = next(line for line in lines if _placeholder(position) in line.text)
-    return parse_marker(replace(line, location=location))
+    return f"update-time-spec-{position}-update-time-spec"
 
 
 def _requirement(spec: str) -> Requirement | None:
@@ -258,6 +190,58 @@ def _requirement(spec: str) -> Requirement | None:
         return None
 
 
+@dataclass(frozen=True, kw_only=True)
+class Declaration(Reference):
+    """A dependency a file declares, and where the file says its release comes from.
+
+    `uv_sourced` says the file names this dependency in its `[tool.uv] sources` table, so uv resolves it from a
+    path, a workspace member, a git repository, or an index of its own. `direct_url` says the declaration points
+    at a URL or a git repository rather than at a release. `build_requirement` says the declaration sits in the
+    `[build-system] requires` array, which uv does not lock. `environment_marker` is the condition after the `;`,
+    such as `python_version < "3.13"`, or the empty string where the declaration has none.
+    `position` says which spec of the file this declaration is, counting from one.
+    """
+
+    uv_sourced: bool
+    direct_url: bool
+    build_requirement: bool
+    environment_marker: str
+    position: _DeclarationPosition
+
+    @property
+    def names_a_release(self) -> bool:
+        """Return whether the declaration points at a release of the package it names."""
+        return not (self.direct_url or self.uv_sourced)
+
+    @property
+    def narrowable(self) -> bool:
+        """Return whether Update-time narrows the requirement uv locks for the declaration by its marker's bound."""
+        return self.unnarrowable_reason is None
+
+    @property
+    def unnarrowable_reason(self) -> Reason | None:
+        """Return why Update-time does not narrow the requirement uv locks for the declaration, if it does not."""
+        if self.build_requirement:
+            return Reason.BUILD_REQUIREMENT_NOT_LOCKED
+        if self.direct_url:
+            return Reason.URL_RATHER_THAN_VERSION
+        if not self.pins_a_version:
+            return None
+        if self.environment_marker:
+            return Reason.ENVIRONMENT_MARKER_PIN_KEPT
+        return None if self.updatable else Reason.BOUND_ON_A_HELD_BACK_UPDATE
+
+    @property
+    def pins_a_version(self) -> bool:
+        """Return whether the declaration pins an exact version, so a check about that version has one to run on."""
+        return bool(self.current_version)
+
+    @property
+    def updatable(self) -> bool:
+        """Return whether the declaration's own marker leaves the version it pins to be updated."""
+        return not self.marker.ignores(Scope.UPDATE)
+
+
 def _pinned_version(requirement: Requirement) -> VersionString:
     """Return the version the requirement pins exactly, or the empty string when it pins none.
 
@@ -270,6 +254,23 @@ def _pinned_version(requirement: Requirement) -> VersionString:
     if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):
         return specifiers[0].version
     return ""
+
+
+def _marker(lines: list[Line], position: _DeclarationPosition, location: Location) -> Marker:
+    """Return the marker steering the declaration at the position, read from the line holding its placeholder.
+
+    The lines are the TOML's rather than the file's, so a marker inside a `# /// script` block is read without the
+    `#` that comments the block out. They are located from the TOML's own start, so the declaration's location
+    replaces the one its line was given.
+    """
+    return parse_marker(replace(next(line for line in lines if _placeholder(position) in line.text), location=location))
+
+
+class _Rewrite(NamedTuple):
+    """The file's text with specs replaced, and the config of the TOML whose specs were replaced."""
+
+    text: str
+    config: PyprojectConfig
 
 
 def _rewritten_spec(spec: str, declaration: Declaration, new_version: VersionString) -> str:

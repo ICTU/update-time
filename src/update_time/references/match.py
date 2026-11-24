@@ -20,11 +20,6 @@ if TYPE_CHECKING:
     from update_time.primitives.location import Location
 
 
-def _matched_dependency(match: re.Match[str], dependency: str = "") -> str:
-    """Return the dependency the match captured in its `dependency` group, or `dependency` when it captures none."""
-    return dependency or match.group("dependency")
-
-
 def matched_reference(
     match: re.Match[str], location: Location, dependency: str = "", *, marker: Marker = NO_MARKER
 ) -> Reference:
@@ -33,7 +28,7 @@ def matched_reference(
     The reference carries the marker steering it, or one that holds nothing back where the caller reads none.
     """
     return Reference(
-        _matched_dependency(match, dependency),
+        dependency or match.group("dependency"),
         match.group("version"),
         location,
         match.groupdict().get("sha") or "",

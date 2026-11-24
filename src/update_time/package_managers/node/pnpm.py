@@ -2,30 +2,33 @@
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
+from update_time.io.filesystem import nearest_path
 from update_time.io.process import run
 from update_time.lock_files.locked_versions import ROOT_PROJECT, listed_versions
 from update_time.manifests.catalogs_yaml import CatalogsYaml
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS
-from update_time.package_managers.node.package_manager import (
+from update_time.primitives.command import Command
+from update_time.primitives.timestamp import MINUTES_PER_DAY
+
+from .package_manager import (
     ConfiguredCooldown,
     CooldownArguments,
+    ManagerCooldown,
     PackageManager,
     catalogs_of,
 )
-from update_time.primitives.command import Command
-from update_time.primitives.timestamp import MINUTES_PER_DAY
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, VersionString
     from update_time.lock_files.locked_versions import LockedVersions
 
 
-_PNPM_LIST = Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only")
+_PNPM_LIST: Final[Command] = Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only")
 
 # The file that marks the root of a pnpm workspace.
-_PNPM_WORKSPACE_FILE = "pnpm-workspace.yaml"
+_PNPM_WORKSPACE_FILE: Final[str] = "pnpm-workspace.yaml"
 
 
 def _pnpm_locked_versions(directory: Path) -> LockedVersions:
@@ -52,11 +55,10 @@ def _pnpm_workspace_root(directory: Path) -> Path:
 
     pnpm locks a project outside a workspace in the project's own directory.
     """
-    roots = (ancestor for ancestor in (directory, *directory.parents) if (ancestor / _PNPM_WORKSPACE_FILE).exists())
-    return next(roots, directory)
+    return root.parent if (root := nearest_path(directory, _PNPM_WORKSPACE_FILE)) else directory
 
 
-PNPM = PackageManager(
+PNPM: Final[PackageManager] = PackageManager(
     name="pnpm",
     # `-r` updates every project of the workspace, and rewrites the ranges of its catalogs, from the root. Deliberately
     # without `--latest`, which would cross the version ranges declared in package.json; without it, pnpm stays within
@@ -66,12 +68,14 @@ PNPM = PackageManager(
     lock_files=("pnpm-lock.yaml",),
     binary_lock=None,
     workspace_file=_PNPM_WORKSPACE_FILE,
-    cooldown_setting=ConfiguredCooldown(
-        Command("pnpm", "config", "get"),
-        keys=("minimumReleaseAge",),
-        unset="undefined",  # Rather than pnpm's built-in default
-    ).setting,
-    cooldown_arguments=lambda days: CooldownArguments((f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",)),
+    cooldown=ManagerCooldown(
+        setting=ConfiguredCooldown(
+            Command("pnpm", "config", "get"),
+            keys=("minimumReleaseAge",),
+            unset="undefined",  # Rather than pnpm's built-in default
+        ).setting,
+        arguments=lambda days: CooldownArguments((f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",)),
+    ),
     locked_versions=_pnpm_locked_versions,
     catalogs=lambda root: catalogs_of(CatalogsYaml.readable(root / _PNPM_WORKSPACE_FILE)),
 )

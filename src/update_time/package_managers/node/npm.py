@@ -2,19 +2,25 @@
 
 import posixpath
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.io.process import run
 from update_time.lock_files.locked_versions import ROOT_PROJECT, listed_versions
-from update_time.package_managers.node.package_manager import ConfiguredCooldown, CooldownArguments, PackageManager
 from update_time.primitives.command import Command
+
+from .package_manager import (
+    ConfiguredCooldown,
+    CooldownArguments,
+    ManagerCooldown,
+    PackageManager,
+)
 
 if TYPE_CHECKING:
     from update_time.lock_files.locked_versions import LockedVersions
 
 
-_COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
-_NPM_LIST = Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS, "--package-lock-only")
+_COMMON_NPM_OPTIONS: Final[tuple[str, ...]] = ("--include=dev", "--silent")
+_NPM_LIST: Final[Command] = Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS, "--package-lock-only")
 
 
 def _npm_locked_versions(directory: Path) -> LockedVersions:
@@ -41,7 +47,7 @@ def _npm_workspace_root(directory: Path) -> Path:
     return Path(reported) if reported else directory
 
 
-NPM = PackageManager(
+NPM: Final[PackageManager] = PackageManager(
     name="npm",
     update=Command("npm", "update", "--save", *_COMMON_NPM_OPTIONS),
     # Inside a workspace member, `npm prefix` reports the workspace root, and the run there updates the member too.
@@ -49,14 +55,17 @@ NPM = PackageManager(
     lock_files=("package-lock.json", "npm-shrinkwrap.json"),  # The first is the one npm writes where neither exists.
     binary_lock=None,
     workspace_file=None,
-    cooldown_setting=ConfiguredCooldown(
-        Command("npm", "config", "get"),
-        # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
-        # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
-        keys=("min-release-age", "before"),
-        unset="null",
-    ).setting,
-    cooldown_arguments=lambda days: CooldownArguments((f"--min-release-age={days}",)),
+    cooldown=ManagerCooldown(
+        setting=ConfiguredCooldown(
+            Command("npm", "config", "get"),
+            # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone
+            # (and `min-release-age` can't be combined with `before`, so a project-level `before` also means we add
+            # nothing).
+            keys=("min-release-age", "before"),
+            unset="null",
+        ).setting,
+        arguments=lambda days: CooldownArguments((f"--min-release-age={days}",)),
+    ),
     locked_versions=_npm_locked_versions,
     catalogs=None,  # npm has no catalogs
 )

@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 from functools import cache
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Final, NotRequired, TypedDict
 
 from update_time.domain.dependency import NO_CHANGES, Changes, Project, ProjectGetter, Release, Yank
 from update_time.domain.source import Source, every_dependency
@@ -11,7 +11,8 @@ from update_time.domain.vulnerability import Ecosystem
 from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
-from update_time.sources.github import (
+
+from .github import (
     GITHUB,
     GitHubRepository,
     changes_from_changelog_file,
@@ -22,20 +23,22 @@ from update_time.sources.github import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-_LOG = get_logger("npmjs")
+    from update_time.io.log import Logger
+
+_LOG: Final[Logger] = get_logger("npmjs")
 
 # The npm registry API's base URL.
-_REGISTRY = "https://registry.npmjs.org"
+_REGISTRY: Final[str] = "https://registry.npmjs.org"
 
 # The npm registry's `time` map carries two bookkeeping entries alongside the per-version publish times.
-_TIME_BOOKKEEPING_KEYS = frozenset({"created", "modified"})
+_TIME_BOOKKEEPING_KEYS: Final[frozenset[str]] = frozenset({"created", "modified"})
 
 
 # Matches `github:` in npm's `github:owner/repo` host shorthand.
-_HOST_SHORTHAND_RE = re.compile(r"^github:")
+_HOST_SHORTHAND_RE: Final[re.Pattern[str]] = re.compile(r"^github:")
 # Matches npm's bare `owner/repo` shorthand in full, e.g. `bower/bower`. A git URL and git's scp-like
 # `git@github.com:owner/repo` never match, since `@` and `:` are outside the character class.
-_BARE_SHORTHAND_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+_BARE_SHORTHAND_RE: Final[re.Pattern[str]] = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
 class _RepositoryJSON(TypedDict):
@@ -67,7 +70,7 @@ def _expanded_shorthand(url: str) -> str:
     return _HOST_SHORTHAND_RE.sub(f"{GITHUB}/", url)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _PackageSource:
     """Where an npm version document says the package's source lives: a GitHub repository, and a directory in it."""
 
@@ -82,13 +85,15 @@ class _PackageSource:
             url, directory = repository.get("url", ""), repository.get("directory", "")
         else:
             url, directory = repository, ""
-        return cls(github_repository(_expanded_shorthand(url) if isinstance(url, str) else ""), directory)
+        return cls(
+            repository=github_repository(_expanded_shorthand(url) if isinstance(url, str) else ""), directory=directory
+        )
 
 
 @cache
 def _get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the package and version, or empty string if it can't be fetched or found."""
-    if (metadata := fetch_json(f"{_REGISTRY}/{package}/{version}", _LOG).value) is None:
+    if (metadata := fetch_json(f"{_REGISTRY}/{package}/{version}", _LOG, body=_VersionJSON).value) is None:
         return NO_CHANGES
     source = _PackageSource.from_metadata(metadata)
     return changes_from_release(source.repository, package, version) or changes_from_changelog_file(
@@ -99,7 +104,7 @@ def _get_changes(package: str, version: str) -> Changes:
 @cache
 def _package_metadata(package: str) -> _PackageJSON | None:
     """Get the npm registry's package document, or None if it can't be read."""
-    return fetch_json(f"{_REGISTRY}/{package}", _LOG).value
+    return fetch_json(f"{_REGISTRY}/{package}", _LOG, body=_PackageJSON).value
 
 
 def _package_metadata_or_empty(package: str) -> _PackageJSON:
@@ -149,7 +154,7 @@ def _newest_release(package: str) -> Release | None:
     )
 
 
-SOURCE = Source(
+SOURCE: Final[Source] = Source(
     project=project,
     yank=deprecation,
     changes=_get_changes,

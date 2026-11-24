@@ -2,9 +2,9 @@
 
 import unittest
 
-from update_time.formats import json as json_format
+from update_time.formats.json import JsonFile, entry_offset
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
 
 class ReadTest(unittest.TestCase):
@@ -14,23 +14,21 @@ class ReadTest(unittest.TestCase):
         """Test that a JSON file is read as its text and the contents parsed from that text."""
         contents = '{"name": "x", "version": "1.0"}'
         path = mock_path(contents)
-        self.assertEqual(
-            json_format.JsonFile.read(path), json_format.JsonFile(path, contents, {"name": "x", "version": "1.0"})
-        )
+        self.assertEqual(JsonFile.read(path), JsonFile(path, contents, {"name": "x", "version": "1.0"}))
 
 
 class EntryOffsetTest(unittest.TestCase):
     """Unit tests for the offset at which a section's own entry for a name starts."""
 
-    @staticmethod
-    def offset(contents: str) -> int | None:
-        """Return where the document's `engines` section declares `node`."""
-        return json_format.entry_offset(contents, "engines", "node")
-
     def test_the_entry_the_section_declares(self):
         """Test that the entry is found where the section declares it."""
         contents = '{\n  "engines": {\n    "node": "18"\n  }\n}\n'
         self.assertEqual(self.offset(contents), contents.index('"node"'))
+
+    @staticmethod
+    def offset(contents: str) -> int | None:
+        """Return where the document's `engines` section declares `node`."""
+        return entry_offset(contents, "engines", "node")
 
     def test_a_section_nested_in_another_one(self):
         """Test that a section of the same name nested in another one is not taken for the section."""

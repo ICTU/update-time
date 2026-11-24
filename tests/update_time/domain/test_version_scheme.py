@@ -3,50 +3,49 @@
 import unittest
 
 from mutation_time.mutation import kills
-from update_time.domain import version_scheme
-from update_time.domain.version_scheme import SEMVER
+from update_time.domain.version_scheme import SEMVER, _semver_order
 
 
 class SemverTest(unittest.TestCase):
     """Unit tests for the semver version scheme."""
 
     @kills.replace(
-        version_scheme._semver_order,
+        _semver_order,
         "int(number) for number",
         "number for number",
         "semver compares release numbers as text, so 1.10 orders below 1.2",
         case="to a higher release",
     )
     @kills.replace(
-        version_scheme._semver_order,
+        _semver_order,
         "return release, (1,)",
         "return release, (0,)",
         "semver orders a release below its own pre-releases",
         case="from a release to its own pre-release",
     )
     @kills.replace(
-        version_scheme._semver_order,
+        _semver_order,
         '(0, int(part), "") if part.isdigit()',
         "(1, 0, part) if part.isdigit()",
         "semver compares numeric pre-release identifiers as text, so beta.11 orders below beta.2",
         case="to a pre-release with a lower number",
     )
     @kills.append(
-        version_scheme._semver_order,
+        _semver_order,
         "else (",
         "-",
         "semver orders an alphanumeric pre-release identifier below a numeric one",
         case="to a numeric identifier from an alphanumeric one",
     )
     @kills.replace(
-        version_scheme._semver_order,
+        _semver_order,
         "is None:\n        return None",
         "is None:\n        return (999,), (1,)",
         "semver orders a version it cannot read above every other version",
         case="from a version that is not semver",
     )
     @kills.replace(
-        version_scheme._semver_order,
+        _semver_order,
         "is None:\n        return None",
         "is None:\n        return (), (1,)",
         "semver orders a version it cannot read below every other version",

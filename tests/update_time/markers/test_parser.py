@@ -6,53 +6,24 @@ import inspect
 import textwrap
 import unittest
 from pathlib import Path
+from typing import Final
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 
 from mutation_time.mutation import kills
 from update_time.domain.bound import NO_BOUND, UpdateLevel, Verb, VersionBound
 from update_time.domain.marker import Marker, Scope, Threshold
-from update_time.markers import parser as parser_module
+from update_time.markers import parser
 from update_time.markers.parser import _parse_bound, parse_directives, parse_marker
 from update_time.primitives.line import Line
 from update_time.primitives.location import Location
 
-from tests.update_time.helpers import bound
+from tests.update_time.domain_objects import bound
 
 # Advisory identifiers, for the tests of the `vulnerable=ID` bracket item. An advisory is known by identifiers of
 # different shapes, and Update-time takes whichever the reader writes.
-_GHSA = "GHSA-2gwj-7jmv-h26r"
-_CVE = "CVE-2022-28346"
-
-
-def _line(text: str, previous_text: str = "") -> Line:
-    """Return the text as a line of a file, with the text of the line above it."""
-    return Line(text, previous_text, Location(Path("file"), 1))
-
-
-def _fields_set(marker: Marker) -> set[str]:
-    """Return the names of the fields the marker sets to something other than their default."""
-    default = Marker()
-    names = (field.name for field in dataclasses.fields(Marker))
-    return {name for name in names if getattr(marker, name) != getattr(default, name)}
-
-
-def _cannot_combine(value: ast.expr) -> bool:
-    """Return whether the expression takes its field from one marker rather than combining both markers' values."""
-    if isinstance(value, ast.IfExp):
-        return True
-    return isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute) and value.func.attr == "merge"
-
-
-def _fields_that_cannot_combine() -> set[str]:
-    """Return the `Marker` fields `merge` takes from one marker rather than combining both markers' values."""
-    tree = ast.parse(textwrap.dedent(inspect.getsource(Marker.merge)))
-    merged = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Marker"
-    )
-    return {keyword.arg for keyword in merged.keywords if keyword.arg and _cannot_combine(keyword.value)}
+_GHSA: Final[str] = "GHSA-2gwj-7jmv-h26r"
+_CVE: Final[str] = "CVE-2022-28346"
 
 
 class ParseMarkerScopeTest(unittest.TestCase):
@@ -121,8 +92,12 @@ class ParseMarkerScopeTest(unittest.TestCase):
         }
         for case, (directive, expected) in cases.items():
             with self.subTest(case=case):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {directive}"))
-                self.assertEqual(marker, expected)
+                self.assertEqual(parse_marker(_line(f"humanize==4.15.0  # update-time: {directive}")), expected)
+
+
+def _line(text: str, previous_text: str = "") -> Line:
+    """Return the text as a line of a file, with the text of the line above it."""
+    return Line(text, previous_text, Location(Path("file"), 1))
 
 
 class ParseMarkerAdvisoryTest(unittest.TestCase):
@@ -169,11 +144,10 @@ class ParseMarkerSetTest(unittest.TestCase):
         }
         for item, expected in cases.items():
             with self.subTest(item=item):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: set[{item}]"))
-                self.assertEqual(marker, expected)
+                self.assertEqual(parse_marker(_line(f"humanize==4.15.0  # update-time: set[{item}]")), expected)
 
     @kills.replace(
-        parser_module,
+        parser,
         r"{_COOLDOWN})=(?P<days>\d+)",
         r"{_COOLDOWN})=?(?P<days>\d*)",
         "a `set` item without a value ends the run",
@@ -181,31 +155,29 @@ class ParseMarkerSetTest(unittest.TestCase):
         case="a key without a value",
     )
     @kills.replace(
-        parser_module,
+        parser,
         "(?P<key>{_STALE_AFTER}|{_COOLDOWN})",
         r"(?P<key>[\w-]+)",
         "a `set` item takes any key, so one naming a scope rather than an option sets a value",
         case="a key naming a scope",
     )
-    @kills.append(
-        parser_module, r"=(?P<days>", r"-?", "a `set` item takes a negative day count", case="a negative day count"
-    )
+    @kills.append(parser, r"=(?P<days>", r"-?", "a `set` item takes a negative day count", case="a negative day count")
     @kills.replace(
-        parser_module._parse_setting_item,
+        parser._parse_setting_item,
         "_SETTING_DAY_COUNT_ITEM.fullmatch(item)",
         "_SETTING_DAY_COUNT_ITEM.match(item)",
         "a `set` item takes a fractional day count, rounded down to the whole days in front of the point",
         case="a fractional day count",
     )
     @kills.replace(
-        parser_module,
+        parser,
         "(?P<level>{'|'.join([*RISK_LEVELS, NO_RISK_LEVEL])})",
         r"(?P<level>\w+)",
         "a `set` item takes any word as a risk level",
         case="a misspelled risk level",
     )
     @kills.replace(
-        parser_module,
+        parser,
         "{_COOLDOWN})=(?P<days>",
         "{_COOLDOWN}).(?P<days>",
         "a `set` item takes a comparison for its `=`, so `cooldown<30` sets a cooldown of 30 days",
@@ -258,6 +230,31 @@ class ParseMarkerPrecedenceTest(unittest.TestCase):
         self.assertEqual(pinned, cannot_combine)
 
 
+def _fields_that_cannot_combine() -> set[str]:
+    """Return the `Marker` fields `merge` takes from one marker rather than combining both markers' values."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(Marker.merge)))
+    merged = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Marker"
+    )
+    return {keyword.arg for keyword in merged.keywords if keyword.arg and _cannot_combine(keyword.value)}
+
+
+def _cannot_combine(value: ast.expr) -> bool:
+    """Return whether the expression takes its field from one marker rather than combining both markers' values."""
+    if isinstance(value, ast.IfExp):
+        return True
+    return isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute) and value.func.attr == "merge"
+
+
+def _fields_set(marker: Marker) -> set[str]:
+    """Return the names of the fields the marker sets to something other than their default."""
+    default = Marker()
+    names = (field.name for field in dataclasses.fields(Marker))
+    return {name for name in names if getattr(marker, name) != getattr(default, name)}
+
+
 class ParseMarkerRawTest(unittest.TestCase):
     """Unit tests that `parse_marker` captures the directive text verbatim."""
 
@@ -273,8 +270,7 @@ class ParseMarkerRawTest(unittest.TestCase):
 
     def test_unrecognised_scope_kept_as_written(self):
         """Test that a typo'd scope is kept as written, so the user is shown the item they actually typed."""
-        marker = parse_marker(_line("image: python:3.12  # update-time: ignore[updaet]"))
-        self.assertEqual(marker.raw, "ignore[updaet]")
+        self.assertEqual(parse_marker(_line("image: python:3.12  # update-time: ignore[updaet]")).raw, "ignore[updaet]")
 
     def test_trailing_reason_left_out(self):
         """Test that free text after the last directive (a reason) is not part of the captured text."""

@@ -6,7 +6,7 @@ jsDelivr doesn't expose it.
 """
 
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, NotRequired, TypedDict
 
 from packaging.version import Version
 
@@ -23,14 +23,18 @@ from update_time.domain.yank import with_yank_state
 from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import LookedUp
-from update_time.sources.npmjs import deprecation, get_publication_datetime
+
+from .npmjs import deprecation, get_publication_datetime
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter, VersionBound
+    from update_time.io.log import Logger
 
-_LOG = get_logger("jsdelivr")
-_HEADERS = {"User-Agent": "Update-time dependency update tool (https://github.com/ICTU/update-time)"}
-_JSDELIVR_PACKAGE_API = "https://data.jsdelivr.com/v1/packages/npm"
+_LOG: Final[Logger] = get_logger("jsdelivr")
+_HEADERS: Final[dict[str, str]] = {
+    "User-Agent": "Update-time dependency update tool (https://github.com/ICTU/update-time)"
+}
+_JSDELIVR_PACKAGE_API: Final[str] = "https://data.jsdelivr.com/v1/packages/npm"
 
 
 def version_getter(filename: str) -> NewVersionGetter:
@@ -68,6 +72,26 @@ def version_getter(filename: str) -> NewVersionGetter:
     return get_latest_version
 
 
+def _candidate_versions(pinned: PinnedDependency, version_bound: VersionBound) -> list[Version]:
+    """Return the stable versions newer than the pinned one that the bound admits (`first_eligible` orders them)."""
+    url = f"{_JSDELIVR_PACKAGE_API}/{pinned.name}"
+    if (listing := fetch_json(url, _LOG, body=_PackageListingJSON, headers=_HEADERS).value) is None:
+        return []
+    current_version = Version(pinned.version)
+    versions = [Version(entry["version"]) for entry in listing.get("versions", []) if is_valid(entry["version"])]
+    return [
+        version
+        for version in versions
+        if version > current_version and not version.is_prerelease and version_bound.keeps(version, pinned.version)
+    ]
+
+
+class _PackageListingJSON(TypedDict):
+    """jsDelivr's listing of an npm package: the versions it serves."""
+
+    versions: NotRequired[list[_ListedVersionJSON]]
+
+
 def _eligible_version(
     pinned: PinnedDependency, version: Version, filename: str, walk: CooldownWalk
 ) -> DependencyVersion | None:
@@ -90,19 +114,6 @@ def _eligible_version(
     return DependencyVersion(version=pinned.version)
 
 
-def _candidate_versions(pinned: PinnedDependency, version_bound: VersionBound) -> list[Version]:
-    """Return the stable versions newer than the pinned one that the bound admits (`first_eligible` orders them)."""
-    if (listing := fetch_json(f"{_JSDELIVR_PACKAGE_API}/{pinned.name}", _LOG, headers=_HEADERS).value) is None:
-        return []
-    current_version = Version(pinned.version)
-    versions = [Version(entry["version"]) for entry in listing.get("versions", []) if is_valid(entry["version"])]
-    return [
-        version
-        for version in versions
-        if version > current_version and not version.is_prerelease and version_bound.keeps(version, pinned.version)
-    ]
-
-
 def integrity_hash(dependency: DependencyName, version: VersionString, filename: str) -> str:
     """Return the Subresource Integrity hash of the referenced file at the version, or "" if it can't be read.
 
@@ -110,7 +121,26 @@ def integrity_hash(dependency: DependencyName, version: VersionString, filename:
     not always list as a hashable file). An empty string signals the caller to leave the reference unchanged.
     """
     url = f"{_JSDELIVR_PACKAGE_API}/{dependency}@{version}?structure=flat"
-    if (listing := fetch_json(url, _LOG, headers=_HEADERS).value) is None:
+    if (listing := fetch_json(url, _LOG, body=_FileListingJSON, headers=_HEADERS).value) is None:
         return ""
     hashes = {entry["name"]: entry["hash"] for entry in listing["files"]}
     return f"sha256-{hashes[filename]}" if filename in hashes else ""
+
+
+class _FileListingJSON(TypedDict):
+    """jsDelivr's flat listing of the files in a version of an npm package."""
+
+    files: list[_ListedFileJSON]
+
+
+class _ListedVersionJSON(TypedDict):
+    """A version in jsDelivr's listing of an npm package."""
+
+    version: str
+
+
+class _ListedFileJSON(TypedDict):
+    """A file in jsDelivr's flat listing: its path, and the base64 of its SHA-256 hash."""
+
+    name: str
+    hash: str

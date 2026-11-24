@@ -6,32 +6,35 @@ from unittest.mock import ANY, Mock, patch
 
 from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
-from update_time.formats import toml
+from update_time.formats.toml import read
 from update_time.io.log import Logger
 from update_time.manifests import pyproject_config
 from update_time.manifests.pyproject_config import UvWorkspace
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers.uv import uv
 from update_time.package_managers.uv.uv import (
+    _ordered_workspaces,
+    _path_sourced_projects,
+    _path_sourced_roots,
     _workspace_root,
     _workspace_table,
+    by_workspace,
     configure_cooldown,
     pypi_served,
+    settings_hold_exclude_newer,
 )
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 
-from tests.helpers import FakeFiles, mock_path, patch_environ
-from tests.update_time.helpers import (
-    SCAN_ROOT,
-    SUBPROCESS_RUN_OPTIONS,
-    LoggingTestCase,
-    declaration,
-    message_of,
-    pyproject,
-    uv_path_source,
-)
-from tests.update_time.package_managers.helpers import (
+from tests.environment import patch_environ
+from tests.file_mocks import FakeFiles, mock_path
+from tests.process_mocks import SUBPROCESS_RUN_OPTIONS
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.domain_objects import declaration
+from tests.update_time.fixtures import SCAN_ROOT
+from tests.update_time.io.log_messages import message_of
+from tests.update_time.manifests.manifest_contents import pyproject, uv_path_source
+from tests.update_time.package_managers.uv_settings import (
     CONFIGURED_EXCLUDE_NEWER,
     MANAGED_BY_COMMENT,
     UNREADABLE_SETTINGS,
@@ -39,13 +42,21 @@ from tests.update_time.package_managers.helpers import (
 )
 
 
-def _managed(cooldown: str) -> str:
-    """Return a `[tool.uv] exclude-newer` block with the given cooldown, carrying the managed-by comment."""
-    return f'\n[tool.uv]\nexclude-newer = "{cooldown}" # {MANAGED_BY_COMMENT}\n'
-
-
 class ConfigureCooldownTest(UvSettingsTestCase):
     """Unit tests for writing the cooldown into a single pyproject.toml, with the file I/O mocked."""
+
+    @kills.replace(
+        uv.configure_cooldown,
+        'remove this comment to set exclude-newer yourself"',
+        'remove this comment to prevent Update-time from changing it"',
+        "the managed-by comment does not name the setting it hands over",
+    )
+    def test_writes_when_absent(self):
+        """Test that the cooldown is written, with the managed-by comment, when the project configures none."""
+        written = self.configure(pyproject("a==1.0")).write_text.call_args.args[0]
+        self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
+        self.assertIn(MANAGED_BY_COMMENT, written)
+        self.assert_logged(message_of(Logger.configured_uv_cooldown), cooldown=f"{COOLDOWN.default} days", location=ANY)
 
     def configure(self, contents: str) -> Mock:
         """Run `configure_cooldown` on a mock pyproject.toml with the contents and return the mock."""
@@ -53,29 +64,14 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         configure_cooldown(pyproject_toml)
         return pyproject_toml
 
-    @kills.replace(
-        uv,
-        'remove this comment to set exclude-newer yourself"',
-        'remove this comment to prevent Update-time from changing it"',
-        "the managed-by comment does not name the setting it hands over",
-    )
-    def test_writes_when_absent(self):
-        """Test that the cooldown is written, with the managed-by comment, when the project configures none."""
-        pyproject_toml = self.configure(pyproject("a==1.0"))
-        written = pyproject_toml.write_text.call_args.args[0]
-        self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
-        self.assertIn(MANAGED_BY_COMMENT, written)
-        self.assert_logged(message_of(Logger.configured_uv_cooldown), cooldown=f"{COOLDOWN.default} days", location=ANY)
-
     def test_creates_tool_uv_section_when_absent(self):
         """Test that a `[tool.uv]` section is created when the pyproject.toml has none at all."""
-        pyproject_toml = self.configure(pyproject("a==1.0"))
-        self.assertIn("[tool.uv]", pyproject_toml.write_text.call_args.args[0])
+        self.assertIn("[tool.uv]", self.configure(pyproject("a==1.0")).write_text.call_args.args[0])
 
     def test_preserves_other_tool_uv_keys(self):
         """Test that writing exclude-newer preserves an existing exclude-newer-package table."""
         pyproject_toml = self.configure(
-            pyproject("a==1.0") + "\n[tool.uv]\nexclude-newer-package = { msgpack = false }\n"
+            f"{pyproject('a==1.0')}\n[tool.uv]\nexclude-newer-package = {{ msgpack = false }}\n"
         )
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn("exclude-newer-package = { msgpack = false }", written)
@@ -88,8 +84,7 @@ class ConfigureCooldownTest(UvSettingsTestCase):
     )
     def test_warns_about_a_file_whose_tool_tables_cannot_hold_the_cooldown(self):
         """Test that a pyproject.toml whose `tool` is not a table is warned about, and neither written nor logged."""
-        pyproject_toml = self.configure('tool = "x"\n' + pyproject("a==1.0"))
-        pyproject_toml.write_text.assert_not_called()
+        self.configure(f'tool = "x"\n{pyproject("a==1.0")}').write_text.assert_not_called()
         self.assert_logged(message_of(Logger.uv_cooldown_not_set), location=ANY)
 
     @kills.replace(
@@ -101,13 +96,13 @@ class ConfigureCooldownTest(UvSettingsTestCase):
     )
     def test_leaves_a_user_value_untouched(self):
         """Test that an exclude-newer without the managed-by comment is left alone, and logged as the cooldown."""
-        pyproject_toml = self.configure(pyproject("a==1.0") + '\n[tool.uv]\nexclude-newer = "2024-01-01"\n')
+        pyproject_toml = self.configure(f'{pyproject("a==1.0")}\n[tool.uv]\nexclude-newer = "2024-01-01"\n')
         pyproject_toml.write_text.assert_not_called()
         self.assert_no_info_logged()
         self.assert_project_cooldown_logged(pyproject_toml, "uv exclude-newer")
 
     @kills.replace(
-        uv.settings_hold_exclude_newer,
+        settings_hold_exclude_newer,
         "file.parent",
         "Path.cwd()",
         "uv reads the settings of the directory Update-time runs in rather than those of the project",
@@ -146,14 +141,12 @@ class ConfigureCooldownTest(UvSettingsTestCase):
     def test_writes_nothing_where_uv_is_not_on_the_path(self):
         """Test that Update-time neither asks a missing uv for its settings nor writes a cooldown for it."""
         self.leave_off_the_path("uv")
-        pyproject_toml = self.configure(pyproject("a==1.0"))
-        pyproject_toml.write_text.assert_not_called()
+        self.configure(pyproject("a==1.0")).write_text.assert_not_called()
         self.mock_run.assert_not_called()
 
     def test_does_not_rewrite_when_already_current(self):
         """Test that Update-time's own value is not rewritten where it already matches the cooldown."""
-        pyproject_toml = self.configure(pyproject("a==1.0") + _managed(f"{COOLDOWN.default} days"))
-        pyproject_toml.write_text.assert_not_called()
+        self.configure(pyproject("a==1.0") + _managed(f"{COOLDOWN.default} days")).write_text.assert_not_called()
 
     @patch_environ({COOLDOWN.name: "14"})
     def test_syncs_own_value_to_the_cooldown(self):
@@ -176,11 +169,21 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         self.assert_project_cooldown_logged(pyproject_toml, "UV_EXCLUDE_NEWER")
 
 
+def _managed(cooldown: str) -> str:
+    """Return a `[tool.uv] exclude-newer` block with the given cooldown, carrying the managed-by comment."""
+    return f'\n[tool.uv]\nexclude-newer = "{cooldown}" # {MANAGED_BY_COMMENT}\n'
+
+
 class WorkspaceRootTest(unittest.TestCase):
     """Unit tests for resolving a project's uv workspace root, with the pyproject.toml reads mocked."""
 
     ROOT = Path("/ws/pyproject.toml")
     MEMBER = Path("/ws/packages/lib/pyproject.toml")
+
+    def test_member_resolves_to_root(self):
+        """Test that a member is resolved to the workspace root that lists it."""
+        with self.workspace_at_root(members=("packages/*",)):
+            self.assertEqual(self.ROOT, _workspace_root(self.MEMBER))
 
     def workspace_at_root(self, **workspace: tuple[str, ...]):
         """Patch `_workspace_table` so only the root declares the given `[tool.uv.workspace]` table."""
@@ -188,11 +191,6 @@ class WorkspaceRootTest(unittest.TestCase):
             "update_time.package_managers.uv.uv._workspace_table",
             side_effect=lambda pyproject_toml: UvWorkspace(**workspace) if pyproject_toml == self.ROOT else None,
         )
-
-    def test_member_resolves_to_root(self):
-        """Test that a member is resolved to the workspace root that lists it."""
-        with self.workspace_at_root(members=("packages/*",)):
-            self.assertEqual(self.ROOT, _workspace_root(self.MEMBER))
 
     def test_root_is_its_own_member(self):
         """Test that the root project, which declares the workspace, resolves to itself."""
@@ -242,7 +240,7 @@ class WorkspaceTableTest(unittest.TestCase):
         case="a workspace that is not a table",
     )
     @kills.replace(
-        toml.read,
+        read,
         "except OSError, ValueError:",
         "except OSError:",
         "a pyproject.toml that is not valid TOML stops the walk up the tree with a traceback",
@@ -266,26 +264,21 @@ class ByWorkspaceTest(LoggingTestCase):
     APP = SCAN_ROOT / "app/pyproject.toml"
     MEMBER = SCAN_ROOT / "app/member/pyproject.toml"
 
-    def groups(self, files: dict[Path, str], projects: list[Path]) -> list[list[Path]]:
-        """Return the workspace roots of each group `by_workspace` returns for the projects, found in that order."""
-        with FakeFiles(files).patched():
-            return [list(group) for group in uv.by_workspace(PyprojectToml(path) for path in projects)]
-
     @kills.replace(
-        uv._path_sourced_roots,
-        "_sourcing_files(project.path)",
+        _path_sourced_roots,
+        "_sourcing_files(project)",
         "[project.path]",
         "the order passes over the path sources of a workspace root, which its members inherit",
         case="a member inheriting the source of its workspace root",
     )
     @kills.delete(
-        uv._path_sourced_projects,
+        _path_sourced_projects,
         "if source.dependency in declared",
         "the order counts a source that uv passes over, so it finds a cycle uv does not have",
         case="a project sourcing a dependency it does not declare",
     )
     @kills.delete(
-        uv._ordered_workspaces,
+        _ordered_workspaces,
         "_LOG.path_source_cycle(root for root in workspaces if root in cycle)",
         "a cycle of path sources has its workspaces updated together without saying why",
         case="projects sourcing each other",
@@ -323,6 +316,11 @@ class ByWorkspaceTest(LoggingTestCase):
                 logged = self.records_of(message, workspace_roots=tuple(Location(root) for root in cycle))
                 self.assertEqual(self.records_of(message), logged if cycle else [])
                 self.assertEqual(len(logged), 1 if cycle else 0)
+
+    def groups(self, files: dict[Path, str], projects: list[Path]) -> list[list[Path]]:
+        """Return the workspace roots of each group `by_workspace` returns for the projects, found in that order."""
+        with FakeFiles(files).patched():
+            return [list(group) for group in by_workspace(PyprojectToml(path) for path in projects)]
 
 
 class PypiServedDependenciesTest(unittest.TestCase):

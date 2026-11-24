@@ -3,7 +3,7 @@
 import re
 import string
 from functools import cache, partial
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Final, NotRequired, TypedDict
 
 from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import Version
@@ -28,12 +28,13 @@ from update_time.domain.dependency import (
 from update_time.domain.source import Source, every_dependency
 from update_time.domain.vulnerability import Ecosystem
 from update_time.domain.yank import with_yank_state
-from update_time.formats import markdown
+from update_time.formats.markdown import is_content_type, is_file
 from update_time.io.fetch import fetch, fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
-from update_time.sources.github import (
+
+from .github import (
     GitHubRepository,
     changes_from_changelog_file,
     changes_from_release,
@@ -46,21 +47,25 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import VersionBound
     from update_time.domain.dependency import VersionString
+    from update_time.io.log import Logger
 
-_LOG = get_logger("pypi")
+_LOG: Final[Logger] = get_logger("pypi")
 
 # The PyPI host, serving both the JSON API (`/pypi/…/json`) and the Index API (`/simple/…`).
-_PYPI = "https://pypi.org"
+_PYPI: Final[str] = "https://pypi.org"
 
 # The project-URL labels whose URL is fetched as a changelog file: PEP 753's `changelog` label with its aliases,
 # spelled as `_normalized_label` returns them.
-_CHANGELOG_URL_LABELS = {"changelog", "changes", "whatsnew", "history"}
+_CHANGELOG_URL_LABELS: Final[frozenset[str]] = frozenset({"changelog", "changes", "whatsnew", "history"})
 # The project-URL labels whose URL is read as the source repository, likeliest label first: PEP 753's `source` label
 # with its aliases, then its `homepage` label. All spelled as `_normalized_label` returns them.
-_REPOSITORY_URL_LABELS_BY_RANK = ({"source", "repository", "sourcecode", "github"}, {"homepage"})
-_LABEL_NORMALIZATION = str.maketrans("", "", string.punctuation + string.whitespace)
+_REPOSITORY_URL_LABELS_BY_RANK: Final[tuple[set[str], ...]] = (
+    {"source", "repository", "sourcecode", "github"},
+    {"homepage"},
+)
+_LABEL_NORMALIZATION: Final[dict[int, int | None]] = str.maketrans("", "", string.punctuation + string.whitespace)
 # Matches a GitHub repository URL wherever it sits in prose, such as the description a project posts to PyPI.
-_GITHUB_URL_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+")
+_GITHUB_URL_RE: Final[re.Pattern[str]] = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+")
 
 
 def _normalized_label(label: str) -> str:
@@ -82,16 +87,6 @@ def _repository_rank(label: str) -> int:
         if normalized in labels:
             return rank
     return len(_REPOSITORY_URL_LABELS_BY_RANK)
-
-
-def _repository_urls(project_urls: dict[str, str]) -> list[str]:
-    """Return the project URLs to read as the source repository, the likeliest first.
-
-    Projects publish their repository under labels that say something else, from `Bug Tracker` to `Changelog`, so
-    every URL is a candidate. Reading them by rank keeps a project that labels its repository properly from being
-    read out of a lesser URL, and URLs of equal rank keep the order the project published them in.
-    """
-    return [url for _, url in sorted(project_urls.items(), key=lambda item: _repository_rank(item[0]))]
 
 
 class _Distribution(TypedDict):
@@ -122,10 +117,10 @@ class _ReleaseMetadata(TypedDict):
 @cache
 def _release_metadata(package: str, version: str) -> LookedUp[_ReleaseMetadata]:
     """Get the release metadata from PyPI, or why it can't be fetched."""
-    return fetch_json(f"{_PYPI}/pypi/{package}/{version}/json", _LOG)
+    return fetch_json(f"{_PYPI}/pypi/{package}/{version}/json", _LOG, body=_ReleaseMetadata)
 
 
-def _project_metadata(package: str) -> dict | None:
+def _project_metadata(package: str) -> _ProjectIndexJSON | None:
     """Get the package's metadata from PyPI's Index API, or None if it can't be read.
 
     The name is normalized first, so every spelling of one package shares a single request; the index redirects
@@ -134,13 +129,13 @@ def _project_metadata(package: str) -> dict | None:
     return _index_metadata(normalized_python_name(package))
 
 
-def _project_metadata_or_empty(package: str) -> dict:
+def _project_metadata_or_empty(package: str) -> _ProjectIndexJSON:
     """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be read."""
     return _project_metadata(package) or {}
 
 
 @cache
-def _index_metadata(package: str) -> dict | None:
+def _index_metadata(package: str) -> _ProjectIndexJSON | None:
     """Fetch the Index API response for the normalized package name, or None if it can't be read.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
@@ -149,7 +144,31 @@ def _index_metadata(package: str) -> dict | None:
     and `_newest_release` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
-    return fetch_json(f"{_PYPI}/simple/{package}/", _LOG, headers=headers).value
+    return fetch_json(f"{_PYPI}/simple/{package}/", _LOG, body=_ProjectIndexJSON, headers=headers).value
+
+
+# A distribution file as PyPI's Index API lists it. Its yank state is false, true, or the reason the file was yanked.
+_IndexFileJSON = TypedDict(
+    "_IndexFileJSON", {"filename": str, "upload-time": NotRequired[str], "yanked": NotRequired[bool | str]}
+)
+
+
+class _ProjectStatusJSON(TypedDict):
+    """The status PEP 792 lets a project declare, with the reason published beside it."""
+
+    status: NotRequired[str]
+    reason: NotRequired[str]
+
+
+# A project as PyPI's Index API lists it: its versions, its distribution files, and its status.
+_ProjectIndexJSON = TypedDict(
+    "_ProjectIndexJSON",
+    {
+        "versions": NotRequired[list[str]],
+        "files": NotRequired[list[_IndexFileJSON]],
+        "project-status": NotRequired[_ProjectStatusJSON],
+    },
+)
 
 
 def _project_versions(package: str) -> list[str]:
@@ -183,7 +202,7 @@ def _newest_release(package: DependencyName) -> Release | None:
 
 
 # The project status PEP 792 defines for a project that expects no further release.
-_ARCHIVED_STATUS = "archived"
+_ARCHIVED_STATUS: Final[str] = "archived"
 
 
 @partial(ProjectGetter, declares_archival=every_project)
@@ -246,8 +265,7 @@ def _yank_state(package: str, version: str) -> Yank | None:
     if (pinned := Version(version)) not in _versions(package):
         return None
     for file in metadata.get("files", []):
-        yanked = file.get("yanked")
-        if yanked and _distribution_version(file.get("filename", "")) == pinned:
+        if (yanked := file.get("yanked")) and _distribution_version(file.get("filename", "")) == pinned:
             return Yank(yanked=True, reason=yanked if isinstance(yanked, str) else "")
     return Yank()
 
@@ -303,7 +321,7 @@ def _get_changes(package: str, version: str) -> Changes:
     for label, url in urls.items():
         if _normalized_label(label) in _CHANGELOG_URL_LABELS and (changelog := _changelog_from_url(url, version)):
             return changelog
-    repository_urls = _repository_urls(urls)
+    repository_urls = [url for _, url in sorted(urls.items(), key=lambda item: _repository_rank(item[0]))]
     for url in repository_urls:
         if changelog := _changelog_from_github_releases(url, package, version):
             return changelog
@@ -338,7 +356,7 @@ def _changelog_from_url(url: str, version: str) -> Changes:
     if content_type.startswith("text/html"):
         return NO_CHANGES
     changes = get_version_changes_from_changelog(changelog_response.text, version)
-    return Changes(changes, markdown=markdown.is_content_type(content_type) or markdown.is_file(url), url=url)
+    return Changes(changes, markdown=is_content_type(content_type) or is_file(url), url=url)
 
 
 def _changelog_from_description(info: _Info, package: str, version: str) -> Changes:
@@ -347,7 +365,7 @@ def _changelog_from_description(info: _Info, package: str, version: str) -> Chan
     content_type = info.get("description_content_type") or ""
     changes = Changes(
         get_version_changes_from_changelog(description, version),
-        markdown=markdown.is_content_type(content_type),
+        markdown=is_content_type(content_type),
         url=f"{_PYPI}/project/{package}/{version}/",
     )
     return changes or _changelog_from_github_url_in_description(description, package, version)
@@ -380,7 +398,7 @@ def _changelog_from_repository_root(url: str, version: str) -> Changes:
     return changes_from_changelog_file(github_repository(url), version)
 
 
-SOURCE = Source(
+SOURCE: Final[Source] = Source(
     project=project,
     yank=_yank_state,
     changes=_get_changes,

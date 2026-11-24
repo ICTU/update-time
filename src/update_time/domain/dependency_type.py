@@ -4,9 +4,28 @@ The command-line help names these files.
 """
 
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from update_time.domain import file_type
+from .file_type import (
+    CIRCLE_CI_CONFIGS,
+    DEVCONTAINER_CONFIGS,
+    DOCKER_COMPOSE_FILES,
+    DOCKERFILES,
+    GITHUB_WORKFLOWS,
+    GITLAB_CI_CONFIG,
+    HELM_CHARTS,
+    INLINE_SCRIPT_METADATA,
+    PACKAGE_JSON,
+    PNPM_WORKSPACE_YAML,
+    POM_XML,
+    PRE_COMMIT_CONFIG,
+    PYPROJECT_TOML,
+    PYTHON_VERSION_FILE,
+    REQUIREMENTS_TXT,
+    SPHINX_CONFIG,
+    YARNRC_YML,
+    FileType,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -17,10 +36,10 @@ class DependencyType:
     """A kind of dependency Update-time updates, such as Docker images or Python dependencies."""
 
     name: str  # As the README's dependency type tables label it
-    file_types: tuple[file_type.FileType, ...]
+    file_types: tuple[FileType, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _DependencyTypes:
     """Every dependency type Update-time updates, in the order the README's tables list them in."""
 
@@ -39,30 +58,30 @@ class _DependencyTypes:
         return (getattr(self, field.name) for field in fields(self))
 
 
-DEPENDENCY_TYPES = _DependencyTypes(
+DEPENDENCY_TYPES: Final[_DependencyTypes] = _DependencyTypes(
     python_dependencies=DependencyType(
         "Python dependencies",
-        (file_type.PYPROJECT_TOML, file_type.REQUIREMENTS_TXT, file_type.INLINE_SCRIPT_METADATA),
+        (PYPROJECT_TOML, REQUIREMENTS_TXT, INLINE_SCRIPT_METADATA),
     ),
     npm_dependencies=DependencyType(
         "npm, pnpm, yarn, and bun dependencies",
-        (file_type.PACKAGE_JSON, file_type.PNPM_WORKSPACE_YAML, file_type.YARNRC_YML),
+        (PACKAGE_JSON, PNPM_WORKSPACE_YAML, YARNRC_YML),
     ),
-    maven_dependencies=DependencyType("Maven dependencies", (file_type.POM_XML,)),
-    node_engine_version=DependencyType("Node engine version", (file_type.PACKAGE_JSON,)),
-    python_version=DependencyType("Python version", (file_type.PYTHON_VERSION_FILE,)),
+    maven_dependencies=DependencyType("Maven dependencies", (POM_XML,)),
+    node_engine_version=DependencyType("Node engine version", (PACKAGE_JSON,)),
+    python_version=DependencyType("Python version", (PYTHON_VERSION_FILE,)),
     docker_images=DependencyType(
         "Docker images",
         (
-            file_type.DOCKERFILES,
-            file_type.CIRCLE_CI_CONFIGS,
-            file_type.GITLAB_CI_CONFIG,
-            file_type.DOCKER_COMPOSE_FILES,
-            file_type.HELM_CHARTS,
-            file_type.DEVCONTAINER_CONFIGS,
+            DOCKERFILES,
+            CIRCLE_CI_CONFIGS,
+            GITLAB_CI_CONFIG,
+            DOCKER_COMPOSE_FILES,
+            HELM_CHARTS,
+            DEVCONTAINER_CONFIGS,
         ),
     ),
-    github_actions=DependencyType("GitHub Actions", (file_type.GITHUB_WORKFLOWS,)),
-    pre_commit_hooks=DependencyType("Pre-commit hooks", (file_type.PRE_COMMIT_CONFIG,)),
-    jsdelivr_npm_urls=DependencyType("jsDelivr npm URLs", (file_type.SPHINX_CONFIG,)),
+    github_actions=DependencyType("GitHub Actions", (GITHUB_WORKFLOWS,)),
+    pre_commit_hooks=DependencyType("Pre-commit hooks", (PRE_COMMIT_CONFIG,)),
+    jsdelivr_npm_urls=DependencyType("jsDelivr npm URLs", (SPHINX_CONFIG,)),
 )

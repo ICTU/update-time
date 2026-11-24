@@ -1,12 +1,13 @@
 """uv's policies for the markers of a pyproject.toml and of inline script metadata, and the report of those markers."""
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.dependency import normalized_python_name
 from update_time.domain.directive import Reason
 from update_time.package_managers.policy import ManagerPolicy, report_markers
-from update_time.package_managers.uv.uv import declarations_of
+
+from .uv import declarations_of
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import VersionString
@@ -50,7 +51,7 @@ def _hold_back_redundancy(declaration: Declaration) -> Reason | None:
 # resolves the version an exact pin names, so a pin Update-time leaves as the file writes it stays where it is. A bound
 # narrows the lock. The policies for a run that keeps the lock, for one that removes it, and for a file Update-time
 # leaves as it is build on this one.
-MARKER_POLICY = ManagerPolicy(
+MARKER_POLICY: Final[ManagerPolicy[Declaration]] = ManagerPolicy(
     hold_back_redundancy=_hold_back_redundancy,
     bound_redundancy=lambda declaration: declaration.unnarrowable_reason,
     cooldown_redundancy=Reason.COOLDOWN_PER_RUN,
@@ -59,20 +60,22 @@ MARKER_POLICY = ManagerPolicy(
 
 
 # The policy for the markers of a pyproject.toml that uv does not manage.
-UNMANAGED_FILE_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+UNMANAGED_FILE_POLICY: Final[ManagerPolicy[Declaration]] = MARKER_POLICY.policy_for_files_left_as_they_are(
     Reason.UNMANAGED_FILE_LEFT, Reason.UNMANAGED_FILE_KEPT
 )
 
 
 # The policy for the markers of a pyproject.toml whose lock files or tables name more than one package manager.
-MORE_THAN_ONE_MANAGER_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
+MORE_THAN_ONE_MANAGER_POLICY: Final[ManagerPolicy[Declaration]] = MARKER_POLICY.policy_for_files_left_as_they_are(
     Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT
 )
 
 
 # The policy for the markers of a pyproject.toml whose uv workspace root lies outside the scan root.
-WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY = MARKER_POLICY.policy_for_files_left_as_they_are(
-    Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
+WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY: Final[ManagerPolicy[Declaration]] = (
+    MARKER_POLICY.policy_for_files_left_as_they_are(
+        Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
+    )
 )
 
 
@@ -102,26 +105,6 @@ def kept_lock_policy(locked_as_written: RecordedVersions | None) -> ManagerPolic
     return replace(MARKER_POLICY, hold_back_redundancy=hold_back_redundancy, bound_redundancy=bound_redundancy)
 
 
-def _unkept_lock_bound_redundancy(declaration: Declaration) -> Reason | None:
-    """Return why a bound decides nothing where the run does not keep the lock: uv resolves a range afresh each run."""
-    if reason := declaration.unnarrowable_reason:
-        return reason
-    return None if declaration.pins_a_version else Reason.BOUND_DECIDES_NOTHING
-
-
-# A run can remove the lock it created. What uv locks for a dependency without an exact pin then lasts for the run
-# alone, so an `ignore[update]` or a bound on one holds nothing back. This policy judges the markers of such a run.
-UNKEPT_LOCK_POLICY = replace(MARKER_POLICY, bound_redundancy=_unkept_lock_bound_redundancy)
-
-
-def current_version(declaration: Declaration, locked_as_written: RecordedVersions | None) -> VersionString:
-    """Return the version the declaration pins, or else the one version uv locks for it as written, if it locks one."""
-    if declaration.current_version:
-        return declaration.current_version
-    versions = _versions_locked_for(declaration, locked_as_written)
-    return versions.pop() if len(versions) == 1 else ""
-
-
 def _current_version_redundancy(declaration: Declaration, locked_as_written: RecordedVersions | None) -> Reason | None:
     """Return why a directive needing the declaration's current version does not have one, or None where it has one.
 
@@ -133,7 +116,29 @@ def _current_version_redundancy(declaration: Declaration, locked_as_written: Rec
     return Reason.SEVERAL_LOCKED_VERSIONS if several else Reason.NO_LOCKED_VERSION
 
 
+def current_version(declaration: Declaration, locked_as_written: RecordedVersions | None) -> VersionString:
+    """Return the version the declaration pins, or else the one version uv locks for it as written, if it locks one."""
+    if declaration.current_version:
+        return declaration.current_version
+    versions = _versions_locked_for(declaration, locked_as_written)
+    return versions.pop() if len(versions) == 1 else ""
+
+
 def _versions_locked_for(declaration: Declaration, locked_as_written: RecordedVersions | None) -> set[VersionString]:
     """Return the versions uv locks for the declaration's dependency as written."""
     by_name = {normalized_python_name(name): versions for name, versions in (locked_as_written or {}).items()}
     return set(by_name.get(normalized_python_name(declaration.dependency), []))
+
+
+def _unkept_lock_bound_redundancy(declaration: Declaration) -> Reason | None:
+    """Return why a bound decides nothing where the run does not keep the lock: uv resolves a range afresh each run."""
+    if reason := declaration.unnarrowable_reason:
+        return reason
+    return None if declaration.pins_a_version else Reason.BOUND_DECIDES_NOTHING
+
+
+# A run can remove the lock it created. What uv locks for a dependency without an exact pin then lasts for the run
+# alone, so an `ignore[update]` or a bound on one holds nothing back. This policy judges the markers of such a run.
+UNKEPT_LOCK_POLICY: Final[ManagerPolicy[Declaration]] = replace(
+    MARKER_POLICY, bound_redundancy=_unkept_lock_bound_redundancy
+)

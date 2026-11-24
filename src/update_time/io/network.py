@@ -1,17 +1,17 @@
 """The network settings a run inherits from its environment."""
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from urllib.parse import urlsplit
 from urllib.request import getproxies
 
 if TYPE_CHECKING:
-    from update_time.io.log import Logger
+    from .log import Logger
 
 # What a proxy's user and password are logged as, so the log shows that a proxy has them but not what they are.
-_REDACTED = "<redacted>"
+_REDACTED: Final[str] = "<redacted>"
 # What a proxy URL that does not split is logged as, since a password in it cannot be found to redact.
-_UNREADABLE = "<unreadable>"
+_UNREADABLE: Final[str] = "<unreadable>"
 
 
 def report_network_settings(logger: Logger) -> None:

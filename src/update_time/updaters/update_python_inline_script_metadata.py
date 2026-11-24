@@ -1,5 +1,7 @@
 """Bump exact-pinned dependencies in the PEP 723 inline script metadata of standalone .py files, using uv."""
 
+from typing import TYPE_CHECKING, Final
+
 from update_time.domain.file_type import INLINE_SCRIPT_METADATA
 from update_time.io.filesystem import glob_for
 from update_time.io.log import FileContent, get_logger
@@ -7,7 +9,10 @@ from update_time.manifests.inline_script import InlineScript
 from update_time.package_managers.uv.lock import update_scripts
 from update_time.updaters.uv_pins import warn_about_pins
 
-_LOG = get_logger("python inline script metadata")
+if TYPE_CHECKING:
+    from update_time.io.log import Logger
+
+_LOG: Final[Logger] = get_logger("python inline script metadata")
 
 
 def _update_python_inline_script_metadatas() -> None:
@@ -32,10 +37,5 @@ def _scripts() -> list[InlineScript]:
     return scripts
 
 
-def main() -> None:  # pragma: no cover
-    """Update the dependencies in the repository's inline script metadata."""
+if __name__ == "__main__":
     _update_python_inline_script_metadatas()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

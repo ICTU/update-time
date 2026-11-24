@@ -9,7 +9,7 @@ from update_time.domain.bound import NO_BOUND, BoundRedundancy, Verb, VersionBou
 from update_time.domain.marker import Marker, Scope, spell
 from update_time.markers.parser import parse_directives
 
-from tests.update_time.helpers import bound
+from tests.update_time.domain_objects import bound
 
 
 class MergeTest(unittest.TestCase):
@@ -28,13 +28,13 @@ class MergeTest(unittest.TestCase):
 class DirectiveTest(unittest.TestCase):
     """Unit tests for the directive a marker names when one of its scopes is reported."""
 
-    def marker(self, directives: str) -> Marker:
-        """Return the marker the directives express."""
-        return parse_directives(directives)
-
     def test_a_scope_the_marker_leaves_live_is_named_by_nothing(self):
         """Test that a scope the marker does not hold back names no directive."""
         self.assertEqual(self.marker("set[stale-after=0]").scope_directive(Scope.YANKED), "")
+
+    def marker(self, directives: str) -> Marker:
+        """Return the marker the directives express."""
+        return parse_directives(directives)
 
     def test_a_scope_is_named_alone(self):
         """Test that a scope names its own directive, leaving out an `ignore` beside it that holds plenty back."""
@@ -47,8 +47,7 @@ class DirectiveTest(unittest.TestCase):
 
     def test_a_cooldown_is_named_alone(self):
         """Test that a cooldown is named as its own directive, leaving out a directive beside it."""
-        marker = self.marker("set[cooldown=30] allow[hash-drift]")
-        self.assertEqual(marker.cooldown_directive, "set[cooldown=30]")
+        self.assertEqual(self.marker("set[cooldown=30] allow[hash-drift]").cooldown_directive, "set[cooldown=30]")
 
     def test_every_vulnerable_form_the_marker_carries_is_named(self):
         """Test that each `vulnerable` form is named, the advisories sharing a bracket and sorted within it."""
@@ -64,8 +63,7 @@ class RawTextTest(unittest.TestCase):
 
     def test_str_is_the_whole_marker(self):
         """Test that a marker renders as the whole of its verbatim directive text, every verb's directives kept."""
-        marker = Marker(raw="ignore[update] allow[hash-drift]")
-        self.assertEqual(str(marker), "ignore[update] allow[hash-drift]")
+        self.assertEqual(str(Marker(raw="ignore[update] allow[hash-drift]")), "ignore[update] allow[hash-drift]")
 
 
 class BoundRedundancyTest(unittest.TestCase):

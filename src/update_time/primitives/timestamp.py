@@ -1,13 +1,13 @@
 """Reading and comparing timestamps, and the minutes and seconds in a day."""
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-MINUTES_PER_DAY = 24 * 60
-SECONDS_PER_DAY = MINUTES_PER_DAY * 60
+MINUTES_PER_DAY: Final[int] = 24 * 60
+SECONDS_PER_DAY: Final[int] = MINUTES_PER_DAY * 60
 
 
 def days_since(timestamp: datetime) -> int:
@@ -24,15 +24,6 @@ def utc_date_and_time(timestamp: datetime) -> str:
     return f"{timestamp.astimezone(UTC):%Y-%m-%d %H:%M} UTC"
 
 
-def parse_timestamp(timestamp: str | None) -> datetime | None:
-    """Return the ISO-8601 timestamp parsed, or None when there is none to parse.
-
-    An absent timestamp yields None rather than raising, so a caller that has nothing to parse is left with an
-    unknown date to decide about.
-    """
-    return datetime.fromisoformat(timestamp) if timestamp else None
-
-
 def newest_timestamp(timestamps: Iterable[str | None]) -> datetime | None:
     """Return the most recent of the ISO-8601 timestamps, or None if none of them is there.
 
@@ -41,3 +32,12 @@ def newest_timestamp(timestamps: Iterable[str | None]) -> datetime | None:
     """
     parsed = (parse_timestamp(timestamp) for timestamp in timestamps)
     return max((timestamp for timestamp in parsed if timestamp is not None), default=None)
+
+
+def parse_timestamp(timestamp: str | None) -> datetime | None:
+    """Return the ISO-8601 timestamp parsed, or None when there is none to parse.
+
+    An absent timestamp yields None rather than raising, so a caller that has nothing to parse is left with an
+    unknown date to decide about.
+    """
+    return datetime.fromisoformat(timestamp) if timestamp else None

@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import cache, cached_property, partial, total_ordering
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Final, NotRequired, TypedDict
 from urllib.parse import urlencode, urlparse
 
 from packaging.version import Version
@@ -29,7 +29,10 @@ from update_time.domain.dependency import (
     every_project,
     is_valid,
 )
-from update_time.formats import markdown, restructured_text
+from update_time.formats import markdown
+from update_time.formats.markdown import EXTENSION as MARKDOWN_EXTENSION
+from update_time.formats.markdown import is_file
+from update_time.formats.restructured_text import EXTENSION as RST_EXTENSION
 from update_time.io.fetch import Response, fetch, json_body, look_up, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import DeferredLookup, LookedUp
@@ -39,83 +42,48 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
     from update_time.domain.bound import VersionBound
+    from update_time.io.log import Logger
     from update_time.primitives.lookup import Lookup
 
-_LOG = get_logger("github")
+_LOG: Final[Logger] = get_logger("github")
 
 # The environment variable holding the token that authenticates the requests, which raises the rate limit.
-TOKEN_VARIABLE = "GITHUB_TOKEN"  # noqa: S105 # nosec: B105
+TOKEN_VARIABLE: Final[str] = "GITHUB_TOKEN"  # noqa: S105 # nosec: B105
 
 # The GitHub commits endpoint fetches a commit by a tag, a branch, or a commit SHA, which this type names.
 type _GitRef = str
 
 # The GitHub REST API's per-repository base URL: the repository's own endpoint, which the listings hang below.
-_GITHUB_API = "https://api.github.com/repos"
+_GITHUB_API: Final[str] = "https://api.github.com/repos"
 # GitHub's maximum page size, for the releases and tags endpoints. Only the first page of each is fetched, so at
 # most this many of the most recent releases and tags are considered.
-_PER_PAGE = 100
+_PER_PAGE: Final[int] = 100
 # How many pages of a branch's commits are listed at most, and why the branch is left as it is when its newest commit
 # older than the cooldown lies deeper.
-_MAX_COMMIT_LISTING_PAGES = 5
-_BEYOND_THE_COMMITS_EXAMINED = (
+_MAX_COMMIT_LISTING_PAGES: Final[int] = 5
+_BEYOND_THE_COMMITS_EXAMINED: Final[str] = (
     "the branch's newest commit older than the cooldown is not among the "
     f"{_MAX_COMMIT_LISTING_PAGES * _PER_PAGE} newest commits examined"
 )
 # GitHub's commits endpoint answers with this status when a ref does not name a commit in the repository.
-_NO_COMMIT_BY_THAT_NAME = HTTPStatus.UNPROCESSABLE_ENTITY
+_NO_COMMIT_BY_THAT_NAME: Final[HTTPStatus] = HTTPStatus.UNPROCESSABLE_ENTITY
 # The statuses GitHub's compare endpoint gives a commit that descends from the base, or that diverged from it.
-_MOVED_ON = frozenset({"ahead", "diverged"})
+_MOVED_ON: Final[frozenset[str]] = frozenset({"ahead", "diverged"})
 # The host serving a repository's files as raw content.
-_RAW_GITHUB = "https://raw.githubusercontent.com"
+_RAW_GITHUB: Final[str] = "https://raw.githubusercontent.com"
 # The host showing a repository's pages to a person.
-GITHUB = "https://github.com"
+GITHUB: Final[str] = "https://github.com"
 # The names a repository gives the changelog file, and the extensions it carries, compared in lower case.
-_CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})
-_CHANGELOG_FILE_EXTENSIONS = frozenset({"", markdown.EXTENSION, restructured_text.EXTENSION, ".txt"})
+_CHANGELOG_FILE_NAMES: Final[frozenset[str]] = frozenset({"changes", "changelog", "history", "news", "releases"})
+_CHANGELOG_FILE_EXTENSIONS: Final[frozenset[str]] = frozenset({"", MARKDOWN_EXTENSION, RST_EXTENSION, ".txt"})
 # The names a repository gives the directory it keeps its documentation in, compared in lower case.
-_DOCUMENTATION_DIRECTORY_NAMES = frozenset({"doc", "docs"})
-
-
-class _RepositoryJSON(TypedDict):
-    """A repository from the GitHub repository endpoint."""
-
-    archived: NotRequired[bool]
-
-
-class _ReleaseJSON(TypedDict):
-    """A release from the GitHub releases endpoint."""
-
-    tag_name: str
-    body: NotRequired[str | None]  # Optional in GitHub's schema, and null for a release published without notes
-    html_url: str  # The release's page on GitHub
-    draft: bool
-    prerelease: bool
-    published_at: str | None  # None for a draft, which hasn't been published
-    created_at: str  # The date of the commit the release's tag points at
+_DOCUMENTATION_DIRECTORY_NAMES: Final[frozenset[str]] = frozenset({"doc", "docs"})
 
 
 class _TaggedCommit(TypedDict):
     """The commit a tag points to, in a GitHub tags endpoint result."""
 
     sha: str
-
-
-class _TagJSON(TypedDict):
-    """A tag from the GitHub tags endpoint."""
-
-    name: str
-    commit: _TaggedCommit
-
-
-class _ContentJSON(TypedDict):
-    """An entry in a GitHub repository's contents listing."""
-
-    name: str
-    # Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
-    download_url: str | None
-    html_url: str | None  # The entry's page on GitHub, which GitHub's schema lets be null
-    # The endpoint listing the entry: its tree for a directory, its blob for a file.
-    git_url: str
 
 
 class _TreeEntryJSON(TypedDict):
@@ -144,12 +112,35 @@ class _ParentJSON(TypedDict):
     sha: str
 
 
-class _CommitJSON(TypedDict):
-    """A commit from the GitHub commits endpoint."""
+def github_to_raw(url: str) -> str:
+    """Convert GitHub URLs to URLs that return raw content."""
+    parsed = urlparse(url)
+    if parsed.scheme == "https" and parsed.netloc == "github.com":
+        raw_path = parsed.path.replace("/blob/", "/")
+        return f"{_RAW_GITHUB}{raw_path}"
+    return url
 
-    sha: str
-    commit: _GitCommit
-    parents: list[_ParentJSON]  # The first is the commit the branch was on when the commit was made or merged
+
+# Matches `git@github.com:` in `git@github.com:owner/repo.git`, capturing the user and host.
+_SCP_LIKE_RE: Final[re.Pattern[str]] = re.compile(r"^([^/@]+@[^/:]+):")
+# GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
+_GITHUB_SPONSORS_PATH: Final[str] = "sponsors"
+
+
+def github_repository(url: str) -> GitHubRepository | None:
+    """Return the GitHub repository a URL names, or None where it names none.
+
+    Accepts `git+https`, `git+ssh`, and `.git` URLs, and git's scp-like `git@github.com:owner/repo` form. A
+    `github.com/sponsors/…` URL names a sponsorship page rather than a repository, so it parses as none.
+    """
+    parsed = urlparse(_SCP_LIKE_RE.sub(r"ssh://\1/", url.removeprefix("git+")))
+    if parsed.hostname == "github.com":
+        path_parts = parsed.path.lstrip("/").split("/")
+        if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:
+            owner, name = path_parts[0], path_parts[1].removesuffix(".git")
+            if owner and name:
+                return GitHubRepository(owner, name)
+    return None
 
 
 @dataclass(frozen=True)
@@ -164,8 +155,179 @@ class GitHubRepository:
         return f"{self.owner}/{self.name}"
 
 
+def pinned_ref(dependency: DependencyName, ref: _GitRef) -> LookedUp[DependencyVersion]:
+    """Return the commit the ref points at, named by the highest version tag at it, or else by the ref."""
+    repository = repository_of(dependency)
+    found = _get_commit(repository, ref)
+    if (commit := found.value) is None:
+        return found.failure()
+    return LookedUp(_named_commit(repository, ref, commit))
+
+
+def repository_of(dependency: DependencyName) -> GitHubRepository:
+    """Return the repository the dependency names, dropping any path below the repository.
+
+    `actions/checkout/sub-action` names an action in a subdirectory of the `actions/checkout` repository.
+    """
+    owner, name, *_path = dependency.split("/")
+    return GitHubRepository(owner, name)
+
+
+def _get_commit(repository: GitHubRepository, ref: _GitRef) -> LookedUp[_CommitJSON]:
+    """Fetch the commit a tag, branch, or commit SHA names."""
+    found = _look_up_github(f"{_GITHUB_API}/{repository}/commits/{ref}", (_NO_COMMIT_BY_THAT_NAME,))
+    return _github_json(found, body=_CommitJSON)
+
+
+@cache
+def _look_up_github(url: str, statuses_meaning_absent: tuple[int, ...] = ()) -> LookedUp[Response]:
+    """Look up a GitHub API URL once per run, authenticated where a token is set.
+
+    Omitting the authorization header or the cache spends rate limit rather than failing, which nothing but an
+    exhausted run catches, so every API request goes through here.
+    """
+    headers = {"Authorization": f"Bearer {github_token}"} if (github_token := os.environ.get(TOKEN_VARIABLE)) else {}
+    report = _LOG.github_token_rate_limit_used_up if "Authorization" in headers else _LOG.github_rate_limit_used_up
+    on_response = partial(_report_used_up_rate_limit, report=report)
+    return look_up(url, _LOG, statuses_meaning_absent=statuses_meaning_absent, on_response=on_response, headers=headers)
+
+
+def _report_used_up_rate_limit(response: Response, *, report: Callable[[int, datetime], None]) -> None:
+    """Report when the response says the rate limit of the GitHub API is used up."""
+    if response.headers.get("X-RateLimit-Remaining") != "0":
+        return
+    try:
+        limit = int(response.headers["X-RateLimit-Limit"])
+        reset = datetime.fromtimestamp(int(response.headers["X-RateLimit-Reset"]), UTC)
+    except (KeyError, ValueError) as error:
+        _LOG.unreadable_github_rate_limit(error)
+        return
+    _log_used_up_rate_limit(report, limit, reset)
+
+
+@cache
+def _log_used_up_rate_limit(report: Callable[[int, datetime], None], limit: int, reset: datetime) -> None:
+    """Report that GitHub's API rate limit is used up until the reset, once per rate limit window in each process."""
+    report(limit, reset)
+
+
+@cache
+def _github_json[Body](found: LookedUp[Response], *, body: type[Body]) -> LookedUp[Body]:
+    """Return the JSON body of the response a GitHub lookup found, read once per lookup, so a bad body is logged once.
+
+    `_look_up_github` caches each lookup, so the callers of one URL pass the same lookup.
+    """
+    return json_body(found, _LOG, body=body)
+
+
+class _CommitJSON(TypedDict):
+    """A commit from the GitHub commits endpoint."""
+
+    sha: str
+    commit: _GitCommit
+    parents: list[_ParentJSON]  # The first is the commit the branch was on when the commit was made or merged
+
+
+def _named_commit(repository: GitHubRepository, ref: _GitRef, commit: _CommitJSON) -> DependencyVersion:
+    """Return the commit with its committer date, named by the highest version tag at it, or else by the ref."""
+    sha, committed = commit["sha"], _committer_date(commit)
+    if (tagged := _highest_version_at(repository, sha)) is None:
+        return DependencyVersion(ref, sha=sha, publication=committed)
+    return DependencyVersion(tagged.version_string, sha=sha, publication=committed, tag_name=tagged.tag_name)
+
+
+def _committer_date(commit: _CommitJSON) -> LookedUp[datetime]:
+    """Return the commit's committer date."""
+    committer = commit["commit"]["committer"]
+    if not committer or (committed := parse_timestamp(committer.get("date"))) is None:
+        return LookedUp(None, "the commit has no committer date")
+    return LookedUp(committed)
+
+
+def _highest_version_at(repository: GitHubRepository, sha: str) -> _TaggedVersion | None:
+    """Return the highest of the commit's version tags that could be an update, or None."""
+    tagged = _tagged_versions(repository) or ()
+    return max([version for version in tagged if version.sha == sha and version.is_candidate], default=None)
+
+
+def _tagged_versions(repository: GitHubRepository) -> list[_TaggedVersion] | None:
+    """Return the repository's versions: its tags with their releases, plus the releases whose tag wasn't listed.
+
+    A tag without a release takes the publication date of the first release of the same commit. Both endpoints return
+    their first page only, so a release can fall outside the tags listed. None means neither endpoint answered.
+    """
+    releases = _list_releases(repository)
+    tags = _list_tags(repository)
+    if releases is None and tags is None:
+        return None
+    releases_by_tag = {release["tag_name"]: release for release in releases or ()}
+    listed_tags = {tag["name"] for tag in tags or ()}
+    tagged_versions = [_TaggedVersion.from_tag(repository, tag, releases_by_tag.get(tag["name"])) for tag in tags or ()]
+    release_dates_by_sha: dict[str, datetime] = {}
+    for published_at, sha in sorted(
+        (version.published_at, version.sha) for version in tagged_versions if version.published_at
+    ):
+        release_dates_by_sha.setdefault(sha, published_at)
+    tagged_versions = [
+        version if version.has_release else replace(version, published_at=release_dates_by_sha.get(version.sha))
+        for version in tagged_versions
+    ]
+    tagged_versions.extend(
+        _TaggedVersion.from_release(repository, release)
+        for tag_name, release in releases_by_tag.items()
+        if tag_name not in listed_tags
+    )
+    return tagged_versions
+
+
+def _list_releases(repository: GitHubRepository) -> tuple[_ReleaseJSON, ...] | None:
+    """Fetch the GitHub releases for a repository, or None when they couldn't be fetched."""
+    return _list(repository, f"releases?per_page={_PER_PAGE}", item=_ReleaseJSON)
+
+
+def _list[Item](
+    repository: GitHubRepository, path: str, statuses_meaning_absent: tuple[int, ...] = (), *, item: type[Item]
+) -> tuple[Item, ...] | None:
+    """Fetch a listing of items under the repository's API path: empty when it lists nothing, None when it failed.
+
+    The contents endpoint answers a path naming a file with that file's object, which lists nothing. A type checker
+    does not take a union as a body type, so the body type leaves that object out.
+    """
+    del item
+    found = _look_up_github(f"{_GITHUB_API}/{repository}/{path}", statuses_meaning_absent)
+    if (listing := _github_json(found, body=list[Item]).value) is None:
+        return None
+    return tuple(listing) if isinstance(listing, list) else ()
+
+
+class _ReleaseJSON(TypedDict):
+    """A release from the GitHub releases endpoint."""
+
+    tag_name: str
+    body: NotRequired[str | None]  # Optional in GitHub's schema, and null for a release published without notes
+    html_url: str  # The release's page on GitHub
+    draft: bool
+    prerelease: bool
+    published_at: str | None  # None for a draft, which hasn't been published
+    created_at: str  # The date of the commit the release's tag points at
+
+
+def _list_tags(repository: GitHubRepository) -> tuple[_TagJSON, ...] | None:
+    """Fetch the GitHub tags for a repository, or None when they couldn't be fetched."""
+    return _list(repository, f"tags?per_page={_PER_PAGE}", item=_TagJSON)
+
+
+class _TagJSON(TypedDict):
+    """A tag from the GitHub tags endpoint."""
+
+    name: str
+    commit: _TaggedCommit
+
+
 @total_ordering
-@dataclass(frozen=True)
+@dataclass(  # simplint: ignore[dataclass-slots] # its cached properties need the instance's __dict__
+    frozen=True, kw_only=True
+)
 class _TaggedVersion:
     """A version of a GitHub repository, known from its tag, its release, or both."""
 
@@ -177,6 +339,19 @@ class _TaggedVersion:
     published_at: datetime | None = None
     sha: str = ""  # The tagged commit's SHA, when the version came from the tags endpoint (which lists it)
     has_release: bool = True  # False for a version that was tagged but not published as a GitHub release
+
+    @classmethod
+    def from_tag(cls, repository: GitHubRepository, tag: _TagJSON, release: _ReleaseJSON | None) -> _TaggedVersion:
+        """Create a TaggedVersion from a GitHub tags endpoint result, enriched with the tag's release when there is one.
+
+        A tag without a release takes its pre-release flag from its version, such as `v4.0.0-alpha.8`.
+        """
+        sha = tag["commit"]["sha"]
+        if release is not None:
+            return replace(cls.from_release(repository, release), sha=sha)
+        tag_name = tag["name"]
+        prerelease = is_valid(tag_name) and Version(tag_name).is_prerelease
+        return cls(repository=repository, tag_name=tag_name, prerelease=prerelease, sha=sha, has_release=False)
 
     @classmethod
     def from_release(cls, repository: GitHubRepository, release: _ReleaseJSON) -> _TaggedVersion:
@@ -197,23 +372,14 @@ class _TaggedVersion:
             published_at=published_at,
         )
 
-    @classmethod
-    def from_tag(cls, repository: GitHubRepository, tag: _TagJSON, release: _ReleaseJSON | None) -> _TaggedVersion:
-        """Create a TaggedVersion from a GitHub tags endpoint result, enriched with the tag's release when there is one.
-
-        A tag without a release takes its pre-release flag from its version, such as `v4.0.0-alpha.8`.
-        """
-        sha = tag["commit"]["sha"]
-        if release is not None:
-            return replace(cls.from_release(repository, release), sha=sha)
-        tag_name = tag["name"]
-        prerelease = is_valid(tag_name) and Version(tag_name).is_prerelease
-        return cls(repository=repository, tag_name=tag_name, prerelease=prerelease, sha=sha, has_release=False)
+    def __lt__(self, other: _TaggedVersion) -> bool:
+        """Order by version, and equal versions by how precisely they are spelled."""
+        return (self.version, len(self.version.release)) < (other.version, len(other.version.release))
 
     @property
-    def has_valid_version(self) -> bool:
-        """Return whether the tag is a valid version."""
-        return is_valid(self.tag_name)
+    def version(self) -> Version:
+        """Return the tag's version. Version accepts (and normalizes away) the common `v` prefix."""
+        return Version(self.tag_name)
 
     @property
     def version_string(self) -> VersionString:
@@ -221,14 +387,14 @@ class _TaggedVersion:
         return str(self.version) if self.has_valid_version else self.tag_name
 
     @property
+    def has_valid_version(self) -> bool:
+        """Return whether the tag is a valid version."""
+        return is_valid(self.tag_name)
+
+    @property
     def is_candidate(self) -> bool:
         """Return whether this version could be an update: a valid, non-draft, non-prerelease version."""
         return not self.draft and not self.prerelease and self.has_valid_version
-
-    @property
-    def commit_ref(self) -> _GitRef:
-        """Return the ref the commits endpoint knows the tagged commit by: its listed SHA, or else the tag name."""
-        return self.sha or self.tag_name
 
     @cached_property
     def commit_sha(self) -> str | None:
@@ -260,160 +426,17 @@ class _TaggedVersion:
         return DeferredLookup(partial(_commit_date, self.repository, self.commit_ref))
 
     @property
-    def version(self) -> Version:
-        """Return the tag's version. Version accepts (and normalizes away) the common `v` prefix."""
-        return Version(self.tag_name)
-
-    def __lt__(self, other: _TaggedVersion) -> bool:
-        """Order by version, and equal versions by how precisely they are spelled."""
-        return (self.version, len(self.version.release)) < (other.version, len(other.version.release))
+    def commit_ref(self) -> _GitRef:
+        """Return the ref the commits endpoint knows the tagged commit by: its listed SHA, or else the tag name."""
+        return self.sha or self.tag_name
 
 
-def github_to_raw(url: str) -> str:
-    """Convert GitHub URLs to URLs that return raw content."""
-    parsed = urlparse(url)
-    if parsed.scheme == "https" and parsed.netloc == "github.com":
-        raw_path = parsed.path.replace("/blob/", "/")
-        return f"{_RAW_GITHUB}{raw_path}"
-    return url
-
-
-# Matches `git@github.com:` in `git@github.com:owner/repo.git`, capturing the user and host.
-_SCP_LIKE_RE = re.compile(r"^([^/@]+@[^/:]+):")
-# GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
-_GITHUB_SPONSORS_PATH = "sponsors"
-
-
-def github_repository(url: str) -> GitHubRepository | None:
-    """Return the GitHub repository a URL names, or None where it names none.
-
-    Accepts `git+https`, `git+ssh`, and `.git` URLs, and git's scp-like `git@github.com:owner/repo` form. A
-    `github.com/sponsors/…` URL names a sponsorship page rather than a repository, so it parses as none.
-    """
-    normalized_url = _SCP_LIKE_RE.sub(r"ssh://\1/", url.removeprefix("git+"))
-    parsed = urlparse(normalized_url)
-    if parsed.hostname == "github.com":
-        path_parts = parsed.path.lstrip("/").split("/")
-        if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:
-            owner, name = path_parts[0], path_parts[1].removesuffix(".git")
-            if owner and name:
-                return GitHubRepository(owner, name)
-    return None
-
-
-def repository_of(dependency: DependencyName) -> GitHubRepository:
-    """Return the repository the dependency names, dropping any path below the repository.
-
-    `actions/checkout/sub-action` names an action in a subdirectory of the `actions/checkout` repository.
-    """
-    owner, name, *_path = dependency.split("/")
-    return GitHubRepository(owner, name)
-
-
-@cache
-def _look_up_github(url: str, statuses_meaning_absent: tuple[int, ...] = ()) -> LookedUp[Response]:
-    """Look up a GitHub API URL once per run, authenticated where a token is set.
-
-    Omitting the authorization header or the cache spends rate limit rather than failing, which nothing but an
-    exhausted run catches, so every API request goes through here.
-    """
-    headers = _github_headers()
-    on_response = _rate_limit_report(headers)
-    return look_up(url, _LOG, statuses_meaning_absent=statuses_meaning_absent, on_response=on_response, headers=headers)
-
-
-@cache
-def _github_json(found: LookedUp[Response]) -> LookedUp[Any]:
-    """Return the JSON body of the response a GitHub lookup found, read once per lookup, so a bad body is logged once.
-
-    `_look_up_github` caches each lookup, so the callers of one URL pass the same lookup.
-    """
-    return json_body(found, _LOG)
-
-
-def _rate_limit_report(headers: dict[str, str]) -> Callable[[Response], None]:
-    """Return what reports a used-up rate limit, naming the token where the headers carry one."""
-    report = _LOG.github_token_rate_limit_used_up if "Authorization" in headers else _LOG.github_rate_limit_used_up
-    return partial(_report_used_up_rate_limit, report=report)
-
-
-def _report_used_up_rate_limit(response: Response, *, report: Callable[[int, datetime], None]) -> None:
-    """Report when the response says the rate limit of the GitHub API is used up."""
-    if response.headers.get("X-RateLimit-Remaining") != "0":
-        return
-    try:
-        limit = int(response.headers["X-RateLimit-Limit"])
-        reset = datetime.fromtimestamp(int(response.headers["X-RateLimit-Reset"]), UTC)
-    except (KeyError, ValueError) as error:
-        _LOG.unreadable_github_rate_limit(error)
-        return
-    _log_used_up_rate_limit(report, limit, reset)
-
-
-@cache
-def _log_used_up_rate_limit(report: Callable[[int, datetime], None], limit: int, reset: datetime) -> None:
-    """Report that GitHub's API rate limit is used up until the reset, once per rate limit window in each process."""
-    report(limit, reset)
-
-
-def _list(
-    repository: GitHubRepository, path: str, statuses_meaning_absent: tuple[int, ...] = ()
-) -> tuple[Any, ...] | None:
-    """Fetch a listing under the repository's API path: empty when it lists nothing, None when the fetch failed.
-
-    The contents endpoint answers a path naming a file with that file's object, which lists nothing.
-    """
-    found = _github_json(_look_up_github(f"{_GITHUB_API}/{repository}/{path}", statuses_meaning_absent))
-    if (listing := found.value) is None:
-        return None
-    return tuple(listing) if isinstance(listing, list) else ()
-
-
-def _repository_metadata(repository: GitHubRepository) -> _RepositoryJSON | None:
-    """Fetch what GitHub reports about the repository itself, or None when it can't be fetched.
-
-    GitHub answers 404 when the repository's URL ends in a slash.
-    """
-    return _github_json(_look_up_github(f"{_GITHUB_API}/{repository}")).value
-
-
-def _list_releases(repository: GitHubRepository) -> tuple[_ReleaseJSON, ...] | None:
-    """Fetch the GitHub releases for a repository, or None when they couldn't be fetched."""
-    return _list(repository, f"releases?per_page={_PER_PAGE}")
-
-
-def _list_tags(repository: GitHubRepository) -> tuple[_TagJSON, ...] | None:
-    """Fetch the GitHub tags for a repository, or None when they couldn't be fetched."""
-    return _list(repository, f"tags?per_page={_PER_PAGE}")
-
-
-def _list_contents(repository: GitHubRepository, directory: str = "") -> tuple[_ContentJSON, ...] | None:
-    """Fetch the entries in a directory of a repository, its root by default, or None when they can't be fetched.
-
-    GitHub answers 404 for a directory the repository does not serve. That is unremarkable, so it goes unreported.
-    """
-    return _list(repository, f"contents/{directory}", (HTTPStatus.NOT_FOUND,) if directory else ())
-
-
-def _is_changelog_file(name: str) -> bool:
-    """Return whether the name is one a repository gives its changelog file."""
-    stem, dot, extension = name.lower().partition(".")
-    return stem in _CHANGELOG_FILE_NAMES and dot + extension in _CHANGELOG_FILE_EXTENSIONS
-
-
-def _get_commit(repository: GitHubRepository, ref: _GitRef) -> LookedUp[_CommitJSON]:
-    """Fetch the commit a tag, branch, or commit SHA names."""
-    commits_url = f"{_GITHUB_API}/{repository}/commits/{ref}"
-    return _github_json(_look_up_github(commits_url, (_NO_COMMIT_BY_THAT_NAME,)))
-
-
-def pinned_ref(dependency: DependencyName, ref: _GitRef) -> LookedUp[DependencyVersion]:
-    """Return the commit the ref points at, named by the highest version tag at it, or else by the ref."""
-    repository = repository_of(dependency)
+def _commit_date(repository: GitHubRepository, ref: _GitRef) -> LookedUp[datetime]:
+    """Return the committer date of the commit the ref points to."""
     found = _get_commit(repository, ref)
     if (commit := found.value) is None:
-        return LookedUp(None, found.reason, absent=found.absent)
-    return LookedUp(_named_commit(repository, ref, commit))
+        return LookedUp(None, found.reason)
+    return _committer_date(commit)
 
 
 def newest_commit_past_cooldown(
@@ -433,8 +456,8 @@ def newest_commit_past_cooldown(
         # GitHub answers 404 for a ref, or a repository, that does not exist.
         found = _look_up_github(url, (HTTPStatus.NOT_FOUND,))
         if (response := found.value) is None:
-            return LookedUp(None, found.reason, absent=found.absent)
-        if (page := _github_json(found)).value is None:
+            return found.failure()
+        if (page := _github_json(found, body=list[_CommitJSON])).value is None:
             return LookedUp(None, page.reason)
         commits.extend(page.value)
         if (newest := _newest_on_the_line(commits, cooldown_days)) is not None:
@@ -465,19 +488,18 @@ def moved_on(dependency: DependencyName, pinned: str, commit: str) -> LookedUp[b
     """
     repository = repository_of(dependency)
     # A comparison lists the commits between the two, which the answer needs none of.
-    url = f"{_GITHUB_API}/{repository}/compare/{pinned}...{commit}?per_page=1"
-    found = _github_json(_look_up_github(url))
+    found = _github_json(
+        _look_up_github(f"{_GITHUB_API}/{repository}/compare/{pinned}...{commit}?per_page=1"), body=_ComparisonJSON
+    )
     if (comparison := found.value) is None:
         return LookedUp(None, found.reason)
     return LookedUp(comparison["status"] in _MOVED_ON)
 
 
-def _named_commit(repository: GitHubRepository, ref: _GitRef, commit: _CommitJSON) -> DependencyVersion:
-    """Return the commit with its committer date, named by the highest version tag at it, or else by the ref."""
-    sha, committed = commit["sha"], _committer_date(commit)
-    if (tagged := _highest_version_at(repository, sha)) is None:
-        return DependencyVersion(ref, sha=sha, publication=committed)
-    return DependencyVersion(tagged.version_string, sha=sha, publication=committed, tag_name=tagged.tag_name)
+class _ComparisonJSON(TypedDict):
+    """A comparison of two commits from the GitHub compare endpoint."""
+
+    status: str  # How the head relates to the base: `ahead`, `behind`, `diverged`, or `identical`
 
 
 def full_sha(dependency: DependencyName, ref: _GitRef) -> str | None:
@@ -533,67 +555,9 @@ def _own_tag(tagged_versions: Iterable[_TaggedVersion], version: Version) -> _Ta
     )
 
 
-def _tags_another_commit(tagged_version: _TaggedVersion, own_tag: _TaggedVersion | None) -> bool:
-    """Return whether the version equals the own tag's but tags another commit, as `v4.0.0` can beside `v4`."""
-    return own_tag is not None and tagged_version.version == own_tag.version and tagged_version.sha != own_tag.sha
-
-
-def _highest_version_at(repository: GitHubRepository, sha: str) -> _TaggedVersion | None:
-    """Return the highest of the commit's version tags that could be an update, or None."""
-    tagged = _tagged_versions(repository) or ()
-    versions = [version for version in tagged if version.sha == sha and version.is_candidate]
-    return max(versions, default=None)
-
-
 def commit_date(dependency: DependencyName, ref: _GitRef) -> LookedUp[datetime]:
     """Return the committer date of the commit the ref points to, in the repository the dependency names."""
     return _commit_date(repository_of(dependency), ref)
-
-
-def _commit_date(repository: GitHubRepository, ref: _GitRef) -> LookedUp[datetime]:
-    """Return the committer date of the commit the ref points to."""
-    found = _get_commit(repository, ref)
-    if (commit := found.value) is None:
-        return LookedUp(None, found.reason)
-    return _committer_date(commit)
-
-
-def _committer_date(commit: _CommitJSON) -> LookedUp[datetime]:
-    """Return the commit's committer date."""
-    committer = commit["commit"]["committer"]
-    if not committer or (committed := parse_timestamp(committer.get("date"))) is None:
-        return LookedUp(None, "the commit has no committer date")
-    return LookedUp(committed)
-
-
-def _tagged_versions(repository: GitHubRepository) -> list[_TaggedVersion] | None:
-    """Return the repository's versions: its tags with their releases, plus the releases whose tag wasn't listed.
-
-    A tag without a release takes the publication date of the first release of the same commit. Both endpoints return
-    their first page only, so a release can fall outside the tags listed. None means neither endpoint answered.
-    """
-    releases = _list_releases(repository)
-    tags = _list_tags(repository)
-    if releases is None and tags is None:
-        return None
-    releases_by_tag = {release["tag_name"]: release for release in releases or ()}
-    listed_tags = {tag["name"] for tag in tags or ()}
-    tagged_versions = [_TaggedVersion.from_tag(repository, tag, releases_by_tag.get(tag["name"])) for tag in tags or ()]
-    release_dates_by_sha: dict[str, datetime] = {}
-    for published_at, sha in sorted(
-        (version.published_at, version.sha) for version in tagged_versions if version.published_at
-    ):
-        release_dates_by_sha.setdefault(sha, published_at)
-    tagged_versions = [
-        version if version.has_release else replace(version, published_at=release_dates_by_sha.get(version.sha))
-        for version in tagged_versions
-    ]
-    tagged_versions.extend(
-        _TaggedVersion.from_release(repository, release)
-        for tag_name, release in releases_by_tag.items()
-        if tag_name not in listed_tags
-    )
-    return tagged_versions
 
 
 @cache
@@ -606,8 +570,7 @@ def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, co
     Neither the cooldown nor a bound holds the current version back, since the reference uses it already.
     """
     action, current_version = pinned.name, pinned.version
-    repository = repository_of(action)
-    tagged_versions = _tagged_versions(repository)
+    tagged_versions = _tagged_versions(repository_of(action))
     if tagged_versions is None:  # Couldn't reach GitHub; the fetches already logged a warning.
         return DependencyVersion(current_version)
     valid_versions = [version for version in tagged_versions if version.is_candidate]
@@ -631,6 +594,11 @@ def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, co
         current_version,
         cooldown_days,
     )
+
+
+def _tags_another_commit(tagged_version: _TaggedVersion, own_tag: _TaggedVersion | None) -> bool:
+    """Return whether the version equals the own tag's but tags another commit, as `v4.0.0` can beside `v4`."""
+    return own_tag is not None and tagged_version.version == own_tag.version and tagged_version.sha != own_tag.sha
 
 
 def _eligible_version(
@@ -658,6 +626,32 @@ def _eligible_version(
     return DependencyVersion(version, changes, sha, tagged_version.publication, tag_name=tagged_version.tag_name)
 
 
+@partial(ProjectGetter, declares_archival=every_project)
+def project(dependency: DependencyName) -> Project:
+    """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
+    repository = repository_of(dependency)
+    return Project(newest=_newest_release(repository), archival=archival(repository))
+
+
+def _newest_release(repository: GitHubRepository) -> Release | None:
+    """Return the repository's most recently published version with its date, or None if it has none or is unknown.
+
+    Every release counts, pre-releases and backports included, and so does a tag that runs ahead of them. Only that tag
+    is dated, since dating a tag costs a commits request. Where the releases or the tags can't be fetched, the newest
+    release is unknown, since the listing that failed may hold a newer one.
+    """
+    if (releases := _list_releases(repository)) is None or _list_tags(repository) is None:
+        return None
+    versions = [_TaggedVersion.from_release(repository, release) for release in releases]
+    if (tag := _newest_tag_beyond_releases(repository)) is not None:
+        versions.append(_TaggedVersion.from_tag(repository, tag, release=None))
+    return Release.newest(
+        Release(version=version.version_string, published=published)
+        for version in versions
+        if (published := version.publication.value) is not None
+    )
+
+
 def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None:
     """Return the highest-versioned tag when it runs ahead of every dated release, or None.
 
@@ -679,17 +673,10 @@ def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None
     return newest_tag
 
 
-@partial(ProjectGetter, declares_archival=every_project)
-def project(dependency: DependencyName) -> Project:
-    """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
-    repository = repository_of(dependency)
-    newest = _newest_release(repository)
-    return Project(newest=newest, archival=archival(repository))
-
-
 def archival(repository: GitHubRepository) -> Archival | None:
     """Return what GitHub declares about the repository: whether it is archived, or None where it can't be read."""
-    if (metadata := _repository_metadata(repository)) is None:
+    found = _look_up_github(f"{_GITHUB_API}/{repository}")
+    if (metadata := _github_json(found, body=_GitHubRepositoryJSON).value) is None:
         return None
     if not isinstance(archived := metadata.get("archived"), bool):
         _LOG.unreadable_archival(str(repository))
@@ -697,23 +684,23 @@ def archival(repository: GitHubRepository) -> Archival | None:
     return Archival(archived=archived, subject=ArchivedSubject.REPOSITORY)
 
 
-def _newest_release(repository: GitHubRepository) -> Release | None:
-    """Return the repository's most recently published version with its date, or None if it has none or is unknown.
+class _GitHubRepositoryJSON(TypedDict):
+    """What the GitHub repository endpoint declares about a repository."""
 
-    Every release counts, pre-releases and backports included, and so does a tag that runs ahead of them. Only that tag
-    is dated, since dating a tag costs a commits request. Where the releases or the tags can't be fetched, the newest
-    release is unknown, since the listing that failed may hold a newer one.
-    """
-    if (releases := _list_releases(repository)) is None or _list_tags(repository) is None:
-        return None
-    versions = [_TaggedVersion.from_release(repository, release) for release in releases]
-    if (tag := _newest_tag_beyond_releases(repository)) is not None:
-        versions.append(_TaggedVersion.from_tag(repository, tag, release=None))
-    return Release.newest(
-        Release(version=version.version_string, published=published)
-        for version in versions
-        if (published := version.publication.value) is not None
-    )
+    archived: NotRequired[bool]
+
+
+def changes_from_release(repository: GitHubRepository | None, package: str, version: str) -> Changes:
+    """Return the body of the GitHub release matching the package and version."""
+    return changes_from_tagged_release(repository, release_tags(package, version))
+
+
+def changes_from_tagged_release(repository: GitHubRepository | None, tags: list[str]) -> Changes:
+    """Return the body of the GitHub release carrying the first of the tags."""
+    if repository is None:
+        return NO_CHANGES
+    release = _get_release(repository, tags)
+    return release.body if release else NO_CHANGES
 
 
 def _get_release(repository: GitHubRepository, tags: list[str]) -> _TaggedVersion | None:
@@ -737,8 +724,7 @@ def release_tags(package: str, version: str, *aliases: str) -> list[str]:
     6. `<version>` (e.g. `25.0.4`).
     """
     names = [*_package_names(package), *aliases]
-    package_tags = [f"{name}{joiner}{version}" for name in names for joiner in ("-v", "-", "@", "/")]
-    return [*package_tags, f"v{version}", version]
+    return [*[f"{name}{joiner}{version}" for name in names for joiner in ("-v", "-", "@", "/")], f"v{version}", version]
 
 
 def _package_names(package: str) -> list[str]:
@@ -751,19 +737,6 @@ def _package_names(package: str) -> list[str]:
     return [package] if unscoped == package else [package, unscoped]
 
 
-def changes_from_release(repository: GitHubRepository | None, package: str, version: str) -> Changes:
-    """Return the body of the GitHub release matching the package and version."""
-    return changes_from_tagged_release(repository, release_tags(package, version))
-
-
-def changes_from_tagged_release(repository: GitHubRepository | None, tags: list[str]) -> Changes:
-    """Return the body of the GitHub release carrying the first of the tags."""
-    if repository is None:
-        return NO_CHANGES
-    release = _get_release(repository, tags)
-    return release.body if release else NO_CHANGES
-
-
 def changes_from_changelog_file(repository: GitHubRepository | None, version: str, directory: str = "") -> Changes:
     """Return the version's changes from a changelog file in the repository, or nothing when there is none.
 
@@ -774,10 +747,8 @@ def changes_from_changelog_file(repository: GitHubRepository | None, version: st
     """
     if repository is None:
         return NO_CHANGES
-    if directory:
-        entries = _list_contents(repository, directory) or ()
-        if changes := _changes_from_files(entries, version):
-            return changes
+    if directory and (changes := _changes_from_files(_list_contents(repository, directory) or (), version)):
+        return changes
     root = _list_contents(repository) or ()
     return _changes_from_files(root, version) or _changes_from_documentation(repository, root, version)
 
@@ -791,6 +762,12 @@ def _changes_from_files(entries: tuple[_ContentJSON, ...], version: str) -> Chan
     return NO_CHANGES
 
 
+def _is_changelog_file(name: str) -> bool:
+    """Return whether the name is one a repository gives its changelog file."""
+    stem, dot, extension = name.lower().partition(".")
+    return stem in _CHANGELOG_FILE_NAMES and dot + extension in _CHANGELOG_FILE_EXTENSIONS
+
+
 def _changes_from_changelog_url(url: str, version: str) -> str:
     """Return the version's changes from the changelog file the URL serves, or nothing when there are none."""
     return get_version_changes_from_changelog(_changelog_file(url), version)
@@ -801,6 +778,25 @@ def _changelog_file(url: str) -> str:
     """Fetch the changelog file the URL serves once per run, or an empty string when it can't be fetched."""
     response = fetch(url, _LOG)
     return response.text if response is not None else ""
+
+
+def _list_contents(repository: GitHubRepository, directory: str = "") -> tuple[_ContentJSON, ...] | None:
+    """Fetch the entries in a directory of a repository, its root by default, or None when they can't be fetched.
+
+    GitHub answers 404 for a directory the repository does not serve. That is unremarkable, so it goes unreported.
+    """
+    return _list(repository, f"contents/{directory}", (HTTPStatus.NOT_FOUND,) if directory else (), item=_ContentJSON)
+
+
+class _ContentJSON(TypedDict):
+    """An entry in a GitHub repository's contents listing."""
+
+    name: str
+    # Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
+    download_url: str | None
+    html_url: str | None  # The entry's page on GitHub, which GitHub's schema lets be null
+    # The endpoint listing the entry: its tree for a directory, its blob for a file.
+    git_url: str
 
 
 def _changes_from_documentation(repository: GitHubRepository, root: tuple[_ContentJSON, ...], version: str) -> Changes:
@@ -820,18 +816,19 @@ def _changes_from_tree(repository: GitHubRepository, directory: _ContentJSON, ve
     for path in _list_tree(directory["git_url"]):
         name = path.rpartition("/")[2]
         if _is_changelog_file(name) and (changes := _changes_from_changelog_url(f"{root_url}/{path}", version)):
-            return Changes(changes, markdown=markdown.is_file(name), url=f"{page_root_url}/{path}")
+            return Changes(changes, markdown=is_file(name), url=f"{page_root_url}/{path}")
     return NO_CHANGES
 
 
 def _list_tree(git_url: str) -> tuple[str, ...]:
     """Fetch the paths of the files below the tree the URL names, or an empty tuple when they can't be fetched."""
-    if (listing := _github_json(_look_up_github(f"{git_url}?recursive=1")).value) is None:
+    if (listing := _github_json(_look_up_github(f"{git_url}?recursive=1"), body=_TreeJSON).value) is None:
         return ()
-    tree: list[_TreeEntryJSON] = listing.get("tree", [])
+    tree = listing.get("tree", [])
     return tuple(entry["path"] for entry in tree if entry["type"] == "blob")
 
 
-def _github_headers() -> dict[str, str]:
-    """Return GitHub API request headers, including authorization if GITHUB_TOKEN is set."""
-    return {"Authorization": f"Bearer {github_token}"} if (github_token := os.environ.get(TOKEN_VARIABLE)) else {}
+class _TreeJSON(TypedDict):
+    """A tree from the GitHub trees endpoint, listed recursively."""
+
+    tree: NotRequired[list[_TreeEntryJSON]]

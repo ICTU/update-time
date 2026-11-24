@@ -3,12 +3,13 @@
 import enum
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final
 
 from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.dependency import (
+from .dependency import (
     DASHED_SNAPSHOT,
     MAIN_VERSION,
     VERSION_NUMBERS,
@@ -27,15 +28,15 @@ type NewVersionGetter = Callable[[PinnedDependency, VersionBound, int], Dependen
 
 
 # A version higher than any real one, used to probe whether a bound caps anything above the current version.
-_SENTINEL_VERSION = Version("9" * 18)
+_SENTINEL_VERSION: Final[Version] = Version("9" * 18)
 
-_MAIN_VERSION_COMPONENT = re.compile(MAIN_VERSION)
+_MAIN_VERSION_COMPONENT: Final[re.Pattern[str]] = re.compile(MAIN_VERSION)
 
-_DASHED_SNAPSHOT = re.compile(DASHED_SNAPSHOT)
+_DASHED_SNAPSHOT: Final[re.Pattern[str]] = re.compile(DASHED_SNAPSHOT)
 
 # A version's first numbers end at a qualifier PEP 440 cannot read, such as the `.Final` of `4.1.100.Final` or the
 # `_7` of `21.0.4_7-jdk`.
-_NUMBERS = re.compile(VERSION_NUMBERS)
+_NUMBERS: Final[re.Pattern[str]] = re.compile(VERSION_NUMBERS)
 
 
 def _parse_version(version: VersionString) -> Version | None:
@@ -47,8 +48,7 @@ def _parse_version(version: VersionString) -> Version | None:
         return Version(snapshot.group("version").replace("-", ""))
     if is_valid(version):
         return Version(version)
-    component = _MAIN_VERSION_COMPONENT.search(version)
-    if component is not None and is_valid(component.group()):
+    if (component := _MAIN_VERSION_COMPONENT.search(version)) is not None and is_valid(component.group()):
         return Version(component.group())
     numbers = _NUMBERS.search(version)
     return None if numbers is None else Version(numbers.group())
@@ -79,7 +79,9 @@ class UpdateLevel(enum.IntEnum):
 
 # The operator keeping exactly the versions a clause with the other operator drops, so the bound an `ignore` item
 # draws on one side can be written as the specifier of the versions it keeps.
-_COMPLEMENTS = {">=": "<", ">": "<=", "<": ">=", "<=": ">", "==": "!=", "!=": "=="}
+_COMPLEMENTS: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {">=": "<", ">": "<=", "<": ">=", "<=": ">", "==": "!=", "!=": "=="}
+)
 
 
 @dataclass(frozen=True)
@@ -97,18 +99,6 @@ class VersionBound:
     level: UpdateLevel | None = None
     item: str = field(compare=False, default="")
     clauses: tuple[VersionBound, ...] = ()
-
-    def keeps(self, version: Version, current_version: VersionString) -> bool:
-        """Return whether a candidate version survives the bound for a reference currently at `current_version`.
-
-        An absolute bound is unaffected by the current version; a level-based bound is anchored to it first, and keeps
-        every version where it cannot be.
-        """
-        if self.clauses:
-            return all(clause.keeps(version, current_version) for clause in self.clauses)
-        if (specifier := self.specifier) is None:
-            return (self.anchored(current_version) or NO_BOUND).keeps(version, current_version)
-        return specifier.contains(version, prereleases=True) == (self.verb is Verb.ALLOW)
 
     def specifier_in_allow_form(self, current_version: VersionString) -> str | None:
         """Return the specifier an `allow[update…]` item would carry to keep the same versions, or None if none can.
@@ -168,6 +158,18 @@ class VersionBound:
             return BoundRedundancy.BLOCKS_ALL
         return None
 
+    def keeps(self, version: Version, current_version: VersionString) -> bool:
+        """Return whether a candidate version survives the bound for a reference currently at `current_version`.
+
+        An absolute bound is unaffected by the current version; a level-based bound is anchored to it first, and keeps
+        every version where it cannot be.
+        """
+        if self.clauses:
+            return all(clause.keeps(version, current_version) for clause in self.clauses)
+        if (specifier := self.specifier) is None:
+            return (self.anchored(current_version) or NO_BOUND).keeps(version, current_version)
+        return specifier.contains(version, prereleases=True) == (self.verb is Verb.ALLOW)
+
     def _probe_versions(self, current: Version) -> set[Version]:
         """Return versions that sample every region strictly above `current`, so `keeps` can be evaluated across it.
 
@@ -191,12 +193,12 @@ class VersionBound:
 
 # The absence of a bound, as a keep-all bound (an empty specifier matches every version), so `version_bound` is
 # never None. It is the default for an unmarked reference.
-NO_BOUND = VersionBound(Verb.ALLOW, SpecifierSet(""), item="update")
+NO_BOUND: Final[VersionBound] = VersionBound(Verb.ALLOW, SpecifierSet(""), item="update")
 
 # The bound an `ignore[update]` expresses: the complement of `NO_BOUND`, dropping every version. A source given it
 # does not find a candidate and keeps the current version, so a yanked pin whose update is held back is still
 # detected.
-BLOCK_ALL_UPDATES = VersionBound(Verb.IGNORE, SpecifierSet(""), item="update")
+BLOCK_ALL_UPDATES: Final[VersionBound] = VersionBound(Verb.IGNORE, SpecifierSet(""), item="update")
 
 
 def keeping_each(bounds: Iterable[VersionBound], current_version: VersionString) -> VersionBound:

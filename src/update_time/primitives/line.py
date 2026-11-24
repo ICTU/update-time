@@ -9,19 +9,10 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
-from update_time.primitives.location import Location
+from .location import Location
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-@dataclass(frozen=True)
-class Line:
-    """One line of a file: its text, the text of the line above it, and where it sits."""
-
-    text: str
-    previous_text: str
-    location: Location
 
 
 def located_lines(path: Path, lines: list[str]) -> list[Line]:
@@ -33,3 +24,12 @@ def located_lines(path: Path, lines: list[str]) -> list[Line]:
         Line(text, previous_text, Location(path, line_number))
         for line_number, (previous_text, text) in enumerate(pairwise(["", *lines]), start=1)
     ]
+
+
+@dataclass(frozen=True)
+class Line:
+    """One line of a file: its text, the text of the line above it, and where it sits."""
+
+    text: str
+    previous_text: str
+    location: Location

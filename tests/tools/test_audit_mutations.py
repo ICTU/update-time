@@ -7,51 +7,45 @@ import sys
 import time
 import unittest
 from contextlib import redirect_stdout
+from typing import Final
 from unittest.mock import Mock, patch
 
-from tools import audit_mutations as audit_module
+from tools import audit_mutations
 from tools.audit_mutations import _audit, _Finding, _passes_unmutated, _SuiteRun, main
 
 from mutation_time.mutation import Mutation, Outcome, _MutationResult, kills
 
-from tests.helpers import time_zone
+from tests.environment import time_zone
 from tests.mutation_time import mutation_subject
 
 # A registered test that kills a mutation of `is_even`, and another test that kills it as well.
-_REGISTERED = "tests.mutation_time.test_mutation.IsEvenTest.test_an_odd_number"
-_ANOTHER_KILLER = "tests.mutation_time.test_mutation.IsEvenTest.test_an_even_number"
+_REGISTERED: Final[str] = "tests.mutation_time.test_mutation.IsEvenTest.test_an_odd_number"
+_ANOTHER_KILLER: Final[str] = "tests.mutation_time.test_mutation.IsEvenTest.test_an_even_number"
 # A test whose table kills that mutation too, though the table lacks a case named `three`.
-_A_TABLE = "tests.mutation_time.test_mutation.IsEvenTableTest.test_odd_numbers_by_parameters"
-_A_SURVIVOR = "tests.mutation_time.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
+_A_TABLE: Final[str] = "tests.mutation_time.test_mutation.IsEvenTableTest.test_odd_numbers_by_parameters"
+_A_SURVIVOR: Final[str] = "tests.mutation_time.test_mutation.IsMultipleOfThreeTest.test_a_multiple_of_three"
 # A test of this module that registers a mutation, so the audit reaches it.
-_OWN_REGISTRATION = "tests.tools.test_audit_mutations.AuditTest.test_a_registration_only_its_own_test_kills"
-_ODD_REPORTED_AS_EVEN = Mutation(
-    mutation_subject.is_even, "number % 2 == 0", "number % 2 != 0", "an odd number is reported as even"
+_OWN_REGISTRATION: Final[str] = "tests.tools.test_audit_mutations.AuditTest.test_a_registration_only_its_own_test_kills"
+_ODD_REPORTED_AS_EVEN: Final[Mutation] = Mutation(
+    anchor=mutation_subject.is_even,
+    old="number % 2 == 0",
+    new="number % 2 != 0",
+    regression="an odd number is reported as even",
 )
 
 
-def _run_with(other: str) -> _SuiteRun:
-    """Return a run in which the registered test and the other one ran the subject's mutated line."""
-    return _SuiteRun({_ODD_REPORTED_AS_EVEN.path: {8: [_REGISTERED, other]}}.__getitem__, {})
-
-
 # The mixin whose tests five image updaters inherit.
-_IMAGE_UPDATER_MIXIN = "tests.update_time.registry.ImageUpdaterTestMixin"
+_IMAGE_UPDATER_MIXIN: Final[str] = "tests.update_time.registry.ImageUpdaterTestMixin"
 # The name of a mixin's test, and of its copies in the two classes that inherit it.
-_MIXIN_TEST = "tests.m.Mixin.test_m"
-_COPIES = ["tests.a.ATest.test_m", "tests.c.CTest.test_m"]
-
-
-def _run_of_lines(contexts_by_line: dict[int, list[str]]) -> _SuiteRun:
-    """Return a run in which the contexts ran the lines of a subject, the mixin's test standing for its copies."""
-    return _SuiteRun({"subject.py": contexts_by_line}.__getitem__, {_MIXIN_TEST: _COPIES})
+_MIXIN_TEST: Final[str] = "tests.m.Mixin.test_m"
+_COPIES: Final[list[str]] = ["tests.a.ATest.test_m", "tests.c.CTest.test_m"]
 
 
 class CandidatesTest(unittest.TestCase):
     """Unit tests for the tests of its module that may kill a mutation besides the test registering it."""
 
     @kills.append(
-        audit_module._SuiteRun.candidates,
+        audit_mutations._SuiteRun.candidates,
         "for line in lines",
         "[:1]",
         "a test that ran a mutated line other than the first is not checked, so its kill goes unreported",
@@ -71,7 +65,7 @@ class CandidatesTest(unittest.TestCase):
         )
 
     @kills.replace(
-        audit_module._SuiteRun.candidates,
+        audit_mutations._SuiteRun.candidates,
         "if _module(test) in modules]",
         "if _module(context) in modules]",
         "the audit does not check a mixin's test in the module of a class inheriting it, so its kill goes unreported",
@@ -82,7 +76,7 @@ class CandidatesTest(unittest.TestCase):
         self.assertEqual(run.candidates("subject.py", range(8, 9), "tests.a.ATest.test_a"), ["tests.a.ATest.test_m"])
 
     @kills.replace(
-        audit_module._SuiteRun.candidates,
+        audit_mutations._SuiteRun.candidates,
         "modules = {_module(test) for test in self._ids(registered)}",
         "modules = {_module(registered)}",
         "the audit looks for the other killers of a mixin's registration in the mixin's own module, and misses them",
@@ -91,6 +85,11 @@ class CandidatesTest(unittest.TestCase):
         """Test that a registered test a mixin defines is audited in its copies' modules, the copies not counting."""
         run = _run_of_lines({8: [_MIXIN_TEST, "tests.a.ATest.test_a", "tests.b.BTest.test_b"]})
         self.assertEqual(run.candidates("subject.py", range(8, 9), _MIXIN_TEST), ["tests.a.ATest.test_a"])
+
+
+def _run_of_lines(contexts_by_line: dict[int, list[str]]) -> _SuiteRun:
+    """Return a run in which the contexts ran the lines of a subject, the mixin's test standing for its copies."""
+    return _SuiteRun(contexts_of={"subject.py": contexts_by_line}.__getitem__, ids_by_context={_MIXIN_TEST: _COPIES})
 
 
 class PassesUnmutatedTest(unittest.TestCase):
@@ -106,13 +105,13 @@ class AuditTest(unittest.TestCase):
     """Unit tests for checking each registered mutation against the other tests that ran its lines."""
 
     @kills.replace(
-        audit_module._audit,
+        audit_mutations._audit,
         "return [finding for finding in findings if finding.killers]",
         "return []",
         "the audit leaves out a registration whose mutation another test kills as well",
     )
     @kills.replace(
-        audit_module._finding,
+        audit_mutations._finding,
         "unnamed.check(candidate)",
         "mutation.check(candidate)",
         "a registration naming a case is checked against other tests by that name, so it is stale and goes unreported",
@@ -121,10 +120,12 @@ class AuditTest(unittest.TestCase):
         """Test that a registration whose mutation another test kills as well is reported, though it names a case."""
         mutation = dataclasses.replace(_ODD_REPORTED_AS_EVEN, case="three")
         findings = _audit([(_REGISTERED, mutation)], _run_with(_A_TABLE))
-        self.assertEqual(findings, [_Finding(_REGISTERED, mutation.regression, [_A_TABLE])])
+        self.assertEqual(
+            findings, [_Finding(registered=_REGISTERED, regression=mutation.regression, killers=[_A_TABLE])]
+        )
 
     @kills.delete(
-        audit_module._finding,
+        audit_mutations._finding,
         "is Outcome.KILLED",
         "every candidate that passes without the mutation counts as a kill, whatever the mutated run shows",
     )
@@ -140,7 +141,7 @@ class AuditTest(unittest.TestCase):
         """Test that a candidate failing against the unmutated code is not checked, so it does not count as a kill."""
         run = _run_with(_ANOTHER_KILLER)
         with (
-            patch.object(audit_module, "_passes_unmutated", Mock(return_value=False)) as passes,
+            patch.object(audit_mutations, "_passes_unmutated", Mock(return_value=False)) as passes,
             patch.object(Mutation, "check") as checked,
         ):
             findings = _audit([(_REGISTERED, _ODD_REPORTED_AS_EVEN)], run)
@@ -149,7 +150,7 @@ class AuditTest(unittest.TestCase):
         checked.assert_not_called()
 
     @kills.replace(
-        audit_module._audit,
+        audit_mutations._audit,
         "cache(_passes_unmutated)",
         "_passes_unmutated",
         "a candidate runs against the code as it is again for each registration it is a candidate for",
@@ -157,12 +158,15 @@ class AuditTest(unittest.TestCase):
     def test_a_candidate_of_several_registrations_is_run_against_the_unmutated_code_once(self):
         """Test that a candidate is run against the code as it is once, however many registrations it is checked for."""
         even_reported_as_odd = Mutation(
-            mutation_subject.is_even, "number % 2 == 0", "number % 2 == 1", "an even number is reported as odd"
+            anchor=mutation_subject.is_even,
+            old="number % 2 == 0",
+            new="number % 2 == 1",
+            regression="an even number is reported as odd",
         )
         registrations = [(_REGISTERED, _ODD_REPORTED_AS_EVEN), (_REGISTERED, even_reported_as_odd)]
         with (
-            patch.object(audit_module, "_passes_unmutated", Mock(return_value=True)) as passes,
-            patch.object(Mutation, "check", return_value=_MutationResult(Outcome.SURVIVED)) as checked,
+            patch.object(audit_mutations, "_passes_unmutated", Mock(return_value=True)) as passes,
+            patch.object(Mutation, "check", return_value=_MutationResult(outcome=Outcome.SURVIVED)) as checked,
         ):
             _audit(registrations, _run_with(_A_SURVIVOR))
         passes.assert_called_once_with(_A_SURVIVOR)
@@ -174,7 +178,7 @@ class AuditTest(unittest.TestCase):
 
         def check(_mutation: Mutation, _test: str) -> _MutationResult:
             zones.append((os.environ["TZ"], time.timezone))
-            return _MutationResult(Outcome.SURVIVED)
+            return _MutationResult(outcome=Outcome.SURVIVED)
 
         with time_zone("Asia/Tokyo"):
             with patch.object(Mutation, "check", autospec=True, side_effect=check):
@@ -192,8 +196,28 @@ class AuditTest(unittest.TestCase):
             self.assertEqual((os.environ["TZ"], time.timezone), ("Asia/Tokyo", -9 * 3600))
 
 
+def _run_with(other: str) -> _SuiteRun:
+    """Return a run in which the registered test and the other one ran the subject's mutated line."""
+    lines = {line: [_REGISTERED, other] for line in _ODD_REPORTED_AS_EVEN.lines}
+    return _SuiteRun(contexts_of={_ODD_REPORTED_AS_EVEN.path: lines}.__getitem__, ids_by_context={})
+
+
 class MainTest(unittest.TestCase):
     """Unit tests for the report the command line writes."""
+
+    def test_the_registrations_other_tests_kill_as_well(self):
+        """Test that each registration other tests kill as well is reported with them, and that the run fails."""
+        self.assertEqual(
+            self.report(
+                [_Finding(registered=_REGISTERED, regression="a regression", killers=[_ANOTHER_KILLER, _A_SURVIVOR])]
+            ),
+            1,
+        )
+        self.assertEqual(
+            self.written.getvalue(),
+            f"{_REGISTERED}: a regression; also killed by {_ANOTHER_KILLER}, {_A_SURVIVOR}\n"
+            "registrations other tests kill as well: 1\n",
+        )
 
     def report(self, findings: list[_Finding]) -> int:
         """Run the audit with coverage and the suite stood in for, finding as given, and return its exit code."""
@@ -209,17 +233,8 @@ class MainTest(unittest.TestCase):
         ):
             return main()
 
-    def test_the_registrations_other_tests_kill_as_well(self):
-        """Test that each registration other tests kill as well is reported with them, and that the run fails."""
-        self.assertEqual(self.report([_Finding(_REGISTERED, "a regression", [_ANOTHER_KILLER, _A_SURVIVOR])]), 1)
-        self.assertEqual(
-            self.written.getvalue(),
-            f"{_REGISTERED}: a regression; also killed by {_ANOTHER_KILLER}, {_A_SURVIVOR}\n"
-            "registrations other tests kill as well: 1\n",
-        )
-
     @kills.replace(
-        audit_module.main,
+        audit_mutations.main,
         "if loader.errors:",
         "if False:",
         "the audit passes over a test module that fails to import, leaving its registrations unaudited",

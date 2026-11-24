@@ -10,24 +10,23 @@ anchor that no heading provides fails no other check and shows up only when a re
 import re
 import sys
 from pathlib import Path
+from typing import Final
 
 from tools.markdown import anchor, anchors, headings, without_code_blocks
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 
-_DETAILS_CHAPTER = "Details per dependency type"
-
-# The table naming each dependency type's files is found by what its second column answers.
-_FILES_TABLE = "Files"
-
 # The dependency types every table has to answer for, in the order the tables have to list them in.
-_TYPE_NAMES = tuple(dependency_type.name for dependency_type in DEPENDENCY_TYPES)
+_TYPE_NAMES: Final[tuple[str, ...]] = tuple(dependency_type.name for dependency_type in DEPENDENCY_TYPES)
 
-# The header of a table whose rows name the files a dependency type is declared in.
-_FILES_COLUMN = "| Files |"
+_ROW_LINK: Final[re.Pattern[str]] = re.compile(
+    r"""
+    ^\[(?P<label>[^\]]+)\]  # the link's label
+    \((?P<anchor>\#[^)]+)\)$  # the anchor it points at
+    """,
+    re.VERBOSE,
+)
 
-_ROW_LINK = re.compile(r"^\[(?P<label>[^\]]+)\]\((?P<anchor>#[^)]+)\)$")
-
-_SUBSECTIONS = (
+_SUBSECTIONS: Final[tuple[str, ...]] = (
     "What files are updated?",
     "What dependencies are updated?",
     "What versions are updated?",
@@ -41,27 +40,40 @@ _SUBSECTIONS = (
 )
 
 
+_CHAPTERS_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?m)^(?=## )")
+
+
 def _details_chapter(markdown: str) -> str:
     """Return the text of the details chapter, or the empty string when the document has none."""
-    chapters = re.split(r"(?m)^(?=## )", markdown)
-    return "".join(chapter for chapter in chapters if _DETAILS_CHAPTER in chapter.partition("\n")[0])
+    chapters = _CHAPTERS_PATTERN.split(markdown)
+    details_chapter = "Details per dependency type"
+    return "".join(chapter for chapter in chapters if details_chapter in chapter.partition("\n")[0])
+
+
+_SECTION_BODIES_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?m)^### (.+)$")
 
 
 def _section_bodies(markdown: str) -> dict[str, str]:
     """Return the text of each dependency type section in the details chapter, keyed by its title."""
-    parts = re.split(r"(?m)^### (.+)$", _details_chapter(markdown))[1:]  # Title, body, title, body, ...
+    parts = _SECTION_BODIES_PATTERN.split(_details_chapter(markdown))[1:]  # Title, body, title, body, ...
     return dict(zip(parts[::2], parts[1::2], strict=True))
+
+
+_SECTIONS_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?m)^#### (.+)$")
 
 
 def _sections(markdown: str) -> dict[str, list[str]]:
     """Return each dependency type section in the details chapter with its subsection titles, in document order."""
-    return {title: re.findall(r"(?m)^#### (.+)$", body) for title, body in _section_bodies(markdown).items()}
+    return {title: _SECTIONS_PATTERN.findall(body) for title, body in _section_bodies(markdown).items()}
+
+
+_LINKS_PATTERN: Final[re.Pattern[str]] = re.compile(r"\]\((#[^)]+)\)")
 
 
 def _anchor_problems(markdown: str) -> list[str]:
     """Return a message for each internal link that points at an anchor no heading in the document provides."""
     provided = anchors(markdown)
-    links = re.findall(r"\]\((#[^)]+)\)", markdown)
+    links = _LINKS_PATTERN.findall(markdown)
     return [f"no heading provides the anchor '{link}'" for link in links if link not in provided]
 
 
@@ -115,13 +127,15 @@ def _files_problems(markdown: str) -> list[str]:
     A type with no row at all is left to the table check. Backticks are dropped from the cell before looking, so
     a file type the README spells as code is found.
     """
-    cells = {_row_label(row): files.replace("`", "") for row, files in _tables(markdown).get(_FILES_TABLE, [])}
+    # The table naming each dependency type's files is found by what its second column answers.
+    files_table = "Files"
+    cells = {_row_label(row): files.replace("`", "") for row, files in _tables(markdown).get(files_table, [])}
     problems = []
     for dependency_type in DEPENDENCY_TYPES:
         if (cell := cells.get(dependency_type.name)) is None:
             continue
         problems += [
-            f"the '{_FILES_TABLE}' table's row '{dependency_type.name}' doesn't name '{file_type.name}'"
+            f"the '{files_table}' table's row '{dependency_type.name}' doesn't name '{file_type.name}'"
             for file_type in dependency_type.file_types
             if file_type.name not in cell
         ]
@@ -183,8 +197,10 @@ def _file_rows(body: str) -> list[list[str]]:
     """Return the files each table in the section lists, one list per table whose first column names files."""
     tables: list[list[str]] = []
     rows: list[str] | None = None
+    # The header of a table whose rows name the files a dependency type is declared in.
+    files_column = "| Files |"
     for line in without_code_blocks(body).splitlines():
-        if line.startswith(_FILES_COLUMN):
+        if line.startswith(files_column):
             tables.append(rows := [])
         elif rows is not None and line.startswith("|"):
             # The separator row holds nothing but dashes, alignment colons, and spaces, so it names no file.
@@ -247,5 +263,5 @@ def main() -> int:
     return exit_code
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

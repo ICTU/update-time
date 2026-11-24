@@ -1,6 +1,6 @@
 """Pin the `rev:` of each GitHub-hosted hook in pre-commit configs to a commit, and bump it to the latest version."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.file_type import PRE_COMMIT_CONFIG
 from update_time.io.file import rewrite_file
@@ -12,10 +12,11 @@ from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_repository
 
 if TYPE_CHECKING:
+    from update_time.io.log import Logger
     from update_time.primitives.line import Line
 
-_LOG = get_logger("pre-commit config")
-_REV = PinUpdater(spell_rev, _LOG)
+_LOG: Final[Logger] = get_logger("pre-commit config")
+_REV: Final[PinUpdater] = PinUpdater(spell_rev, _LOG)
 
 
 def _updated_lines(lines: list[Line]) -> list[str]:
@@ -49,10 +50,5 @@ def _update_pre_commit_configs() -> None:
         rewrite_file(config, _updated_lines, _LOG)
 
 
-def main() -> None:  # pragma: no cover
-    """Update the hook revs in the repository's pre-commit configuration files."""
+if __name__ == "__main__":
     _update_pre_commit_configs()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

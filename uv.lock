@@ -1199,6 +1199,23 @@ wheels = [
 ]
 
 [[package]]
+name = "simplint"
+version = "0.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/09/95/05fc9b2a1a3fb7fb3be8387b5bf62f065f328202e19603ed3d1085b1bd35/simplint-0.13.0.tar.gz", hash = "sha256:3633e85ac81201eac4f6831e4da8bf4a13701eb681a3ee51cbcd525973c5634b", size = 2009179, upload-time = "2026-11-17T02:03:55.427Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/ee/1ec85d0e8158b529f6810ea3ee611f13240f522d98b983bdcf8d6a1da129/simplint-0.13.0-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:916309ffa81599bcc51c04897aab60e1c6f28e7212b4645e7930b92b48215f9b", size = 11921288, upload-time = "2026-11-17T02:03:29.149Z" },
+    { url = "https://files.pythonhosted.org/packages/72/f1/c091618e0f78487879730b1e9fc5f54f978e7598f9aba609da8bfba4435d/simplint-0.13.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ec7f5fd5ce0f7c42dfd23fe2773cf2da26d08e4bc50a463bbf7268edb98db443", size = 12618539, upload-time = "2026-11-17T02:03:32.285Z" },
+    { url = "https://files.pythonhosted.org/packages/42/0a/827c99b61da641459117007f43ecf4e7b9230815edad07d80bd2457e2f66/simplint-0.13.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:01e2c78f7447c1f08002b293f57f47f030c431eb790e6fa42d1a43c4927ba5cf", size = 11470886, upload-time = "2026-11-17T02:03:35.915Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/b2/f8ee4a48c902378a013808e6bf1e6c8f94da32583c23cd70c640d5b47417/simplint-0.13.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:03a755778363f623a2640d225736b1fbcca488442f8f2897918a7bc1ba744030", size = 13708723, upload-time = "2026-11-17T02:03:39.168Z" },
+    { url = "https://files.pythonhosted.org/packages/df/60/5ef205c05b6be68145d0e0a0588fdbcee7e02e609507b317a0b48f5e93ee/simplint-0.13.0-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:ba2c1b23b40715ddbbaebea2a6088726652027089ba2a57ffc78cc1fd71e0f83", size = 12121775, upload-time = "2026-11-17T02:03:41.881Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/23/2b2850b2dfc016a85760029e5d342162598029deec38175ba5f1e50ebc25/simplint-0.13.0-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:ad921a1dc6005b77a1fad585291a69882265453746acb6f3c26533d859531796", size = 11457478, upload-time = "2026-11-17T02:03:44.765Z" },
+    { url = "https://files.pythonhosted.org/packages/24/39/8b4b2ad167705d7dd177365fb766e94609e699b11960477eb736e97a628d/simplint-0.13.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:3b2b8dae32769a1de7481c2b0a639c2d45c7086f1da31c69f4de8157168b3233", size = 13695885, upload-time = "2026-11-17T02:03:47.561Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/94/f1614c1c2a79ddf51617a4d3930a9cb48c04be886235e96a176372740f32/simplint-0.13.0-py3-none-win_amd64.whl", hash = "sha256:5a9e16f42387e07b451198a3381c7723505d97b337be651bc712457d09d5f017", size = 13921244, upload-time = "2026-11-17T02:03:50.472Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/f5/a69785893a3dd9565cc37d0b9c034013131351b1b588f6347768dfcbaad0/simplint-0.13.0-py3-none-win_arm64.whl", hash = "sha256:bc31fdc57e4ab1f51318d50de5f7b2c56114a5f394c0d608aae71b1b2d6331e1", size = 11931889, upload-time = "2026-11-17T02:03:53.145Z" },
+]
+
+[[package]]
 name = "sortedcontainers"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1448,6 +1465,7 @@ dev = [
     { name = "pip-audit" },
     { name = "pyproject-fmt" },
     { name = "ruff" },
+    { name = "simplint" },
     { name = "troml" },
     { name = "ty" },
     { name = "types-pyyaml" },
@@ -1482,6 +1500,7 @@ dev = [
     { name = "pip-audit", specifier = "==2.10.1" },
     { name = "pyproject-fmt", specifier = "==2.30.6" },
     { name = "ruff", specifier = "==0.17.4" },
+    { name = "simplint", specifier = "==0.13.0" },
     { name = "troml", specifier = "==0.4.1" },
     { name = "ty", specifier = "==0.0.101" },
     { name = "types-pyyaml", specifier = "==6.0.12.20261111" },

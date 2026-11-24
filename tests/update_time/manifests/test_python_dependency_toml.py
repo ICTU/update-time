@@ -1,33 +1,44 @@
 """Unit tests for reading and rewriting the Python dependencies a file declares in TOML, with file I/O mocked."""
 
 import unittest
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from mutation_time.mutation import kills
 from update_time.domain.marker import Marker, Scope
-from update_time.manifests import pyproject_config, python_dependency_toml
 from update_time.manifests.inline_script import InlineScript
+from update_time.manifests.pyproject_config import _UvTable
 from update_time.manifests.pyproject_toml import PyprojectToml
+from update_time.manifests.python_dependency_toml import (
+    Declaration,
+    PythonDependencyToml,
+    _pinned_version,
+    _rewritten_spec,
+)
 
-from tests.helpers import mock_path
-from tests.update_time.helpers import declaration, uv_path_source
-from tests.update_time.manifests.helpers import script
+from tests.file_mocks import mock_path
+from tests.update_time.domain_objects import declaration
+
+from .manifest_contents import script, uv_path_source
 
 if TYPE_CHECKING:
     from unittest.mock import Mock
 
 # A file opening a `# /// script` block and never closing it, whose dependency array is therefore not commented out.
-_UNCLOSED_BLOCK = '# /// script\ndependencies = ["pkg=={0}"]\n'
+_UNCLOSED_BLOCK: Final[str] = '# /// script\ndependencies = ["pkg=={0}"]\n'
 
 
 class RewriteDeclarationsTest(unittest.TestCase):
     """Unit tests for rewriting the declarations: pinning a new version, and narrowing the requirement uv locks."""
 
+    def test_bumps_known_versions(self):
+        """Test that a pin with a known newer version is rewritten."""
+        self.assertEqual(self.rewrite('dependencies = ["pkg==1.0"]\n', {1: "1.1"}), 'dependencies = ["pkg==1.1"]\n')
+
     def rewrite(
         self,
         contents: str,
         versions: dict[int, str],
-        kind: type[python_dependency_toml.PythonDependencyToml] = PyprojectToml,
+        kind: type[PythonDependencyToml] = PyprojectToml,
     ) -> str:
         """Return the contents with the declaration at each of the positions rewritten to the version given."""
         file = kind(mock_path(contents))
@@ -35,13 +46,8 @@ class RewriteDeclarationsTest(unittest.TestCase):
         pins = {declared[position]: version for position, version in versions.items()}
         return file.with_pinned_versions(contents, pins)
 
-    def test_bumps_known_versions(self):
-        """Test that a pin with a known newer version is rewritten."""
-        rewritten = self.rewrite('dependencies = ["pkg==1.0"]\n', {1: "1.1"})
-        self.assertEqual(rewritten, 'dependencies = ["pkg==1.1"]\n')
-
     @kills.replace(
-        python_dependency_toml._rewritten_spec,
+        _rewritten_spec,
         'return re.sub(rf"(==\\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)',
         'return f"{declaration.dependency}=={new_version}"',
         "a rewrite replaces the whole declaration, dropping the extra, environment marker, and spaces around the pin",
@@ -51,11 +57,11 @@ class RewriteDeclarationsTest(unittest.TestCase):
         declarations = (
             '    "package[extra]=={0}",\n    "marked=={1}; python_version < \'3.13\'",\n    "spaced == {2}",\n'
         )
-        contents = "[project]\ndependencies = [\n" + declarations.format("1.0", "2.0", "3.0") + "]\n"
+        contents = f"[project]\ndependencies = [\n{declarations.format('1.0', '2.0', '3.0')}]\n"
         rewritten = self.rewrite(contents, {1: "1.1", 2: "2.1", 3: "3.1"})
         self.assertEqual(
             rewritten,
-            "[project]\ndependencies = [\n" + declarations.format("1.1", "2.1", "3.1") + "]\n",
+            f"[project]\ndependencies = [\n{declarations.format('1.1', '2.1', '3.1')}]\n",
         )
 
     def test_narrows_a_requirement_and_keeps_its_extra_and_environment_marker(self):
@@ -75,8 +81,8 @@ class RewriteDeclarationsTest(unittest.TestCase):
         self.assertEqual(rewritten, f'[project]\ndependencies = ["pkg==1.1"]\n{outside}')
 
     @kills.replace(
-        python_dependency_toml.PythonDependencyToml._replaced_specs,
-        "toml.string(new_spec, quoted_as=spec)",
+        PythonDependencyToml._replaced_specs,
+        "string(new_spec, quoted_as=spec)",
         "new_spec",
         "a rewritten spec is quoted the way tomlkit quotes a plain string, so the file's own quoting is lost",
     )
@@ -97,8 +103,7 @@ class RewriteDeclarationsTest(unittest.TestCase):
 
     def test_leaves_a_declaration_that_pins_no_exact_version(self):
         """Test that a declaration pinning no exact version is left alone."""
-        rewritten = self.rewrite('dependencies = ["pkg>=1.0"]\n', {1: "1.1"})
-        self.assertEqual(rewritten, 'dependencies = ["pkg>=1.0"]\n')
+        self.assertEqual(self.rewrite('dependencies = ["pkg>=1.0"]\n', {1: "1.1"}), 'dependencies = ["pkg>=1.0"]\n')
 
     def test_rewrites_one_declaration_of_a_name_and_leaves_the_other(self):
         """Test that one declaration of a name is rewritten while another declaration of that name is left alone."""
@@ -111,24 +116,11 @@ class RewriteDeclarationsTest(unittest.TestCase):
 
     def test_leaves_a_declaration_the_mapping_does_not_hold(self):
         """Test that a declaration is left alone where the mapping does not hold a version for it."""
-        rewritten = self.rewrite('dependencies = ["pkg==1.0"]\n', {})
-        self.assertEqual(rewritten, 'dependencies = ["pkg==1.0"]\n')
+        self.assertEqual(self.rewrite('dependencies = ["pkg==1.0"]\n', {}), 'dependencies = ["pkg==1.0"]\n')
 
 
 class DeclarationsTest(unittest.TestCase):
     """Unit tests for reading every dependency a file declares: the exact pins, and the declarations without one."""
-
-    def references(
-        self, path: Mock, kind: type[python_dependency_toml.PythonDependencyToml] = PyprojectToml
-    ) -> list[python_dependency_toml.Declaration]:
-        """Return the reference each dependency the file declares makes."""
-        return list(kind(path).declarations())
-
-    def markers(
-        self, contents: str, kind: type[python_dependency_toml.PythonDependencyToml] = PyprojectToml
-    ) -> list[Marker]:
-        """Return the marker steering each dependency the file declares."""
-        return [declared.marker for declared in self.references(mock_path(contents), kind)]
 
     def test_reads_declarations_across_arrays(self):
         """Test that a declaration without an exact pin is read from every array, each with the line it sits on."""
@@ -154,6 +146,10 @@ class DeclarationsTest(unittest.TestCase):
             ],
         )
 
+    def references(self, path: Mock, kind: type[PythonDependencyToml] = PyprojectToml) -> list[Declaration]:
+        """Return the reference each dependency the file declares makes."""
+        return list(kind(path).declarations())
+
     def test_reads_an_inline_script_metadata_block(self):
         """Test that a declaration in a `# /// script` block is read, although the block is commented out."""
         path = mock_path(script("pkg==1.0", "other>=2.0"))
@@ -168,7 +164,7 @@ class DeclarationsTest(unittest.TestCase):
         self.assertEqual(self.references(path, InlineScript), [declaration("pkg", "1.0", path, 2, 1)])
 
     @kills.replace(
-        python_dependency_toml._pinned_version,
+        _pinned_version,
         'if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
         'if (exact := [s for s in specifiers if s.operator == "=="]) and is_valid(exact[0].version):',
         "a declaration combining an equals with another specifier is read as a pin on the version the equals names",
@@ -205,7 +201,7 @@ class DeclarationsTest(unittest.TestCase):
         """Test that a dependency uv resolves from a source of its own, or from a URL, is read like any other."""
         contents = (
             '[project]\ndependencies = ["local", "pkg @ git+https://github.com/org/repo.git", "other>=2.0"]\n'
-            + uv_path_source("local")
+            f"{uv_path_source('local')}"
         )
         path = mock_path(contents)
         self.assertEqual(
@@ -219,12 +215,11 @@ class DeclarationsTest(unittest.TestCase):
 
     def test_a_pin_with_a_uv_source_is_read(self):
         """Test that a pin uv resolves from a source of its own is read, since uv can resolve an update for it."""
-        contents = '[project]\ndependencies = ["local==1.0"]\n' + uv_path_source("local")
-        path = mock_path(contents)
+        path = mock_path(f'[project]\ndependencies = ["local==1.0"]\n{uv_path_source("local")}')
         self.assertEqual(self.references(path), [declaration("local", "1.0", path, 2, 1, uv_sourced=True)])
 
     @kills.replace(
-        python_dependency_toml.PythonDependencyToml.declarations,
+        PythonDependencyToml.declarations,
         "normalized_python_name(requirement.name)",
         "requirement.name",
         "a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked "
@@ -232,7 +227,7 @@ class DeclarationsTest(unittest.TestCase):
         case="a dependency with an underscore",
     )
     @kills.delete(
-        pyproject_config._UvTable.from_mapping,
+        _UvTable.from_mapping,
         "normalized_python_name(name) for name in ",
         "a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about "
         "a name it has no release for",
@@ -249,8 +244,7 @@ class DeclarationsTest(unittest.TestCase):
             ("a dependency with an underscore", "local_pkg", "local-pkg"),
         ):
             with self.subTest(case):
-                contents = f'[project]\ndependencies = ["{declared}==1.0"]\n' + uv_path_source(sourced)
-                path = mock_path(contents)
+                path = mock_path(f'[project]\ndependencies = ["{declared}==1.0"]\n{uv_path_source(sourced)}')
                 self.assertEqual(self.references(path), [declaration(declared, "1.0", path, 2, 1, uv_sourced=True)])
 
     def test_a_declaration_that_does_not_parse(self):
@@ -268,6 +262,10 @@ class DeclarationsTest(unittest.TestCase):
         declaration = '    "pkg==1.0",  # update-time: ignore[update]\n'
         contents = f'[project]\ndependencies = [\n{declaration}    "other==2.0",\n]\n'
         self.assertEqual(self.markers(contents), [Marker(ignored_scopes=Scope.UPDATE), Marker()])
+
+    def markers(self, contents: str, kind: type[PythonDependencyToml] = PyprojectToml) -> list[Marker]:
+        """Return the marker steering each dependency the file declares."""
+        return [declared.marker for declared in self.references(mock_path(contents), kind)]
 
     def test_reads_the_marker_on_the_line_above_a_declaration(self):
         """Test that a marker steers the declaration on the line below it, and none when that line opens an array."""
@@ -310,11 +308,6 @@ class DeclarationsTest(unittest.TestCase):
 class PinnedDeclarationsTest(unittest.TestCase):
     """Unit tests for the versions the declarations a file makes pin."""
 
-    def pins(self, path: Mock) -> list[python_dependency_toml.Declaration]:
-        """Return the reference each declaration that pins a version makes."""
-        declarations = PyprojectToml(path).declarations()
-        return [d for d in declarations if d.current_version]
-
     def test_reads_exact_pins_across_arrays(self):
         """Test that `==` pins are read from every dependency array, each with the line it sits on."""
         contents = (
@@ -333,10 +326,14 @@ class PinnedDeclarationsTest(unittest.TestCase):
             ],
         )
 
+    def pins(self, path: Mock) -> list[Declaration]:
+        """Return the reference each declaration that pins a version makes."""
+        declarations = PyprojectToml(path).declarations()
+        return [d for d in declarations if d.current_version]
+
     def test_reads_a_name_pinned_more_than_once(self):
         """Test that a name pinned in two arrays is returned once per pin, so neither pin hides the other."""
-        contents = '[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==2.0"]\n'
-        path = mock_path(contents)
+        path = mock_path('[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==2.0"]\n')
         self.assertEqual(
             self.pins(path),
             [
@@ -346,7 +343,7 @@ class PinnedDeclarationsTest(unittest.TestCase):
         )
 
     @kills.replace(
-        python_dependency_toml.PythonDependencyToml.declarations,
+        PythonDependencyToml.declarations,
         "requirement.name,\n",
         'requirement.name + "".join(f"[{extra}]" for extra in requirement.extras),\n',
         "a pin's name carries the extra its declaration spells, so it names no package the source knows",
@@ -370,7 +367,7 @@ class PinnedDeclarationsTest(unittest.TestCase):
         )
 
     @kills.replace(
-        python_dependency_toml._pinned_version,
+        _pinned_version,
         "is_valid(specifiers[0].version):",
         're.fullmatch("[0-9.]+", specifiers[0].version):',
         "a version is judged by its shape rather than by parsing it, so a local version and an epoch pin nothing",

@@ -3,7 +3,7 @@
 import contextlib
 import unittest
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, override
 from unittest.mock import ANY, Mock, patch
 
 from mutation_time.mutation import kills
@@ -12,31 +12,55 @@ from update_time.domain import file_type
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
-from update_time.io import log as log_module
 from update_time.io.filesystem import _EXCLUDE_PATHS
-from update_time.io.log import Logger
-from update_time.lock_files import compiled_requirements_txt
-from update_time.lock_files.compiled_requirements_txt import Unrecompilable
+from update_time.io.log import (
+    Logger,
+    _Fields,  # simplint: ignore[private-import-path] # annotates with it
+    _finding,
+)
+from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt, Unrecompilable
 from update_time.manifests import requirements_txt as requirements_txt_manifest
 from update_time.markers.parser import parse_directives
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.location import Location
-from update_time.references import vulnerability as vulnerability_module
-from update_time.sources import pypi as pypi_module
-from update_time.updaters import update_requirements_txt
-from update_time.updaters.update_requirements_txt import _update_requirements_txts
-
-from tests.helpers import FakeFiles, patch_environ, requested_urls
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    message_of,
-    published_version,
-    staleness_disabled,
+from update_time.references.vulnerability import _report
+from update_time.sources.pypi import _yank_state
+from update_time.updaters.update_requirements_txt import (
+    _check_loose_requirements,
+    _check_pinned_versions,
+    _pins_by_source,
+    _update_requirements_txts,
+    _warn_about_items_that_decide_nothing,
 )
-from tests.update_time.lock_files.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
-from tests.update_time.manifests.helpers import requirements_file
-from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, osv_advisory, pypi_index, pypi_release, yanked_file
-from tests.update_time.updaters.fixtures import (
+
+from tests.environment import patch_environ
+from tests.file_mocks import FakeFiles
+from tests.http_mocks import patch_get, requested_urls
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.io.log_fields import published_version
+from tests.update_time.io.log_messages import message_of
+from tests.update_time.lock_files.lock_file_contents import (
+    requirements_compiled_by_pip_compile,
+    requirements_compiled_by_uv,
+)
+from tests.update_time.manifests.manifest_contents import requirements_file
+from tests.update_time.run_settings import staleness_disabled
+from tests.update_time.sources.osv_answers import (
+    assert_osv_asked_about,
+    no_vulnerabilities,
+    osv,
+    osv_advisory,
+    unreachable_osv,
+)
+from tests.update_time.sources.pypi_answers import (
+    PYPI_OLD_UPLOAD,
+    dated_pypi_index,
+    pypi_index,
+    pypi_release,
+    yanked_file,
+)
+
+from .fixtures import (
     DJANGO_ADVISORY,
     DJANGO_VULNERABILITY,
     OTHER_DJANGO_ADVISORY,
@@ -44,102 +68,30 @@ from tests.update_time.updaters.fixtures import (
     PYPI_PAST_COOLDOWN_UPLOAD,
     PYPI_RECENT_UPLOAD,
 )
-from tests.update_time.updaters.helpers import (
-    assert_osv_asked_about,
-    dated_pypi_index,
-    no_vulnerabilities,
-    osv,
-    scanned_files,
-    unreachable_osv,
-)
+from .scanning import scanned_files
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-_PUBLISHED = published_version("1.1", PYPI_OLD_UPLOAD)
+_PUBLISHED: Final[str] = published_version("1.1", PYPI_OLD_UPLOAD)
 
 # The scan root, a compiled file in it, and `base.in`, the source that file names.
-_ROOT = Path.cwd()
-_COMPILED = _ROOT / "requirements.txt"
-_SOURCE = _ROOT / "base.in"
-
-# The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
-_PYPI_INDEX_URL = "https://pypi.org/simple/"
+_ROOT: Final[Path] = Path.cwd()
+_COMPILED: Final[Path] = _ROOT / "requirements.txt"
+_SOURCE: Final[Path] = _ROOT / "base.in"
 
 
-@no_vulnerabilities
-@patch("requests.Session.get")
+@no_vulnerabilities()
+@patch_get()
 @patch("pathlib.Path.rglob")
 class UpdateRequirementsTxtTest(LoggingTestCase):
     """Unit tests for the update requirements.txt function."""
 
+    @override
     def setUp(self) -> None:
         """Stub out the recompile, so a compiled file's run is asked for without a compiler being started."""
         super().setUp()
         self.mock_recompile = self.enterContext(patch.object(RequirementsCompiler, "recompile", autospec=True))
-
-    def discovered_requirements_txt(self, rglob: Mock, contents: str) -> Mock:
-        """Return the single requirements file the scan discovers, holding the contents."""
-        requirements_txt = requirements_file(contents)
-        rglob.return_value = [requirements_txt]
-        return requirements_txt
-
-    def run_update(  # noqa: PLR0913 — the run's mocks, the files, and what the scan and PyPI answer
-        self,
-        rglob: Mock,
-        get: Mock,
-        files: Mapping[Path, str],
-        *,
-        discovered: Iterable[Path] = (_COMPILED,),
-        directories: Iterable[Path] = (),
-        responses: list | None = None,
-    ) -> FakeFiles:
-        """Run the update over the files, PyPI giving the responses, and return the files the run left.
-
-        Without responses, PyPI offers flask 1.1 over 1.0.
-        """
-        fake_files = FakeFiles(files, directories=directories)
-        self.mock_recompile.reset_mock()  # So a case of a table sees only the recompiles its own run asked for
-        rglob.return_value = list(discovered)
-        get.side_effect = self.pypi("1.0", "1.1", bump=True) if responses is None else responses
-        with fake_files.patched():
-            _update_requirements_txts()
-        return fake_files
-
-    def pypi(self, *versions: str, bump: bool = False, upload_time: str = PYPI_OLD_UPLOAD) -> list:
-        """Return mock PyPI responses: the Index API versions, plus per-version metadata when a bump is expected."""
-        responses = [pypi_index(*versions)]
-        if bump:
-            responses.append(pypi_release(upload_time))
-        return responses
-
-    def queried_packages(self, mock_get: Mock) -> list[str]:
-        """Return the packages whose PyPI index was fetched, in the order they were fetched."""
-        urls = [url for url in requested_urls(mock_get) if url.startswith(_PYPI_INDEX_URL)]
-        return [url.removeprefix(_PYPI_INDEX_URL).removesuffix("/") for url in urls]
-
-    def stale_pypi(self, *versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool = False) -> list[Mock]:
-        """Return a mock Index API response listing the versions and a distribution file with the given upload time."""
-        return [dated_pypi_index(*versions, upload_time=upload_time, archived=archived)]
-
-    def loose_requirement(self, rglob: Mock, marker: str = "") -> Mock:
-        """Return the discovered file declaring `humanize>=4` with the marker, a requirement naming a range."""
-        comment = f"  # update-time: {marker}" if marker else ""
-        return self.discovered_requirements_txt(rglob, f"humanize>=4{comment}\n")
-
-    def update_a_source(  # noqa: PLR0913 — the run's mocks, and what the two files hold
-        self, rglob: Mock, get: Mock, pin: str, requirement: str, responses: list, *, compiled: str = ""
-    ) -> None:
-        """Run the update over a compiled file, uv's by default, with its `flask==1.0` replaced by the pin."""
-        compiled = (compiled or requirements_compiled_by_uv("base.in")).replace("flask==1.0", pin)
-        self.run_update(rglob, get, {_COMPILED: compiled, _SOURCE: f"{requirement}\n"}, responses=responses)
-
-    def django_pin(self, rglob: Mock, get: Mock, marker: str = "") -> Mock:
-        """Return the discovered file pinning `django==3.2.0` with the marker, PyPI listing that version as newest."""
-        comment = f"  # update-time: {marker}" if marker else ""
-        requirements_txt = self.discovered_requirements_txt(rglob, f"django==3.2.0{comment}\n")
-        get.side_effect = self.pypi("3.2.0")
-        return requirements_txt
 
     def test_no_change(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin already on the latest version is left unchanged."""
@@ -150,6 +102,19 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_path_logged(requirements_txt)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def discovered_requirements_txt(self, rglob: Mock, contents: str) -> Mock:
+        """Return the single requirements file the scan discovers, holding the contents."""
+        requirements_txt = requirements_file(contents)
+        rglob.return_value = [requirements_txt]
+        return requirements_txt
+
+    def pypi(self, *versions: str, bump: bool = False, upload_time: str = PYPI_OLD_UPLOAD) -> list:
+        """Return mock PyPI responses: the Index API versions, plus per-version metadata when a bump is expected."""
+        responses = [pypi_index(*versions)]
+        if bump:
+            responses.append(pypi_release(upload_time))
+        return responses
 
     def test_a_pin_whose_metadata_reports_no_project_urls(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose metadata reports the project URLs as null is updated, and so is the pin beside it."""
@@ -164,8 +129,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a `cooldown` marker on a pin holds something back, since PyPI dates its versions."""
-        contents = "flask==1.0  # update-time: set[cooldown=30]\n"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
+        requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0  # update-time: set[cooldown=30]\n")
         mock_get.side_effect = self.pypi("1.0")
         _update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
@@ -200,6 +164,10 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         _update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
+
+    def stale_pypi(self, *versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool = False) -> list[Mock]:
+        """Return a mock Index API response listing the versions and a distribution file with the given upload time."""
+        return [dated_pypi_index(*versions, upload_time=upload_time, archived=archived)]
 
     def test_stale_loose_requirement_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement declared without an exact pin is warned about when its newest release is old.
@@ -244,7 +212,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.return_value = self.stale_pypi("4.0.0")[0]
         _update_requirements_txts()
         self.assertEqual(self.queried_packages(mock_get), ["typing-extensions"])
-        stale = {"version": "4.0.0", "days": ANY, "threshold": ANY}
+        stale: _Fields = {"version": "4.0.0", "days": ANY, "threshold": ANY}
         self.assert_logged_among_others(
             message_of(Logger.stale_dependency),
             dependency="typing_extensions",
@@ -257,6 +225,12 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             location=Location(requirements_txt, 2),
             **stale,
         )
+
+    def queried_packages(self, mock_get: Mock) -> list[str]:
+        """Return the packages whose PyPI index was fetched, in the order they were fetched."""
+        pypi_index_url = "https://pypi.org/simple/"
+        urls = [url for url in requested_urls(mock_get) if url.startswith(pypi_index_url)]
+        return [url.removeprefix(pypi_index_url).removesuffix("/") for url in urls]
 
     def test_a_requirement_whose_newest_release_is_recent_is_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement whose newest release is recent is not warned about, however it is spelled."""
@@ -273,9 +247,14 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a loose requirement is still looked up when the staleness check is switched off."""
         requirements_txt = self.loose_requirement(mock_rglob)
         mock_get.side_effect = self.stale_pypi("4.15.0", archived=True)
-        with staleness_disabled:
+        with staleness_disabled():
             _update_requirements_txts()
         self.assert_archived_dependency_logged("humanize", Location(requirements_txt, 1))
+
+    def loose_requirement(self, rglob: Mock, marker: str = "") -> Mock:
+        """Return the discovered file declaring `humanize>=4` with the marker, a requirement naming a range."""
+        comment = f"  # update-time: {marker}" if marker else ""
+        return self.discovered_requirements_txt(rglob, f"humanize>=4{comment}\n")
 
     def test_a_stale_and_archived_requirement_is_reported_as_both(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement whose project is archived and whose newest release is old gets both warnings."""
@@ -293,9 +272,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         force run-wide does not override.
         """
         requirements_txt = self.loose_requirement(mock_rglob, "set[stale-after=90]")
-        published = PYPI_PAST_COOLDOWN_UPLOAD
-        mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=published)
-        with staleness_disabled:
+        mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
+        with staleness_disabled():
             _update_requirements_txts()
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
@@ -399,7 +377,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         _update_requirements_txts()
         location = Location(requirements_txt, 1)
         redundant = message_of(Logger.redundant_directive)
-        fields = {"dependency": "humanize", "location": location}
+        fields: _Fields = {"dependency": "humanize", "location": location}
         self.assert_logged_among_others(redundant, directive="allow[hash-drift]", reason=Reason.NO_HASH_PIN, **fields)
         self.assert_logged_among_others(
             redundant, directive="ignore[update]", reason=Reason.NO_VERSION_TO_UPDATE, **fields
@@ -417,7 +395,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 _update_requirements_txts()
                 redundant = message_of(Logger.redundant_directive)
-                fields = {"dependency": "humanize", "location": Location(requirements_txt, 1)}
+                fields: _Fields = {"dependency": "humanize", "location": Location(requirements_txt, 1)}
                 self.assert_logged_among_others(redundant, directive="allow[floating-pin]", reason=reason, **fields)
                 self.assertEqual(len(self.records_of(redundant, directive="allow[floating-pin]")), 1)
 
@@ -462,8 +440,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     @kills.append(
         directive_module,
-        "Reason.NO_ARCHIVAL_SIGNAL,",
-        "\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
+        "reason=Reason.NO_ARCHIVAL_SIGNAL,",
+        "\n        without_a_version=Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
         "ignore[archived] on a loose requirement is reported as redundant, though archival needs the package's "
         "name alone",
     )
@@ -484,16 +462,15 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         so the warning is given only when the marker's threshold is the one applied.
         """
         requirements_txt = self.loose_requirement(mock_rglob, "set[stale-after=90]")
-        published = PYPI_PAST_COOLDOWN_UPLOAD
-        mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=published)
+        mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
         _update_requirements_txts()
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_a_threshold_judging_a_recent_release_as_the_run_does_is_redundant(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a threshold judging a recent release as the run does is redundant, a threshold of 0 included."""
-        runs: dict[str, tuple[contextlib.AbstractContextManager[object], str]] = {
+        runs: dict[str, tuple[contextlib.AbstractContextManager[None], str]] = {
             "the default run": (contextlib.nullcontext(), "the default of 365 days"),
-            "a run switching the check off": (staleness_disabled, "--stale-after 0"),
+            "a run switching the check off": (staleness_disabled(), "--stale-after 0"),
         }
         for threshold in (90, 0):
             directive = f"set[stale-after={threshold}]"
@@ -601,7 +578,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             directive="ignore[yanked]",
             dependency="humanize",
             location=Location(requirements_txt, 1),
-            finding=log_module._finding(Scope.YANKED, "4.16.0"),
+            finding=_finding(Scope.YANKED, "4.16.0"),
         )
 
     def test_ignore_archived_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
@@ -631,6 +608,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             _update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
+
+    def django_pin(self, rglob: Mock, get: Mock, marker: str = "") -> Mock:
+        """Return the discovered file pinning `django==3.2.0` with the marker, PyPI listing that version as newest."""
+        comment = f"  # update-time: {marker}" if marker else ""
+        requirements_txt = self.discovered_requirements_txt(rglob, f"django==3.2.0{comment}\n")
+        get.side_effect = self.pypi("3.2.0")
+        return requirements_txt
 
     def test_vulnerability_below_the_risk_level_in_force(self, mock_rglob: Mock, mock_get: Mock):
         """Test that of the advisories affecting a pin, only those at or above the level in force are warned about."""
@@ -781,8 +765,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         for case, (identifier, records) in cases.items():
             with self.subTest(case=case):
                 directive = f"ignore[vulnerable={identifier}]"
-                requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
-                location = Location(requirements_txt, 1)
+                location = Location(self.django_pin(mock_rglob, mock_get, directive), 1)
                 with osv(*records):
                     _update_requirements_txts()
                 self.assert_no_warnings_logged()
@@ -837,8 +820,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_every_dead_vulnerable_form_names_itself(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a version with no vulnerability at all reports each `vulnerable` form under its own directive."""
         advisory = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
-        directives = f"set[vulnerability-level=none] {advisory}"
-        requirements_txt = self.django_pin(mock_rglob, mock_get, directives)
+        requirements_txt = self.django_pin(mock_rglob, mock_get, f"set[vulnerability-level=none] {advisory}")
         with osv():  # No vulnerability, so both forms silence nothing.
             _update_requirements_txts()
         location = Location(requirements_txt, 1)
@@ -861,7 +843,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_none_logged(
             message_of(Logger.redundant_ignore),
             "a redundant advisory",
-            finding=log_module._finding(Scope.VULNERABLE, "3.2.0"),
+            finding=_finding(Scope.VULNERABLE, "3.2.0"),
         )
 
     def test_ignore_vulnerable_advisory_marker_is_redundant_when_no_vulnerability_answers_to_it(
@@ -890,15 +872,15 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         )
 
     @kills.replace(
-        vulnerability_module._report,
+        _report,
         "logger.globally_ignored_vulnerability(reference, vulnerability, silenced_by)",
         "logger.globally_ignored_vulnerability(reference, vulnerability, frozenset({vulnerability.advisory}))",
         "the option's line names the identifier OSV answered under rather than the one the reader passed",
     )
     def test_the_option_line_names_the_advisory_and_what_was_passed(self, mock_rglob: Mock, mock_get: Mock):
         """Test that the option's line names the advisory OSV answered under, and quotes the identifier passed."""
-        cve = "CVE-2021-1111"
         requirements_txt = self.django_pin(mock_rglob, mock_get)
+        cve = "CVE-2021-1111"
         with osv(DJANGO_ADVISORY | {"aliases": [cve]}), patch_environ({IGNORE_VULNERABILITIES.name: cve}):
             _update_requirements_txts()
         self.assert_no_warnings_logged()
@@ -921,7 +903,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that no staleness warning is emitted when the check is disabled with --stale-after 0."""
         self.discovered_requirements_txt(mock_rglob, "humanize==4.15.0\n")
         mock_get.side_effect = self.stale_pypi("4.15.0")
-        with staleness_disabled:
+        with staleness_disabled():
             _update_requirements_txts()
         self.assert_no_warnings_logged()
 
@@ -982,8 +964,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "",
             "# c",
         )
-        contents = "".join(f"{line}\n" for line in lines)
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
+        requirements_txt = self.discovered_requirements_txt(mock_rglob, "".join(f"{line}\n" for line in lines))
         # Answer any package, so a line that should name none is caught by the assertion below rather than by
         # running out of responses.
         mock_get.return_value = pypi_index("1.1")
@@ -1019,6 +1000,28 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: "flask==1.0\n"}
         )
         self.assertEqual(sources_at_the_recompile, ["flask==1.1\n"])
+
+    def run_update(  # noqa: PLR0913 — the run's mocks, the files, and what the scan and PyPI answer
+        self,
+        rglob: Mock,
+        get: Mock,
+        files: Mapping[Path, str],
+        *,
+        discovered: Iterable[Path] = (_COMPILED,),
+        directories: Iterable[Path] = (),
+        responses: list | None = None,
+    ) -> FakeFiles:
+        """Run the update over the files, PyPI giving the responses, and return the files the run left.
+
+        Without responses, PyPI offers flask 1.1 over 1.0.
+        """
+        fake_files = FakeFiles(files, directories=directories)
+        self.mock_recompile.reset_mock()  # So a case of a table sees only the recompiles its own run asked for
+        rglob.return_value = list(discovered)
+        get.side_effect = self.pypi("1.0", "1.1", bump=True) if responses is None else responses
+        with fake_files.patched():
+            _update_requirements_txts()
+        return fake_files
 
     def test_a_compiled_file_update_time_cannot_recompile_is_left_as_it_is_with_the_reason(
         self, mock_rglob: Mock, mock_get: Mock
@@ -1097,7 +1100,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                     self.assert_no_redundant_directive_logged()
 
     @kills.delete_statement(
-        update_requirements_txt._warn_about_items_that_decide_nothing,
+        _warn_about_items_that_decide_nothing,
         "_LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)",
         "Update-time stays silent about a cooldown that pip-compile cannot apply to one package",
     )
@@ -1105,8 +1108,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self, mock_rglob: Mock, mock_get: Mock
     ):
         """Test that a cooldown on a requirement naming a range is reported in a source pip-compile recompiles from."""
-        source = "flask>=0.1  # update-time: set[cooldown=30]\n"
         compiled = requirements_compiled_by_pip_compile("base.in")
+        source = "flask>=0.1  # update-time: set[cooldown=30]\n"
         self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: source})
         self.assert_redundant_directive_logged(
             Reason.COOLDOWN_PER_RUN, "flask", Location(_SOURCE, 1), "set[cooldown=30]", among_others=True
@@ -1119,6 +1122,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         yanked = pypi_index("4.15.0", files=[yanked_file("humanize-4.15.0.tar.gz", reason="broken")])
         self.update_a_source(mock_rglob, mock_get, "humanize==4.15.0", "humanize>=4", [yanked])
         self.assert_yanked_dependency_logged("humanize", "4.15.0", Location(_SOURCE, 1))
+
+    def update_a_source(  # noqa: PLR0913 — the run's mocks, and what the two files hold
+        self, rglob: Mock, get: Mock, pin: str, requirement: str, responses: list, *, compiled: str = ""
+    ) -> None:
+        """Run the update over a compiled file, uv's by default, with its `flask==1.0` replaced by the pin."""
+        compiled = (compiled or requirements_compiled_by_uv("base.in")).replace("flask==1.0", pin)
+        self.run_update(rglob, get, {_COMPILED: compiled, _SOURCE: f"{requirement}\n"}, responses=responses)
 
     def test_the_marker_in_a_source_silences_a_vulnerability_at_the_version_the_compiled_file_pins(
         self, mock_rglob: Mock, mock_get: Mock
@@ -1133,7 +1143,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_ignored_vulnerability_logged("django", location, DJANGO_VULNERABILITY.advisory, directive)
 
     @kills.delete(
-        pypi_module._yank_state,
+        _yank_state,
         "not is_valid(version) or ",
         "a compiled pin that is not PEP 440 aborts the run",
         raises="packaging.version.InvalidVersion: Invalid version: '3.2.0-weird.x'",
@@ -1141,8 +1151,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_compiled_pin_that_is_not_pep_440_is_checked_without_a_yank(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pinned version outside PEP 440 is checked for vulnerabilities alone."""
         with osv(DJANGO_ADVISORY):
-            pin = "django==3.2.0-weird.x"
-            self.update_a_source(mock_rglob, mock_get, pin, "django>=3", self.pypi("3.2.0"))
+            self.update_a_source(mock_rglob, mock_get, "django==3.2.0-weird.x", "django>=3", self.pypi("3.2.0"))
         self.assert_vulnerable_dependency_logged("django", "3.2.0-weird.x", DJANGO_VULNERABILITY, Location(_SOURCE, 1))
 
     def test_a_source_two_compiled_files_share_is_checked_at_each_version_they_pin(
@@ -1165,14 +1174,14 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def test_a_transitive_pin_in_a_compiled_file_is_not_checked(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin the compiled file holds for a dependency of a source's requirement is not checked."""
-        compiled = requirements_compiled_by_uv("base.in") + "django==3.2.0\n    # via flask\n"
+        compiled = f"{requirements_compiled_by_uv('base.in')}django==3.2.0\n    # via flask\n"
         with osv(DJANGO_ADVISORY):
             self.update_a_source(mock_rglob, mock_get, "flask==1.0", "flask>=1", self.pypi("1.0"), compiled=compiled)
         self.assert_vulnerable_dependency_logged("flask", "1.0", DJANGO_VULNERABILITY, Location(_SOURCE, 1))
 
     @kills.delete_statement(
-        update_requirements_txt._check_pinned_versions,
-        "report_project_checks(pin, _LOG, pypi.project)",
+        _check_pinned_versions,
+        "report_project_checks(pin, _LOG, project)",
         "the project of a missing source's pin is never checked for staleness or archival",
     )
     def test_a_pin_from_a_missing_source_is_checked_for_staleness_at_its_line(self, mock_rglob: Mock, mock_get: Mock):
@@ -1182,12 +1191,12 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(_COMPILED, 3), among_others=True)
 
     @kills.delete(
-        update_requirements_txt._check_pinned_versions,
+        _check_pinned_versions,
         "batches.append(pins_from_missing_sources)",
         "the pins of a missing source go unchecked",
     )
     @kills.delete(
-        compiled_requirements_txt.CompiledRequirementsTxt.pins_from,
+        CompiledRequirementsTxt.pins_from,
         "sources & ",
         "Update-time checks the transitive pins of a compiled file whose source is missing",
     )
@@ -1205,7 +1214,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assertEqual(len(self.records_of(message_of(Logger.vulnerable_dependency))), 1)
 
     @kills.replace(
-        update_requirements_txt._update_requirements_txts,
+        _update_requirements_txts,
         "_check_pinned_versions(plain_files, compiled_files,",
         "_check_pinned_versions(plain_files, recompilable,",
         "Update-time checks the versions only of the compiled files it recompiles",
@@ -1221,11 +1230,10 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             self.update_a_source(
                 mock_rglob, mock_get, "django==3.2.0", "django>=3", self.pypi("3.2.0"), compiled=compiled
             )
-        location = Location(_SOURCE, 1)
-        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, location)
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(_SOURCE, 1))
 
     @kills.replace(
-        update_requirements_txt._pins_by_source,
+        _pins_by_source,
         "CompiledRequirementsTxt.read(compiled.path).pins",
         "compiled.pins",
         "Update-time checks the old pins of a recompiled file",
@@ -1259,14 +1267,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.update_a_source(mock_rglob, mock_get, "humanize==4.15.0", requirement, [pypi_index("4.15.0")])
                 self.assertEqual(self.records_of(redundant, reason=lacking_a_version), [])
                 redundant_ignore = message_of(Logger.redundant_ignore)
-                finding = log_module._finding(scope, "4.15.0")
-                self.assertNotEqual(self.records_of(redundant_ignore, finding=finding), [])
+                self.assertNotEqual(self.records_of(redundant_ignore, finding=_finding(scope, "4.15.0")), [])
             with self.subTest(f"{directive}, not pinned"):
                 self.update_a_source(mock_rglob, mock_get, "flask==1.0", requirement, [pypi_index("4.15.0")])
                 self.assertNotEqual(self.records_of(redundant, reason=lacking_a_version), [])
 
     @kills.replace(
-        update_requirements_txt._check_loose_requirements,
+        _check_loose_requirements,
         "steers_the_update=compiler is not None",
         "steers_the_update=False",
         "an `ignore[update]` in a source Update-time recompiles is not said to hold the update back",
@@ -1283,7 +1290,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that each source of a compiled file is bumped, and that one line names the sources that exist."""
         dev, missing = _ROOT / "dev.in", _ROOT / "missing.in"
         compiled = (
-            requirements_compiled_by_uv("base.in", output="other.txt") + "    #   -r missing.in\n    #   -r dev.in\n"
+            f"{requirements_compiled_by_uv('base.in', output='other.txt')}    #   -r missing.in\n    #   -r dev.in\n"
         )
         files = self.run_update(
             mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n", dev: "flask==1.0\n"}
@@ -1324,8 +1331,9 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             mock_rglob,
             mock_get,
             {
-                dev_compiled: requirements_compiled_by_uv("dev.in", output="dev-requirements.txt")
-                + "    # via -r base.txt\n",
+                dev_compiled: (
+                    f"{requirements_compiled_by_uv('dev.in', output='dev-requirements.txt')}    # via -r base.txt\n"
+                ),
                 dev_source: "-r base.txt\nflask==1.0\n",
                 base_compiled: requirements_compiled_by_pip_compile("base.in", output="base.txt"),
                 _SOURCE: "flask==1.0\n",
@@ -1366,7 +1374,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_compiled_file_missing_one_of_its_sources_is_not_recompiled(self, mock_rglob: Mock, mock_get: Mock):
         """Test that the source that exists is bumped, and the compiled file not recompiled without the other."""
         missing = _ROOT / "missing.in"
-        compiled = requirements_compiled_by_uv("base.in") + "    #   -r missing.in\n"
+        compiled = f"{requirements_compiled_by_uv('base.in')}    #   -r missing.in\n"
         files = self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
         self.assertEqual(files[_SOURCE], "flask==1.1\n")
         self.mock_recompile.assert_not_called()
@@ -1434,8 +1442,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         }
         for case, contents in cases.items():
             with self.subTest(case):
-                files = self.run_update(mock_rglob, mock_get, {_COMPILED: contents})
-                self.assertEqual(files[_COMPILED], contents)
+                self.assertEqual(self.run_update(mock_rglob, mock_get, {_COMPILED: contents})[_COMPILED], contents)
                 mock_get.assert_not_called()
                 self.mock_recompile.assert_not_called()
                 self.assert_logged(message_of(Logger.compiled_file_without_a_source), location=Location(_COMPILED))

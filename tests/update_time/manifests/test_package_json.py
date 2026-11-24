@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 from mutation_time.mutation import kills
 from update_time.domain.reference import Reference
-from update_time.manifests import npm_declaration, package_json
-from update_time.manifests.npm_declaration import CatalogEntry, Catalogs, Declaration
+from update_time.manifests.npm_declaration import CatalogEntry, Catalogs, Declaration, _catalog
+from update_time.manifests.package_json import PackageJson
 from update_time.primitives.location import Location
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
 if TYPE_CHECKING:
     from unittest.mock import Mock
@@ -19,15 +19,15 @@ if TYPE_CHECKING:
 class NodeEngineTest(unittest.TestCase):
     """Unit tests for where a package.json declares its Node engine."""
 
-    @staticmethod
-    def location(path: Mock) -> Location:
-        """Return where the package.json declares its Node engine."""
-        return package_json.PackageJson.read(path).node_engine().location
-
     def test_the_entry_the_section_declares(self):
         """Test that the entry is located at the line and the column the section declares it on."""
         path = mock_path('{\n  "engines": {\n    "node": "18"\n  }\n}\n')
         self.assertEqual(self.location(path), Location(path, 3, column=4))
+
+    @staticmethod
+    def location(path: Mock) -> Location:
+        """Return where the package.json declares its Node engine."""
+        return PackageJson.read(path).node_engine().location
 
     def test_a_file_declaring_no_such_entry(self):
         """Test that an entry the file does not declare is located at the file, rather than at a guessed line."""
@@ -37,12 +37,6 @@ class NodeEngineTest(unittest.TestCase):
 
 class DependencyLocationsTest(unittest.TestCase):
     """Unit tests for reading the direct registry dependencies and where each is declared."""
-
-    @staticmethod
-    def locations(path: Mock) -> dict[str, list[Location]]:
-        """Return each direct registry dependency of the package.json and where its entries sit."""
-        references = package_json.PackageJson.read(path).dependency_references(Catalogs())
-        return {name: [reference.location for reference in each] for name, each in references.items()}
 
     def test_every_entry_across_the_sections(self):
         """Test that every entry in the dependency sections is returned, in order, each at its own line."""
@@ -63,6 +57,12 @@ class DependencyLocationsTest(unittest.TestCase):
                 "fsevents": [Location(path, 11, 4)],
             },
         )
+
+    @staticmethod
+    def locations(path: Mock) -> dict[str, list[Location]]:
+        """Return each direct registry dependency of the package.json and where its entries sit."""
+        references = PackageJson.read(path).dependency_references(Catalogs())
+        return {name: [reference.location for reference in each] for name, each in references.items()}
 
     def test_the_line_each_dependency_is_declared_on(self):
         """Test that each dependency is located at the line its entry sits on."""
@@ -99,8 +99,7 @@ class DependencyLocationsTest(unittest.TestCase):
                 }
             }
         )
-        located = self.locations(mock_path(contents))
-        self.assertEqual(list(located), ["clipboard"])
+        self.assertEqual(list(self.locations(mock_path(contents))), ["clipboard"])
 
     def test_no_dependencies(self):
         """Test that a package.json without dependency sections yields nothing."""
@@ -119,12 +118,12 @@ class CatalogsTest(unittest.TestCase):
         for case, (workspaces, name) in cases.items():
             with self.subTest(case):
                 contents = {"workspaces": workspaces, "catalog": {"is-number": "6.0.0"}}
-                read = package_json.PackageJson.read(mock_path(json.dumps(contents)))
+                read = PackageJson.read(mock_path(json.dumps(contents)))
                 self.assertEqual(list(read.catalogs().entries), [CatalogEntry(name, "left-pad")])
                 self.assertEqual([declaration.dependency for declaration in read.declarations()], ["left-pad"])
 
     @kills.replace(
-        package_json.PackageJson._catalogs,
+        PackageJson._catalogs,
         "(catalog_name(name)",
         "(str(name)",
         "a version bun moved for a `catalog:` dependency is reported at the member, not at the default catalog",
@@ -133,18 +132,13 @@ class CatalogsTest(unittest.TestCase):
         """Test that the entries of a named catalog called default are located as the unnamed catalog's."""
         path = mock_path(json.dumps({"catalogs": {"default": {"left-pad": "1.3.0"}}}, indent=2))
         self.assertEqual(
-            package_json.PackageJson.read(path).catalogs(),
+            PackageJson.read(path).catalogs(),
             Catalogs({CatalogEntry("", "left-pad"): Reference("left-pad", "1.3.0", Location(path, 4, 6))}),
         )
 
 
 class DeclaredRangesTest(unittest.TestCase):
     """Unit tests for reading the range each registry dependency declares."""
-
-    @staticmethod
-    def ranges(path: Mock) -> dict[tuple[tuple[str, ...], str], Reference]:
-        """Return a reference to the range each registry dependency of the package.json declares."""
-        return package_json.PackageJson.read(path).declared_ranges()
 
     def test_a_range_per_section_declaring_the_name(self):
         """Test that a name two sections declare has a range per section, each at its own line."""
@@ -161,6 +155,11 @@ class DeclaredRangesTest(unittest.TestCase):
                 (("devDependencies",), "react"): Reference("react", "~18.2.0", Location(path, 6, 4)),
             },
         )
+
+    @staticmethod
+    def ranges(path: Mock) -> dict[tuple[tuple[str, ...], str], Reference]:
+        """Return a reference to the range each registry dependency of the package.json declares."""
+        return PackageJson.read(path).declared_ranges()
 
     def test_non_registry_specs_skipped(self):
         """Test that a git URL and the github shorthand are skipped, since neither names a registry release."""
@@ -183,7 +182,7 @@ class DeclarationsTest(unittest.TestCase):
             "}\n"
         )
         self.assertEqual(
-            list(package_json.PackageJson.read(path).declarations()),
+            list(PackageJson.read(path).declarations()),
             [
                 Declaration("react", "18.2.0", Location(path, 3, 4), names_a_release=True),
                 Declaration("left-pad", "", Location(path, 4, 4), names_a_release=True),
@@ -197,7 +196,7 @@ class DeclarationsTest(unittest.TestCase):
         for case, section in {"an array": ["left-pad"], "a string": "left-pad"}.items():
             with self.subTest(case):
                 path = mock_path(json.dumps({"dependencies": section, "devDependencies": {"react": "18.2.0"}}))
-                read = package_json.PackageJson.read(path)
+                read = PackageJson.read(path)
                 self.assertEqual([declaration.dependency for declaration in read.declarations()], ["react"])
                 self.assertEqual(list(read.declared_ranges()), [(("devDependencies",), "react")])
 
@@ -214,7 +213,7 @@ class DeclarationsTest(unittest.TestCase):
             with self.subTest(case):
                 path = mock_path(json.dumps(contents, indent=2))
                 self.assertEqual(
-                    list(package_json.PackageJson.read(path).declarations()),
+                    list(PackageJson.read(path).declarations()),
                     [
                         Declaration("left-pad", "1.3.0", Location(path, line, column), names_a_release=True)
                         for line, column in positions
@@ -222,7 +221,7 @@ class DeclarationsTest(unittest.TestCase):
                 )
 
     @kills.replace(
-        npm_declaration._catalog,
+        _catalog,
         "return catalog_name(spec.removeprefix(_CATALOG_PROTOCOL))",
         "return spec.removeprefix(_CATALOG_PROTOCOL)",
         "a `catalog:default` dependency is reported at the member rather than at the unnamed catalog",
@@ -230,7 +229,7 @@ class DeclarationsTest(unittest.TestCase):
     def test_the_default_catalog_is_the_unnamed_one(self):
         """Test that a dependency declared as `catalog:default` takes its version from the unnamed catalog."""
         path = mock_path(json.dumps({"dependencies": {"semver": "catalog:default"}}))
-        (declaration,) = package_json.PackageJson.read(path).declarations()
+        (declaration,) = PackageJson.read(path).declarations()
         self.assertEqual(declaration.catalog, "")
 
     def test_the_version_a_spec_pins(self):
@@ -247,5 +246,5 @@ class DeclarationsTest(unittest.TestCase):
         ]:
             with self.subTest(spec=spec):
                 path = mock_path(json.dumps({"dependencies": {"left-pad": spec}}))
-                (reference,) = package_json.PackageJson.read(path).declarations()
+                (reference,) = PackageJson.read(path).declarations()
                 self.assertEqual(reference.current_version, version)

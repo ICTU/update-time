@@ -5,35 +5,46 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from logging import ERROR, WARNING
 from typing import TYPE_CHECKING, cast
-from unittest.mock import Mock, patch
 
 import requests
 
 from mutation_time.mutation import kills
-from update_time.domain import cooldown
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.cooldown import COOLDOWN, CooldownWalk
 from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDependency, Release, Unserved
 from update_time.io.log import Logger
 from update_time.primitives.timestamp import utc_date_and_time
 from update_time.sources import github
 from update_time.sources.github import (
     GitHubRepository,
+    _changelog_file,
+    _changes_from_files,
+    _committer_date,
     _get_release,
+    _list,
+    _list_contents,
+    _log_used_up_rate_limit,
     _newest_release,
-    _TaggedVersion,
+    _package_names,
+    _report_used_up_rate_limit,
+    _TaggedVersion,  # simplint: ignore[private-import-path] # annotates with it
     archival,
     changes_from_changelog_file,
     changes_from_release,
     github_repository,
     github_to_raw,
+    project,
     release_tags,
 )
 
-from tests.helpers import mock_response, patch_environ, patch_get, requested_urls
+from tests.environment import patch_environ
+from tests.http_mocks import mock_response, patch_get, patch_get_response, requested_urls, respond_per_url
+from tests.update_time.base_test_cases import CacheClearingTestCase, LoggingTestCase
+from tests.update_time.domain_objects import bound, days_ago
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2, FRESH_DATE, PAST_COOLDOWN_DATE
-from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, bound, days_ago, message_of
-from tests.update_time.sources.helpers import (
+from tests.update_time.io.log_messages import message_of
+
+from .github_answers import (
     GITHUB_RATE_LIMITED_REASON,
     contents_json,
     contents_url,
@@ -49,22 +60,14 @@ from tests.update_time.sources.helpers import (
     patch_github,
     releases_url,
     repository_url,
-    respond_per_url,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from unittest.mock import Mock
 
     from update_time.domain.bound import VersionBound
     from update_time.domain.dependency import DependencyVersion, VersionString
-
-
-def get_latest_version(
-    action: str, current_version: str, version_bound: VersionBound = NO_BOUND, cooldown_days: int = COOLDOWN.default
-) -> DependencyVersion:
-    """Return what the source resolves for the action and version, as a test writes them."""
-    pinned = PinnedDependency(action, current_version)
-    return github.get_latest_version(pinned, version_bound, cooldown_days)
 
 
 class GitHubURLtoRawTest(unittest.TestCase):
@@ -89,15 +92,15 @@ class GitHubURLtoRawTest(unittest.TestCase):
 class GitHubRepositoryTest(unittest.TestCase):
     """Unit tests for reading the GitHub repository a URL names."""
 
+    def test_non_github_url(self):
+        """Test that a non-GitHub URL does not name a repository, scp-like ssh URLs included."""
+        self.assert_repository(None, "https://example.org", "git@gitlab.com:ICTU/update-time.git")
+
     def assert_repository(self, expected: GitHubRepository | None, *urls: str) -> None:
         """Assert that each URL names the expected repository."""
         for url in urls:
             with self.subTest(url=url):
                 self.assertEqual(github_repository(url), expected)
-
-    def test_non_github_url(self):
-        """Test that a non-GitHub URL does not name a repository, scp-like ssh URLs included."""
-        self.assert_repository(None, "https://example.org", "git@gitlab.com:ICTU/update-time.git")
 
     def test_github_url(self):
         """Test that a GitHub URL names a repository."""
@@ -141,25 +144,16 @@ class GitHubRepositoryTest(unittest.TestCase):
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for getting the latest version for a GitHub repository."""
 
+    @patch_github(releases=[github_release_json("1.0", body="changelog")], tags=[], commit=github_commits_json())
+    def test_unchanged(self):
+        """Test that a release matching the current version resolves to that version and its commit SHA."""
+        self.assert_version(get_latest_version("owner/repository", "1.0"), "1.0", "changelog", COMMIT_SHA)
+
     def assert_version(self, latest: DependencyVersion, version: VersionString, changes: str, sha: str) -> None:
         """Assert that the resolved version has the given version, changelog, and commit SHA."""
         self.assertEqual(version, latest.version)
         self.assertEqual(changes, latest.changes)
         self.assertEqual(sha, latest.sha)  # The commit SHA is what the updater pins to.
-
-    def assert_tag_skipped(self, dependency: str, reason: str) -> None:
-        """Assert that the dependency's v1.1 tag was skipped for the reason, leaving it on version 1.0."""
-        latest = get_latest_version(dependency, "1.0")
-        self.assert_version(latest, "1.0", "", "")
-        self.assert_error_logged(
-            message_of(Logger.undated_commit), dependency=dependency, candidate="v1.1", current="1.0", reason=reason
-        )
-
-    @patch_github(releases=[github_release_json("1.0", body="changelog")], tags=[], commit=github_commits_json())
-    def test_unchanged(self):
-        """Test that a release matching the current version resolves to that version and its commit SHA."""
-        latest = get_latest_version("owner/repository", "1.0")
-        self.assert_version(latest, "1.0", "changelog", COMMIT_SHA)
 
     @patch_github(releases=[github_release_json("1.1", body="changelog")], tags=[], commit=github_commits_json())
     def test_newer(self):
@@ -173,29 +167,25 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_publication_date(self):
         """Test that the resolved release's publication date is captured."""
-        latest = get_latest_version("owner/repository", "1.0")
-        self.assertEqual(latest.publication.value, PAST_COOLDOWN_DATE)
+        self.assertEqual(get_latest_version("owner/repository", "1.0").publication.value, PAST_COOLDOWN_DATE)
 
     @patch_github(
         releases=[github_release_json("1.1"), github_release_json("2.0")], tags=[], commit=github_commits_json()
     )
     def test_bound_narrows_candidates(self):
         """Test that a version bound drops out-of-bound releases so a bounded release wins over a higher one."""
-        version_bound = bound(Verb.ALLOW, "update<2")
-        latest = get_latest_version("owner/bounded", "1.0", version_bound)
+        latest = get_latest_version("owner/bounded", "1.0", bound(Verb.ALLOW, "update<2"))
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
 
     @patch_github(releases=[github_release_json("0.9")], tags=[])
     def test_older_release_kept(self):
         """Test that the current version is kept, without an error, when every release is older than it."""
-        latest = get_latest_version("owner/older", "1.0")
-        self.assert_version(latest, "1.0", "", "")
+        self.assert_version(get_latest_version("owner/older", "1.0"), "1.0", "", "")
 
     @patch_github()
     def test_no_error_when_github_cannot_be_reached(self):
         """Test that an unreachable repo logs only the fetch warnings, not a redundant 'no valid version' error."""
-        latest = get_latest_version("owner/unreachable", "1.0")
-        self.assertEqual(latest.version, "1.0")
+        self.assertEqual(get_latest_version("owner/unreachable", "1.0").version, "1.0")
         self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
 
     def test_a_repository_offering_no_valid_version_keeps_the_current_one(self):
@@ -212,17 +202,15 @@ class GetLatestVersionTest(LoggingTestCase):
         }
         for case, (releases, tags) in cases.items():
             with self.subTest(case=case), patch_github(releases=releases, tags=tags):
-                action = f"owner/{case}"
-                latest = get_latest_version(action, "1.0")
+                latest = get_latest_version(f"owner/{case}", "1.0")
                 self.assertEqual((latest.version, latest.unserved), ("1.0", Unserved.RELEASES))
 
     @patch_github(releases=[github_release_json("1.1")], tags=[])
     def test_no_commit_sha(self):
         """Test that the current version is kept when the commit SHA can't be fetched for the eligible release."""
-        latest = get_latest_version("owner/no sha", "1.0")
-        self.assert_version(latest, "1.0", "", "")
-        url = "https://github.com/owner/no sha/releases/tag/1.1"
+        self.assert_version(get_latest_version("owner/no sha", "1.0"), "1.0", "", "")
         message = message_of(Logger.no_commit_sha)
+        url = "https://github.com/owner/no sha/releases/tag/1.1"
         self.assert_error_logged(message, dependency="owner/no sha", version="1.1", reason="HTTP 404", url=url)
 
     @patch_github(
@@ -238,8 +226,8 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("owner/with cooldown", "1.0")
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(PAST_COOLDOWN_DATE, latest.publication.value)
-        newest = github.project("owner/with cooldown").newest
-        self.assertEqual(Release("2.0", FRESH_DATE), newest)  # The release the cooldown held back dates it
+        # The release the cooldown held back dates it
+        self.assertEqual(Release("2.0", FRESH_DATE), project("owner/with cooldown").newest)
 
     @patch_github(
         releases=[github_release_json("1.1", published_at=days_ago(10))], tags=[], commit=github_commits_json()
@@ -261,8 +249,8 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("owner/tags only", "1.0")
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(latest.publication.value, PAST_COOLDOWN_DATE)  # The tagged commit's committer date
-        newest = Release("1.1", PAST_COOLDOWN_DATE)
-        self.assertEqual(github.project("owner/tags only").newest, newest)  # Also feeds the staleness check
+        # Also feeds the staleness check
+        self.assertEqual(project("owner/tags only").newest, Release("1.1", PAST_COOLDOWN_DATE))
 
     @patch_github(
         releases=[github_release_json("v1.1", body="changelog", published_at=PAST_COOLDOWN_DATE)],
@@ -281,8 +269,7 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_tags_running_ahead_of_releases(self):
         """Test that a repo whose releases (v1.0) fell behind its tags (v2.0) is updated to the newest tag."""
-        latest = get_latest_version("owner/mixed", "1.0")
-        self.assert_version(latest, "2.0", "", COMMIT_SHA2)
+        self.assert_version(get_latest_version("owner/mixed", "1.0"), "2.0", "", COMMIT_SHA2)
 
     @patch_github(
         releases=[github_release_json("v0.9", published_at=PAST_COOLDOWN_DATE)],
@@ -291,8 +278,7 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_skip_tags_within_cooldown(self):
         """Test that a tag whose commit falls within the cooldown is skipped, beside a release of another commit."""
-        latest = get_latest_version("owner/fresh tag", "1.0")
-        self.assert_version(latest, "1.0", "", "")
+        self.assert_version(get_latest_version("owner/fresh tag", "1.0"), "1.0", "", "")
 
     @patch_github(
         releases=[github_release_json("v8.3.0", published_at=FRESH_DATE), github_release_json("v8", draft=True)],
@@ -304,8 +290,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
         A draft release of that commit, listed after the published one, does not date the tag.
         """
-        latest = get_latest_version("owner/tag beside fresh release", "8.2.2")
-        self.assert_version(latest, "8.2.2", "", "")
+        self.assert_version(get_latest_version("owner/tag beside fresh release", "8.2.2"), "8.2.2", "", "")
 
     @patch_github(
         releases=[github_release_json("v2", published_at=PAST_COOLDOWN_DATE, created_at=FRESH_DATE.isoformat())],
@@ -314,8 +299,7 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_skip_versions_on_the_commit_a_release_tag_was_moved_onto(self):
         """Test that a release published before its commit, and a tag beside it, wait for that commit's cooldown."""
-        latest = get_latest_version("owner/moved release", "1.0")
-        self.assert_version(latest, "1.0", "", "")
+        self.assert_version(get_latest_version("owner/moved release", "1.0"), "1.0", "", "")
 
     def test_tag_takes_the_earliest_publication_date_of_the_releases_of_its_commit(self):
         """Test that a tag without a release takes the earliest date of its commit's releases, whatever the tag order.
@@ -342,13 +326,20 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a tag is skipped, and the skip logged with the reason, when its commit can't be fetched."""
         self.assert_tag_skipped("owner/no date", "HTTP 404")
 
+    def assert_tag_skipped(self, dependency: str, reason: str) -> None:
+        """Assert that the dependency's v1.1 tag was skipped for the reason, leaving it on version 1.0."""
+        self.assert_version(get_latest_version(dependency, "1.0"), "1.0", "", "")
+        self.assert_error_logged(
+            message_of(Logger.undated_commit), dependency=dependency, candidate="v1.1", current="1.0", reason=reason
+        )
+
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json())
     def test_skip_tag_whose_commit_has_no_date(self):
         """Test that a tag is skipped, and the skip logged with the reason, when its commit has no committer date."""
         self.assert_tag_skipped("owner/no date", "the commit has no committer date")
 
     @kills.delete(
-        github._committer_date,
+        _committer_date,
         "not committer or ",
         "a commit whose committer GitHub reports as null ends the run with a traceback",
         raises="AttributeError: 'NoneType' object has no attribute 'get'",
@@ -367,7 +358,7 @@ class GetLatestVersionTest(LoggingTestCase):
         "a rate-limited commit leaves the reference unpinned, holding back its own version as well",
     )
     @kills.force_true(
-        cooldown.CooldownWalk.past,
+        CooldownWalk.past,
         "publication.value is not None",
         "a rate-limited commit is remembered as held back without a date, which the held-back line cannot render",
     )
@@ -408,8 +399,14 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_most_precise_tag_wins_with_the_release_notes_of_the_same_version(self):
         """Test that of two tags naming the same version, the more precise wins, with the other's release notes."""
-        latest = get_latest_version("owner/precise tag", "4.3")
-        self.assert_version(latest, "4.3.0", "changelog", COMMIT_SHA)
+        self.assert_version(get_latest_version("owner/precise tag", "4.3"), "4.3.0", "changelog", COMMIT_SHA)
+
+
+def get_latest_version(
+    action: str, current_version: str, version_bound: VersionBound = NO_BOUND, cooldown_days: int = COOLDOWN.default
+) -> DependencyVersion:
+    """Return what the source resolves for the action and version, as a test writes them."""
+    return github.get_latest_version(PinnedDependency(action, current_version), version_bound, cooldown_days)
 
 
 class NewestReleaseTest(LoggingTestCase):
@@ -491,7 +488,7 @@ class NewestReleaseTest(LoggingTestCase):
 class ArchivalTest(LoggingTestCase):
     """Unit tests for the archival state GitHub declares for a repository."""
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_archived_flag(self, mock_get: Mock):
         """Test that a repository reads as archived exactly when GitHub's repository endpoint flags it archived.
 
@@ -513,10 +510,9 @@ class ArchivalTest(LoggingTestCase):
                     self.assert_could_not_fetch_logged()
                 else:
                     self.assert_no_warnings_logged()
-        requested = requested_urls(mock_get)
-        self.assertEqual(requested, [repository_url(f"owner/{name}") for name in cases])
+        self.assertEqual(requested_urls(mock_get), [repository_url(f"owner/{name}") for name in cases])
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_an_unreadable_archived_flag_is_warned_about_and_leaves_the_archival_unknown(self, mock_get: Mock):
         """Test that an endpoint answering without a boolean archived flag is warned about, its archival unknown."""
         for case, body in {"without the flag": {}, "with a flag that is not a boolean": {"archived": "yes"}}.items():
@@ -530,22 +526,7 @@ class ArchivalTest(LoggingTestCase):
 class GetReleaseTest(LoggingTestCase):
     """Unit tests for getting a release matching a specific package and version."""
 
-    def assert_release(self, release: _TaggedVersion | None, tag_name: str, body: str = "") -> None:
-        """Assert that the release found is the one the tag names, carrying the changes it was published with."""
-        self.assertEqual(cast("_TaggedVersion", release).tag_name, tag_name)
-        self.assertEqual(cast("_TaggedVersion", release).body, body)
-
-    def assert_releases(self, repository: str, cases: list[tuple[str, str, str]]) -> None:
-        """Assert that each case's package and version resolve, in the repository, to the release its tag names."""
-        for package, version, tag in cases:
-            with self.subTest(tag=tag):
-                self.assert_release(
-                    _get_release(GitHubRepository("owner", repository), release_tags(package, version)),
-                    tag,
-                    "Changelog",
-                )
-
-    @patch_get(
+    @patch_get_response(
         [
             github_release_json("puppeteer-core-v25.0.4", body="Changelog"),
             github_release_json("selenium-4.47.0", body="Changelog"),
@@ -563,6 +544,21 @@ class GetReleaseTest(LoggingTestCase):
         ]
         self.assert_releases("monorepo tagging per package", cases)
 
+    def assert_releases(self, repository: str, cases: list[tuple[str, str, str]]) -> None:
+        """Assert that each case's package and version resolve, in the repository, to the release its tag names."""
+        for package, version, tag in cases:
+            with self.subTest(tag=tag):
+                self.assert_release(
+                    _get_release(GitHubRepository("owner", repository), release_tags(package, version)),
+                    tag,
+                    "Changelog",
+                )
+
+    def assert_release(self, release: _TaggedVersion | None, tag_name: str, body: str = "") -> None:
+        """Assert that the release found is the one the tag names, carrying the changes it was published with."""
+        self.assertEqual(cast("_TaggedVersion", release).tag_name, tag_name)
+        self.assertEqual(cast("_TaggedVersion", release).body, body)
+
     @kills.append(
         github.release_tags,
         'for name in names for joiner in ("-v", "-", "@", "/")',
@@ -571,7 +567,7 @@ class GetReleaseTest(LoggingTestCase):
         raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         case="gizmo/7.0.0",
     )
-    @patch_get(
+    @patch_get_response(
         [
             github_release_json("plugin-rsc@0.5.34"),
             github_release_json("plugin-react@6.1.1", body="Changelog"),
@@ -585,12 +581,12 @@ class GetReleaseTest(LoggingTestCase):
         self.assert_releases("monorepo tagging without the scope", [("@scope/gizmo", "7.0.0", "gizmo/7.0.0")])
 
     @kills.replace(
-        github._package_names,
+        _package_names,
         "[package, unscoped]",
         "[unscoped, package]",
         "a repository tagging one version both with and without the scope has the wrong release reported for it",
     )
-    @patch_get(
+    @patch_get_response(
         [
             github_release_json("react@11.14.0", body="Unscoped"),
             github_release_json("@emotion/react@11.14.0", body="Scoped"),
@@ -601,7 +597,7 @@ class GetReleaseTest(LoggingTestCase):
         release = _get_release(GitHubRepository("emotion-js", "emotion"), release_tags("@emotion/react", "11.14.0"))
         self.assert_release(release, "@emotion/react@11.14.0", "Scoped")
 
-    @patch_get(
+    @patch_get_response(
         [
             github_release_json("v6.1.1", body="Version only"),
             github_release_json("plugin-react@6.1.1", body="Changelog"),
@@ -623,7 +619,7 @@ class GetReleaseTest(LoggingTestCase):
         '"-", "-v"',
         "a repository spelling one version's tag both ways has the wrong release reported for it",
     )
-    @patch_get(
+    @patch_get_response(
         [
             github_release_json("25.0.4"),
             github_release_json("v25.0.4"),
@@ -638,20 +634,21 @@ class GetReleaseTest(LoggingTestCase):
             "puppeteer-core-v25.0.4",
         )
 
-    @patch_get([github_release_json("v1.2.3", body="Changelog"), github_release_json("4.5.6", body="Changelog")])
+    @patch_get_response(
+        [github_release_json("v1.2.3", body="Changelog"), github_release_json("4.5.6", body="Changelog")]
+    )
     def test_version_tag_match(self):
         """Test finding a release whose tag names the version alone, with or without a `v` prefix."""
-        cases = [("any", "1.2.3", "v1.2.3"), ("any", "4.5.6", "4.5.6")]
-        self.assert_releases("repo tagging the version alone", cases)
+        self.assert_releases("repo tagging the version alone", [("any", "1.2.3", "v1.2.3"), ("any", "4.5.6", "4.5.6")])
 
-    @patch_get([github_release_json("v1.0")])
+    @patch_get_response([github_release_json("v1.0")])
     def test_no_matching_tag(self):
         """Test that None is returned when no tag matches the requested version."""
         self.assertIsNone(
             _get_release(GitHubRepository("owner", "repo with non matching tag"), release_tags("any", "1.1"))
         )
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_repo_without_releases(self, mock_get: Mock):
         """Test that a non-OK response yields no release, and is reported as a failed fetch."""
         mock_get.return_value = mock_response([], ok=False)
@@ -660,7 +657,7 @@ class GetReleaseTest(LoggingTestCase):
         )
         self.assert_could_not_fetch_logged(mock_get().url, status=mock_get().status_code)
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_timeout(self, mock_get: Mock):
         """Test that a timed-out request yields no release, and is reported as a timeout."""
         mock_get.side_effect = requests.exceptions.Timeout
@@ -676,13 +673,13 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
 
     RELEASE_PAGE = "https://github.com/owner/repo/releases/tag/1.1"
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_no_repository(self, mock_get: Mock):
         """Test that the changes are empty, without querying GitHub, when there is no repository."""
         self.assertEqual(changes_from_release(None, "any", "1.0"), "")
         mock_get.assert_not_called()
 
-    @patch_get([github_release_json("1.1", body="Changelog", html_url=RELEASE_PAGE)])
+    @patch_get_response([github_release_json("1.1", body="Changelog", html_url=RELEASE_PAGE)])
     def test_the_body_is_returned_as_markdown_linking_the_release_page(self):
         """Test that the body of the matching release is returned as Markdown, linking the release's page."""
         changes = changes_from_release(GitHubRepository("owner", "repo with changes"), "any", "1.1")
@@ -690,7 +687,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         self.assertTrue(changes.markdown)
         self.assertEqual(changes.url, self.RELEASE_PAGE)
 
-    @patch_get([github_release_json("9.9")])
+    @patch_get_response([github_release_json("9.9")])
     def test_no_matching_release(self):
         """Test that the changes are empty when no release matches the version."""
         self.assertEqual(
@@ -704,7 +701,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         "a release GitHub answers without a body ends the run with a traceback",
         raises="KeyError: 'body'",
     )
-    @patch_get(
+    @patch_get_response(
         [
             {
                 "tag_name": "1.1",
@@ -729,6 +726,19 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     CHANGELOG = markdown_changelog("1.1")
     CHANGES = markdown_changes("1.1")
 
+    @kills.prepend(
+        github.changes_from_changelog_file,
+        "if directory and",
+        "_list_contents(repository)\n    ",
+        "a package whose own directory holds its changelog costs a listing of the repository's root as well",
+    )
+    @patch_get()
+    def test_changelog_file_in_a_directory(self, mock_get: Mock):
+        """Test that a changelog file in the package's directory supplies the changes, leaving the root unread."""
+        self.create_responses(mock_get, {"packages/package": ("CHANGELOG.md",), "": ("README.md",)})
+        self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package"), self.CHANGES)
+        self.assertNotIn(contents_url(self.MONOREPO), requested_urls(mock_get))
+
     def create_responses(self, mock_get: Mock, listings: dict[str, tuple[str, ...]]) -> None:
         """Point the mock Session.get at a listing per directory, each giving the files that directory holds.
 
@@ -741,43 +751,28 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         responses[file_url("CHANGELOG.md")] = mock_response(text=self.CHANGELOG)
         respond_per_url(mock_get, responses)
 
-    @kills.prepend(
-        github.changes_from_changelog_file,
-        "if directory:",
-        "_list_contents(repository)\n    ",
-        "a package whose own directory holds its changelog costs a listing of the repository's root as well",
-    )
-    @patch("requests.Session.get")
-    def test_changelog_file_in_a_directory(self, mock_get: Mock):
-        """Test that a changelog file in the package's directory supplies the changes, leaving the root unread."""
-        self.create_responses(mock_get, {"packages/package": ("CHANGELOG.md",), "": ("README.md",)})
-        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package")
-        self.assertEqual(changes, self.CHANGES)
-        self.assertNotIn(contents_url(self.MONOREPO), requested_urls(mock_get))
-
-    @patch("requests.Session.get")
+    @patch_get()
     def test_directory_without_a_changelog_file(self, mock_get: Mock):
         """Test that a directory naming no changelog file leaves the repository's root to supply the changes."""
         self.create_responses(mock_get, {"packages/package": ("README.md",), "": ("CHANGELOG.md",)})
-        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package")
-        self.assertEqual(changes, self.CHANGES)
+        self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package"), self.CHANGES)
         self.assertIn(contents_url(self.MONOREPO, "packages/package"), requested_urls(mock_get))
 
     @kills.replace(
-        github._changes_from_files,
+        _changes_from_files,
         'markdown=markdown.is_file(entry["name"])',
         "markdown=False",
         "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
         case="CHANGELOG.md",
     )
     @kills.replace(
-        github._changes_from_files,
+        _changes_from_files,
         'markdown=markdown.is_file(entry["name"])',
         "markdown=True",
         "a changelog in a repository's root that is not Markdown is rendered as Markdown",
         case="CHANGELOG.rst",
     )
-    @patch("requests.Session.get")
+    @patch_get()
     def test_the_changes_link_the_files_page_in_the_markup_its_extension_names(self, mock_get: Mock):
         """Test that a changelog file's changes link its page, and that its extension says whether they're Markdown."""
         for name, markdown in {"CHANGELOG.md": True, "CHANGELOG.rst": False}.items():
@@ -792,10 +787,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                 self.assertEqual(changes.markdown, markdown)
                 self.assertEqual(changes.url, page_url(name))
 
-    @kills.uncache(
-        github._changelog_file, "a changelog file is downloaded again for every package that falls back to it"
-    )
-    @patch("requests.Session.get")
+    @kills.uncache(_changelog_file, "a changelog file is downloaded again for every package that falls back to it")
+    @patch_get()
     def test_changelog_file_is_fetched_once(self, mock_get: Mock):
         """Test that two packages falling back to one changelog file cost a single fetch of it between them."""
         self.create_responses(mock_get, {"packages/one": (), "packages/two": (), "": ("CHANGELOG.md",)})
@@ -804,19 +797,19 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         self.assertEqual(requested_urls(mock_get).count(file_url("CHANGELOG.md")), 1)
 
     @kills.delete(
-        github._list_contents,
+        _list_contents,
         "(HTTPStatus.NOT_FOUND,) if directory else ",
         "a package whose registry metadata names a directory that moved warns on every run",
         case="not served",
     )
     @kills.replace(
-        github._list_contents,
+        _list_contents,
         "(HTTPStatus.NOT_FOUND,) if directory else ",
         "tuple(HTTPStatus) if directory else ",
         "GitHub refusing to list a package's directory goes unreported",
         case="refused",
     )
-    @patch("requests.Session.get")
+    @patch_get()
     def test_directory_that_cannot_be_listed_leaves_the_root_to_supply_the_changes(self, mock_get: Mock):
         """Test that a directory GitHub doesn't list leaves the root to supply the changes, warning only if refused."""
         cases = {  # The status GitHub answers the listing with, and whether that is a refusal
@@ -834,20 +827,19 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                         file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
                     },
                 )
-                changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/gone")
-                self.assertEqual(changes, self.CHANGES)
+                self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/gone"), self.CHANGES)
                 if refused:
                     self.assert_could_not_fetch_logged("https://not/listed", status=status, reason=status.phrase)
                 else:
                     self.assert_no_warnings_logged()
 
     @kills.delete(
-        github._list,
+        _list,
         " if isinstance(listing, list) else ()",
         "a directory the contents endpoint answers with a file ends the run with a traceback",
         raises="TypeError: string indices must be integers, not 'str'",
     )
-    @patch("requests.Session.get")
+    @patch_get()
     def test_directory_answered_as_a_file(self, mock_get: Mock):
         """Test that a directory GitHub answers with a file leaves the repository's root to supply the changes."""
         file_json = {"name": "package", "download_url": file_url("package"), "git_url": "https://tree/package"}
@@ -859,12 +851,17 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                 file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
             },
         )
-        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package")
-        self.assertEqual(changes, self.CHANGES)
+        self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package"), self.CHANGES)
 
 
 class GitHubHeadersTest(CacheClearingTestCase):
     """Unit tests for the headers the GitHub API requests carry."""
+
+    @patch_environ({"GITHUB_TOKEN": "pat123"})  # nosec
+    @patch_get()
+    def test_authorization_header_when_a_token_is_set(self, mock_get: Mock):
+        """Test that a request carries a bearer authorization header when GITHUB_TOKEN is set."""
+        self.assert_request_headers(mock_get, {"Authorization": "Bearer pat123"})
 
     def assert_request_headers(self, mock_get: Mock, expected: dict[str, str]) -> None:
         """Assert that a GitHub request carries the expected headers."""
@@ -872,14 +869,8 @@ class GitHubHeadersTest(CacheClearingTestCase):
         archival(GitHubRepository("owner", "repository"))
         self.assertEqual(mock_get.call_args.kwargs["headers"], expected)
 
-    @patch_environ({"GITHUB_TOKEN": "pat123"})  # nosec
-    @patch("requests.Session.get")
-    def test_authorization_header_when_a_token_is_set(self, mock_get: Mock):
-        """Test that a request carries a bearer authorization header when GITHUB_TOKEN is set."""
-        self.assert_request_headers(mock_get, {"Authorization": "Bearer pat123"})
-
     @patch_environ()
-    @patch("requests.Session.get")
+    @patch_get()
     def test_no_authorization_header_without_a_token(self, mock_get: Mock):
         """Test that a request carries no authorization header when GITHUB_TOKEN is not set."""
         self.assert_request_headers(mock_get, {})
@@ -889,6 +880,18 @@ class GitHubRateLimitTest(LoggingTestCase):
     """Unit tests for warning that GitHub's API rate limit is used up."""
 
     RESET = datetime(2026, 10, 17, 15, 42, tzinfo=UTC)
+
+    @patch_get()
+    def test_a_used_up_rate_limit_is_reported_as_an_error(self, mock_get: Mock):
+        """Test that a response saying the rate limit is used up is reported as an error, in the token's form."""
+        mock_get.return_value = self.refused_response()
+        for case, environment, message in (
+            ("anonymous", {}, message_of(Logger.github_rate_limit_used_up)),
+            ("with a token", {"GITHUB_TOKEN": "a-token"}, message_of(Logger.github_token_rate_limit_used_up)),  # nosec B105
+        ):
+            with self.subTest(case), patch_environ(environment, clear=True):
+                archival(GitHubRepository("owner", "repository"))
+                self.assert_error_logged(message, limit=60, reset=utc_date_and_time(self.RESET))
 
     def refused_response(self, overrides: Mapping[str, str | None] | None = None) -> Mock:
         """Return the 403 GitHub sends, with headers saying the limit of 60 requests is used up until `RESET`.
@@ -906,23 +909,9 @@ class GitHubRateLimitTest(LoggingTestCase):
             {"message": "API rate limit exceeded"}, ok=False, status_code=403, reason="Forbidden", headers=headers
         )
 
-    @patch("requests.Session.get")
-    def test_a_used_up_rate_limit_is_reported_as_an_error(self, mock_get: Mock):
-        """Test that a response saying the rate limit is used up is reported as an error, in the token's form."""
-        mock_get.return_value = self.refused_response()
-        for case, environment, message in (
-            ("anonymous", {}, message_of(Logger.github_rate_limit_used_up)),
-            ("with a token", {"GITHUB_TOKEN": "a-token"}, message_of(Logger.github_token_rate_limit_used_up)),  # nosec B105
-        ):
-            with self.subTest(case), patch_environ(environment, clear=True):
-                archival(GitHubRepository("owner", "repository"))
-                self.assert_error_logged(message, limit=60, reset=utc_date_and_time(self.RESET))
-
-    @kills.uncache(
-        github._log_used_up_rate_limit, "a used-up rate limit is reported once for every request GitHub refuses"
-    )
+    @kills.uncache(_log_used_up_rate_limit, "a used-up rate limit is reported once for every request GitHub refuses")
     @patch_environ()
-    @patch("requests.Session.get")
+    @patch_get()
     def test_a_used_up_rate_limit_is_reported_once(self, mock_get: Mock):
         """Test that a process reports the used-up rate limit once, however many responses say so."""
         mock_get.return_value = self.refused_response()
@@ -934,13 +923,13 @@ class GitHubRateLimitTest(LoggingTestCase):
         )
 
     @kills.replace(
-        github._report_used_up_rate_limit,
+        _report_used_up_rate_limit,
         'if response.headers.get("X-RateLimit-Remaining") != "0":',
         "if response.ok:",
         "every request GitHub refuses is reported as a used-up rate limit, whatever the reason",
     )
     @patch_environ()
-    @patch("requests.Session.get")
+    @patch_get()
     def test_a_rate_limit_that_is_not_used_up_is_not_reported(self, mock_get: Mock):
         """Test that a failed response is not reported as a used-up rate limit while requests remain."""
         mock_get.return_value = self.refused_response({"X-RateLimit-Remaining": "59"})
@@ -949,7 +938,7 @@ class GitHubRateLimitTest(LoggingTestCase):
         self.assertEqual(self.records(ERROR), [])
 
     @patch_environ()
-    @patch("requests.Session.get")
+    @patch_get()
     def test_an_unreadable_rate_limit_header_is_logged_at_debug(self, mock_get: Mock):
         """Test that a rate-limit header that is missing or not a whole number is logged at debug level."""
         for case, overrides, error in (

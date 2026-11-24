@@ -2,24 +2,25 @@
 
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import SEMVER
 from update_time.io.log import FileContent, get_logger
 from update_time.manifests.package_json import PackageJson
 from update_time.primitives.location import Location
-from update_time.sources import npmjs
+from update_time.sources.npmjs import SOURCE
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.io.log import Logger
     from update_time.lock_files.locked_versions import LockedVersions
     from update_time.manifests.npm_declaration import CatalogEntry, Catalogs
 
 
-_LOG = get_logger("package.json")
+_LOG: Final[Logger] = get_logger("package.json")
 
 
 @dataclass(frozen=True)
@@ -55,11 +56,6 @@ class ProjectUpdate:
             locked_after,
         )
 
-    @property
-    def moved_versions(self) -> dict[DependencyName, VersionString]:
-        """Return each version that differs from the locked one."""
-        return _moved_versions(self.before.locked, self.locked_after)
-
     def log_moved_versions(self, manager: str, catalogs: Catalogs, reported: set[Location]) -> None:
         """Log each moved version, up or back, at the lines declaring its dependency, or else at the package.json.
 
@@ -76,9 +72,14 @@ class ProjectUpdate:
                 for reference in moved:
                     _LOG.version_moved_back(manager, reference, new_version)
                 continue
-            releases = {name: npmjs.SOURCE.release(name, new_version) for name in {each.dependency for each in moved}}
+            releases = {name: SOURCE.release(name, new_version) for name in {each.dependency for each in moved}}
             for reference in moved:
                 _LOG.new_version(reference, releases[reference.dependency])
+
+    @property
+    def moved_versions(self) -> dict[DependencyName, VersionString]:
+        """Return each version that differs from the locked one."""
+        return _moved_versions(self.before.locked, self.locked_after)
 
     def log_range_rewrites(self, manager: str) -> None:
         """Log each rewrite of a range in the package.json, for a dependency with an unmoved locked version."""
@@ -92,15 +93,14 @@ class ProjectUpdate:
         _log_range_rewrites(manager, ranges_before, ranges_after, versions_before, versions_after)
 
 
-def log_updates(
-    manager: str, updates: list[ProjectUpdate], catalogs_before: Catalogs, catalogs_after: Catalogs
-) -> None:
-    """Log each moved version and each rewritten range, in the projects and in the catalogs."""
-    reported: set[Location] = set()
-    for update in updates:
-        update.log_moved_versions(manager, catalogs_after, reported)
-        update.log_range_rewrites(manager)
-    _log_catalog_range_rewrites(manager, catalogs_before, catalogs_after, updates)
+def _moved_versions[KeyT](
+    locked: dict[KeyT, VersionString], versions: dict[KeyT, VersionString]
+) -> dict[KeyT, VersionString]:
+    """Return each version that differs from the locked one.
+
+    A package that the lock file did not record before the update counts as unmoved.
+    """
+    return {package: version for package, version in versions.items() if locked.get(package, version) != version}
 
 
 def _versions_of[KeyT](
@@ -108,24 +108,6 @@ def _versions_of[KeyT](
 ) -> dict[KeyT, VersionString]:
     """Return the locked version of each dependency the lock records, keyed as the dependency is."""
     return {key: locked[dependency] for key, dependency in dependencies.items() if dependency in locked}
-
-
-def _log_catalog_range_rewrites(
-    manager: str, catalogs_before: Catalogs, catalogs_after: Catalogs, updates: list[ProjectUpdate]
-) -> None:
-    """Log each rewrite of a range in the catalogs, for an entry with an unmoved locked version.
-
-    An entry's locked version is the version that each project taking its version from the entry locks.
-    """
-    versions_before: dict[CatalogEntry, VersionString] = {}
-    versions_after: dict[CatalogEntry, VersionString] = {}
-    for update in updates:
-        entries = [] if update.after is None else update.after.catalog_dependencies()
-        dependencies = {entry: entry.dependency for entry in entries}
-        versions_before |= _versions_of(dependencies, update.before.locked)
-        versions_after |= _versions_of(dependencies, update.locked_after)
-    ranges_before, ranges_after = catalogs_before.ranges(), catalogs_after.ranges()
-    _log_range_rewrites(manager, ranges_before, ranges_after, versions_before, versions_after)
 
 
 def _log_range_rewrites[KeyT](
@@ -147,11 +129,30 @@ def _log_range_rewrites[KeyT](
         _LOG.range_rewrite(manager, reference, range_after.current_version, versions_before.get(key, ""))
 
 
-def _moved_versions[KeyT](
-    locked: dict[KeyT, VersionString], versions: dict[KeyT, VersionString]
-) -> dict[KeyT, VersionString]:
-    """Return each version that differs from the locked one.
+def log_updates(
+    manager: str, updates: list[ProjectUpdate], catalogs_before: Catalogs, catalogs_after: Catalogs
+) -> None:
+    """Log each moved version and each rewritten range, in the projects and in the catalogs."""
+    reported: set[Location] = set()
+    for update in updates:
+        update.log_moved_versions(manager, catalogs_after, reported)
+        update.log_range_rewrites(manager)
+    _log_catalog_range_rewrites(manager, catalogs_before, catalogs_after, updates)
 
-    A package that the lock file did not record before the update counts as unmoved.
+
+def _log_catalog_range_rewrites(
+    manager: str, catalogs_before: Catalogs, catalogs_after: Catalogs, updates: list[ProjectUpdate]
+) -> None:
+    """Log each rewrite of a range in the catalogs, for an entry with an unmoved locked version.
+
+    An entry's locked version is the version that each project taking its version from the entry locks.
     """
-    return {package: version for package, version in versions.items() if locked.get(package, version) != version}
+    versions_before: dict[CatalogEntry, VersionString] = {}
+    versions_after: dict[CatalogEntry, VersionString] = {}
+    for update in updates:
+        entries = [] if update.after is None else update.after.catalog_dependencies()
+        dependencies = {entry: entry.dependency for entry in entries}
+        versions_before |= _versions_of(dependencies, update.before.locked)
+        versions_after |= _versions_of(dependencies, update.locked_after)
+    ranges_before, ranges_after = catalogs_before.ranges(), catalogs_after.ranges()
+    _log_range_rewrites(manager, ranges_before, ranges_after, versions_before, versions_after)

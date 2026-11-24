@@ -1,39 +1,30 @@
 """Unit tests for the devcontainer update script."""
 
 import unittest
+from typing import override
 from unittest.mock import ANY, Mock, patch
 
 from mutation_time.mutation import kills
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
-from update_time.manifests import devcontainer_json as devcontainer_json_manifest
+from update_time.manifests import devcontainer_json
 from update_time.primitives.location import Location
 from update_time.updaters.update_devcontainer import _update_devcontainers
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import docker_tag
 from tests.update_time.registry import mock_docker_registry
-from tests.update_time.updaters.helpers import mock_docker_hub_auth
+from tests.update_time.sources.docker_hub_answers import docker_tag
 
 
-@mock_docker_hub_auth
 class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
     """Unit tests for the update devcontainer function."""
 
-    def reference(self, image: str) -> str:
-        """Return a devcontainer `"image"` value for the image."""
-        return f'"image": "{image}"\n'
-
+    @override
     def marker_line(self, directive: str) -> str:
         """Return the directive as a marker in the `//` comment devcontainer.json takes, being JSONC."""
         return f"// update-time: {directive}\n"
-
-    def run_updater(self, mock_file: Mock) -> None:
-        """Run the devcontainer updater with the mock file as the only discovered devcontainer.json."""
-        with patch("update_time.updaters.update_devcontainer.glob_for", return_value=[mock_file]):
-            _update_devcontainers()
 
     def test_feature_updated_and_pinned(self):
         """Test that a feature key (an OCI reference) is bumped and pinned with its digest."""
@@ -45,6 +36,12 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         )
         self.assert_new_version_logged("ghcr.io/devcontainers/features/node", "2.1", Location(devcontainer, 1))
         self.assert_no_warnings_logged()
+
+    @override
+    def run_updater(self, mock_file: Mock) -> None:
+        """Run the devcontainer updater with the mock file as the only discovered devcontainer.json."""
+        with patch("update_time.updaters.update_devcontainer.glob_for", return_value=[mock_file]):
+            _update_devcontainers()
 
     def test_feature_pinned_when_already_latest(self):
         """Test that an unpinned feature that is already at the latest version is still pinned with its digest."""
@@ -77,10 +74,15 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(devcontainer, 1))
         self.assert_no_warnings_logged()
 
+    @override
+    def reference(self, image: str) -> str:
+        """Return a devcontainer `"image"` value for the image."""
+        return f'"image": "{image}"\n'
+
     @kills.replace(
-        devcontainer_json_manifest,
-        r"""FEATURE_REFERENCE = re.compile(rf'"{IMAGE_REFERENCE}":\s*{{')""",
-        r"""FEATURE_REFERENCE = re.compile(r'"(?P<dependency>[\w./-]+)(?::(?=[\w.-]))?(?P<version>[\w.-]*)"""
+        devcontainer_json,
+        r"""re.compile(rf'"{IMAGE_REFERENCE}":\s*{{')""",
+        r"""re.compile(r'"(?P<dependency>[\w./-]+)(?::(?=[\w.-]))?(?P<version>[\w.-]*)"""
         r"""(?:@(?P<sha>sha256:[0-9a-f]{64}))?":\s*{')""",
         "a JSON key naming no version is read as a feature reference without a tag",
     )

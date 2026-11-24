@@ -3,14 +3,15 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import NO_CHANGES, DependencyVersion, ImageNotLookedUp
 from update_time.primitives.lookup import LookedUp
+
+from .dependency import NO_CHANGES, DependencyVersion, ImageNotLookedUp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from update_time.domain.bound import NewVersionGetter
-    from update_time.domain.dependency import (
+    from .bound import NewVersionGetter
+    from .dependency import (
         ChangesGetter,
         DependencyName,
         PinnedDependency,
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
         VersionString,
         YankGetter,
     )
-    from update_time.domain.vulnerability import Ecosystem
+    from .vulnerability import Ecosystem
 
 
 def every_dependency(_pinned: PinnedDependency) -> bool:

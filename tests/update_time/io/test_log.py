@@ -1,6 +1,7 @@
 """Logger unit tests."""
 
 import contextlib
+import inspect
 import logging
 import re
 import signal
@@ -8,7 +9,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast, override
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
@@ -48,6 +49,7 @@ from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
 
+from tests.update_time.domain_objects import bound, reference, resolved_reference, vulnerability
 from tests.update_time.fixtures import (
     COMMIT_SHA1,
     COMMIT_SHA2,
@@ -56,18 +58,9 @@ from tests.update_time.fixtures import (
     DIGEST2,
     STALE_AFTER_90,
 )
-from tests.update_time.helpers import (
-    adopted_drift_report,
-    bound,
-    drift_warning,
-    logged_extra,
-    message_of,
-    published_version,
-    reference,
-    resolved_reference,
-    vulnerability,
-)
-from tests.update_time.io.helpers import at, create_location, dependency
+
+from .log_fields import at, create_location, dependency, published_version
+from .log_messages import adopted_drift_report, drift_warning, logged_extra, message_of
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -84,10 +77,13 @@ class GetLoggerTests(TestCase):
         self.assertTrue(all(handler.console.stderr for handler in rich_handlers))
 
 
+_TEST_EVERY_MESSAGE_NAMES_ITS_HOLES_PATTERN: Final[re.Pattern[str]] = re.compile(r"%(?!\()")
+
+
 class LogMessageTests(TestCase):
     """Unit tests for the log message type and the messages declared with it."""
 
-    MESSAGE = _LogMessage(logging.WARNING, "Stale dependency %(dependency)s", "stale-dependency")
+    MESSAGE = _LogMessage(level=logging.WARNING, format="Stale dependency %(dependency)s", name="stale-dependency")
 
     def test_a_message_renders_as_its_format_string(self):
         """Test that a message renders as its format string, so logging can interpolate the arguments into it."""
@@ -104,7 +100,9 @@ class LogMessageTests(TestCase):
         into one, and so is each word a kind of drift fills in.
         """
         fragments = [
-            value for name, value in vars(Logger).items() if isinstance(value, str) and not name.startswith("__")
+            value
+            for name, value in inspect.getmembers_static(Logger)
+            if isinstance(value, str) and not name.startswith("__")
         ]
         messages = [str(message) for message in Logger.messages()] + fragments
         # Four enums carry message fragments of their own, so the fragments are read off the enums rather than off
@@ -130,18 +128,13 @@ class LogMessageTests(TestCase):
         self.assertIn("ref-drift", names)
         for message in messages:
             with self.subTest(message=message.name):
-                self.assertEqual(re.findall(r"%(?!\()", message.format), [])
+                self.assertEqual(_TEST_EVERY_MESSAGE_NAMES_ITS_HOLES_PATTERN.findall(message.format), [])
 
     def test_no_two_messages_share_a_name(self):
         """Test that no two log messages share a name."""
         names = Counter(message.name for message in Logger.messages())
         self.assertIn("drift-push-date-unknown", names)  # Each of a method's stacked messages is read
         self.assertEqual([name for name, count in names.items() if count > 1], [])
-
-
-def _new_logger() -> Logger:
-    """Return a logger of its own, so what one test suppressed is not still suppressed for the next."""
-    return Logger("test")
 
 
 class RenderTests(TestCase):
@@ -165,7 +158,7 @@ class RenderTests(TestCase):
     @patch("logging.Logger.log")
     def test_a_location_field_is_wrapped_and_a_plain_field_is_not(self, mock_log: Mock):
         """Test that a location passed as a named field is wrapped, while a plain field is passed through as it is."""
-        message = _LogMessage(logging.INFO, "Skipping %(location)s: %(reason)s", "skipped")
+        message = _LogMessage(level=logging.INFO, format="Skipping %(location)s: %(reason)s", name="skipped")
         _new_logger()._emit(message, {"location": create_location("Dockerfile", 1), "reason": "it is compiled"}, {})
         mock_log.assert_called_once_with(
             message.level, message, {"location": at("Dockerfile:1"), "reason": "it is compiled"}, extra=ANY
@@ -174,43 +167,23 @@ class RenderTests(TestCase):
     @patch("logging.Logger.log")
     def test_the_dependency_field_is_wrapped_in_its_delimiter(self, mock_log: Mock):
         """Test that the field named `dependency` is wrapped, so no log method has to render one itself."""
-        message = _LogMessage(logging.WARNING, "Could not find where %(dependency)s is declared", "not-found")
+        message = _LogMessage(
+            level=logging.WARNING, format="Could not find where %(dependency)s is declared", name="not-found"
+        )
         _new_logger()._emit(message, {"dependency": "actions/checkout"}, {})
         mock_log.assert_called_once_with(
             message.level, message, {"dependency": dependency("actions/checkout")}, extra=ANY
         )
 
 
+def _new_logger() -> Logger:
+    """Return a logger of its own, so what one test suppressed is not still suppressed for the next."""
+    return Logger("test")
+
+
 @patch("logging.Logger.log")
 class LoggerTests(TestCase):
     """Unit tests for the logger class."""
-
-    @contextlib.contextmanager
-    def subTest(self, *args: object, **kwargs: object) -> Generator[None]:  # noqa: N802
-        """Run the case on records of its own, so a table cannot forget to reset the log."""
-        cast("Mock", logging.Logger.log).reset_mock()  # The class-level patch makes the method the mock
-        with super().subTest(*args, **kwargs):
-            yield
-
-    def assert_message(self, mock_log: Mock, message: _LogMessage, level: int, rendered: str) -> None:
-        """Assert the log method emitted the message once, at the level, reading as the given text."""
-        mock_log.assert_called_once()
-        self.assert_last_message(mock_log, message, level, rendered)
-
-    def assert_last_message(self, mock_log: Mock, message: _LogMessage, level: int, rendered: str) -> None:
-        """Assert the most recent record is the message at the level, carrying exactly the fields the message names."""
-        logged_level, template, fields = mock_log.call_args.args
-        self.assertEqual((logged_level, template), (level, message))
-        self.assertEqual(set(fields), template.holes)
-        self.assertEqual(str(template) % fields, rendered)
-
-    def assert_changes(self, mock_log: Mock, changes: str) -> None:
-        """Assert the most recent record carries a changelog's changes beside its fields."""
-        self.assertEqual(logged_extra(mock_log.call_args.kwargs), {CHANGES: changes})
-
-    def assert_note(self, mock_log: Mock, note: str) -> None:
-        """Assert the most recent record carries Update-time's own note about the changes beside its fields."""
-        self.assertEqual(logged_extra(mock_log.call_args.kwargs), {NOTE: note})
 
     def test_a_changelog_is_shown_again_once_the_shown_changelogs_are_forgotten(self, mock_log: Mock):
         """Test that forgetting the changelogs shown makes a logger show a changelog it has already shown."""
@@ -233,6 +206,21 @@ class LoggerTests(TestCase):
         self.assert_last_message(mock_log, message, logging.INFO, available)
         self.assert_changes(mock_log, "Changelog")
 
+    def assert_last_message(self, mock_log: Mock, message: _LogMessage, level: int, rendered: str) -> None:
+        """Assert the most recent record is the message at the level, carrying exactly the fields the message names."""
+        logged_level, template, fields = mock_log.call_args.args
+        self.assertEqual((logged_level, template), (level, message))
+        self.assertEqual(set(fields), template.holes)
+        self.assertEqual(str(template) % fields, rendered)
+
+    def assert_note(self, mock_log: Mock, note: str) -> None:
+        """Assert the most recent record carries Update-time's own note about the changes beside its fields."""
+        self.assertEqual(logged_extra(mock_log.call_args.kwargs), {NOTE: note})
+
+    def assert_changes(self, mock_log: Mock, changes: str) -> None:
+        """Assert the most recent record carries a changelog's changes beside its fields."""
+        self.assertEqual(logged_extra(mock_log.call_args.kwargs), {CHANGES: changes})
+
     def test_new_version_without_publication_date(self, mock_log: Mock):
         """Test that the version is logged without a publication date when it is unknown."""
         location = create_location("a.txt", 3)
@@ -246,6 +234,11 @@ class LoggerTests(TestCase):
             f"New version available for {dependency('dependency')} in {at('a.txt:3')}: 1.0",
         )
         self.assert_changes(mock_log, "Changelog")
+
+    def assert_message(self, mock_log: Mock, message: _LogMessage, level: int, rendered: str) -> None:
+        """Assert the log method emitted the message once, at the level, reading as the given text."""
+        mock_log.assert_called_once()
+        self.assert_last_message(mock_log, message, level, rendered)
 
     def test_pinned(self, mock_log: Mock):
         """Test that pinning a previously unpinned reference to a digest is logged."""
@@ -298,10 +291,17 @@ class LoggerTests(TestCase):
                     f"{at('.github/workflows/ci.yml:17')}, so it was left as it is (HTTP 404, Not Found)",
                 )
 
+    @override
+    @contextlib.contextmanager
+    def subTest(self, *args: object, **kwargs: object) -> Generator[None]:
+        """Run the case on records of its own, so a table cannot forget to reset the log."""
+        cast("Mock", logging.Logger.log).reset_mock()  # The class-level patch makes the method the mock
+        with super().subTest(*args, **kwargs):
+            yield
+
     def test_unchecked_branch_drift(self, mock_log: Mock):
         """Test that a branch drift that could not be checked names the check, why it failed, and the pin's fate."""
-        location = create_location(".github/workflows/ci.yml", 17)
-        branch = reference("actions/checkout", location, "main")
+        branch = reference("actions/checkout", create_location(".github/workflows/ci.yml", 17), "main")
         _new_logger().unchecked_branch_drift(branch, COMMIT_SHA2, "HTTP 403, API rate limit exceeded")
         self.assert_message(
             mock_log,
@@ -372,8 +372,7 @@ class LoggerTests(TestCase):
     )
     def test_repository_not_served(self, mock_log: Mock):
         """Test that a reference whose registry does not serve the image's repository is reported with that reason."""
-        location = create_location("Dockerfile", 1)
-        _new_logger().repository_not_served(reference("spark-rm-base", location, "3.5.1"))
+        _new_logger().repository_not_served(reference("spark-rm-base", create_location("Dockerfile", 1), "3.5.1"))
         self.assert_message(
             mock_log,
             message_of(Logger.repository_not_served),
@@ -399,8 +398,8 @@ class LoggerTests(TestCase):
     def test_keeping_a_ref(self, mock_log: Mock):
         """Test that keeping a branch or tag is reported by its kind, with the name it has and what it resolves to."""
         location = create_location(".github/workflows/ci.yml", 17)
-        directive = "allow[floating-pin]"
         release = DependencyVersion("4.3.0", sha=COMMIT_SHA1)
+        directive = "allow[floating-pin]"
         for kind, ref in ((RefKind.BRANCH, "branch"), (RefKind.TAG, "tag")):
             with self.subTest(ref):
                 _new_logger().keeping_ref(reference("actions/checkout", location, "main"), release, directive, kind)
@@ -586,9 +585,9 @@ class LoggerTests(TestCase):
 
     def test_adopted_drift(self, mock_log: Mock):
         """Test that adopted drift is logged at info level, naming the kind of drift and the opt-in that caused it."""
-        directive = "allow[hash-drift]"
         dockerfile, workflow = create_location("Dockerfile", 2), create_location(".github/workflows/ci.yml", 17)
         checkout, ci = dependency("actions/checkout"), at(".github/workflows/ci.yml:17")
+        directive = "allow[hash-drift]"
         cases = {
             "digest": (
                 DriftedPin("dependency", "3.14", dockerfile, DIGEST1, kind=DriftKind.DIGEST, new_sha=DIGEST2),
@@ -669,8 +668,7 @@ class LoggerTests(TestCase):
         newest = Release("4.15.0", datetime.now(UTC) - timedelta(days=30, hours=1))
         location = create_location("requirements.txt", 9)
         threshold = STALE_AFTER_90.stale
-        runs = {365: "the default of 365 days", 400: "--stale-after 400"}
-        for run_threshold, run_words in runs.items():
+        for run_threshold, run_words in {365: "the default of 365 days", 400: "--stale-after 400"}.items():
             with self.subTest(run_threshold=run_threshold):
                 _new_logger().redundant_stale_threshold(
                     reference("humanize", location), threshold, newest, run_threshold
@@ -747,8 +745,7 @@ class LoggerTests(TestCase):
 
     def test_an_invalid_item_is_warned_about_naming_the_item(self, mock_log: Mock):
         """Test that an item the marker language cannot read is warned about at warning level, naming it alone."""
-        location = create_location("Dockerfile", 2)
-        _new_logger().invalid_bracket_item(reference("python", location), "@@@")
+        _new_logger().invalid_bracket_item(reference("python", create_location("Dockerfile", 2)), "@@@")
         self.assert_message(
             mock_log,
             message_of(Logger.invalid_bracket_item),
@@ -780,8 +777,7 @@ class LoggerTests(TestCase):
         # The raw text combines scopes and bracket items, so echoing it verbatim shows the log takes the user's marker.
         raw = "ignore[update] set[stale-after=0] allow[update<3.13, hash-drift]"
         marker = parse_directives(raw)
-        location = create_location("Dockerfile", 6)
-        _new_logger().recognised_marker(Reference("python", "", location, marker=marker))
+        _new_logger().recognised_marker(Reference("python", "", create_location("Dockerfile", 6), marker=marker))
         self.assert_message(
             mock_log,
             message_of(Logger.recognised_marker),
@@ -792,8 +788,7 @@ class LoggerTests(TestCase):
     def test_ignored(self, mock_log: Mock):
         """Test that a held-back reference names the directive that held it back, not the ones written beside it."""
         marker = parse_directives("ignore[update] set[stale-after=0] allow[hash-drift]")
-        location = create_location("Dockerfile", 6)
-        _new_logger().ignored(Reference("python", "", location, marker=marker))
+        _new_logger().ignored(Reference("python", "", create_location("Dockerfile", 6), marker=marker))
         self.assert_message(
             mock_log,
             message_of(Logger.ignored),
@@ -846,8 +841,7 @@ class LoggerTests(TestCase):
         """Test that the run-wide option's line reads with the advisory, and quotes the identifiers it was passed."""
         pin = reference("django", create_location("requirements.txt", 9), "3.2.0")
         reported = vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
-        passed = frozenset({"CVE-2022-28346", "CVE-2021-31542"})
-        _new_logger().globally_ignored_vulnerability(pin, reported, passed)
+        _new_logger().globally_ignored_vulnerability(pin, reported, frozenset({"CVE-2022-28346", "CVE-2021-31542"}))
         self.assert_message(
             mock_log,
             message_of(Logger.globally_ignored_vulnerability),
@@ -877,8 +871,7 @@ class LoggerTests(TestCase):
 
     def test_path_logged_at_debug(self, mock_log: Mock):
         """Test that the per-file 'checking for updates' progress is logged at debug level."""
-        config_yml = Path.cwd() / "config.yml"
-        _new_logger().path(config_yml)
+        _new_logger().path(Path.cwd() / "config.yml")
         self.assert_message(
             mock_log,
             message_of(Logger.path),
@@ -888,8 +881,7 @@ class LoggerTests(TestCase):
 
     def test_configured_uv_cooldown(self, mock_log: Mock):
         """Test that writing the cooldown into a project's uv config is logged, relative to the working directory."""
-        path = Path.cwd() / "pyproject.toml"
-        _new_logger().configured_uv_cooldown(path, "7 days")
+        _new_logger().configured_uv_cooldown((Path.cwd() / "pyproject.toml"), "7 days")
         self.assert_message(
             mock_log,
             message_of(Logger.configured_uv_cooldown),
@@ -928,8 +920,8 @@ class LoggerTests(TestCase):
 
     def test_request_failed(self, mock_log: Mock):
         """Test that a failed request is warned about with its URL and why it failed, the HTTP error if it got one."""
-        url = "https://pypi.org/pypi/humanize/json"
         response = Response()
+        url = "https://pypi.org/pypi/humanize/json"
         response.url, response.status_code, response.reason = url, 404, "Not Found"
         cases: dict[str, tuple[Response | Exception, str]] = {
             "an HTTP error": (response, "HTTP 404 Not Found"),
@@ -1113,8 +1105,7 @@ class LoggerTests(TestCase):
         version = DependencyVersion(
             "1.0", Changes("Changelog", markdown=False, url=""), publication=LookedUp(published)
         )
-        location = create_location("a.txt", 3)
-        _new_logger().new_version(reference("dependency", location), version)
+        _new_logger().new_version(reference("dependency", create_location("a.txt", 3)), version)
         self.assert_message(
             mock_log,
             message_of(Logger.new_version),

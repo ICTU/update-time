@@ -1,7 +1,7 @@
 """Read requirements.txt files: their pins and other requirements."""
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.reference import Reference
 from update_time.markers.parser import parse_marker
@@ -14,28 +14,28 @@ if TYPE_CHECKING:
 # follows it. Indentation counts as pip strips a line before parsing it (`req_file.ignore_comments`), so an indented
 # line is a requirement like any other. Its parts carry names of their own, since the lookahead below needs them
 # without the capturing group.
-_NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
-_EXTRAS = r"(?:\[[^\]]*\])?"
-_REQUIREMENT_NAME = rf"^\s*(?P<dependency>{_NAME}){_EXTRAS}\s*"
+_NAME: Final[str] = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+_EXTRAS: Final[str] = r"(?:\[[^\]]*\])?"
+_REQUIREMENT_NAME: Final[str] = rf"^\s*(?P<dependency>{_NAME}){_EXTRAS}\s*"
 # The characters a version holds, and the lookahead that requires it to end its specifier: nothing a version or a
 # wildcard could go on with may follow, and no comma introducing a second specifier, which PEP 440 lets space
 # precede. So `==4.15.*` names a range and `==4.15.0 ,!=4.15.1` names two specifiers, and neither is an exact pin.
-_VERSION = r"[A-Za-z0-9][A-Za-z0-9._!+-]*"
-_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])(?!\s*,)"
+_VERSION: Final[str] = r"[A-Za-z0-9][A-Za-z0-9._!+-]*"
+_VERSION_ENDS: Final[str] = r"(?![A-Za-z0-9._!+*,-])(?!\s*,)"
 # Match an exact pin: the name followed by `==` and a version that ends there. Only such a pin is updated.
-EXACT_PIN_REFERENCE = re.compile(_REQUIREMENT_NAME + rf"==\s*(?P<version>{_VERSION}){_VERSION_ENDS}")
+EXACT_PIN_REFERENCE: Final[re.Pattern[str]] = re.compile(
+    rf"{_REQUIREMENT_NAME}==\s*(?P<version>{_VERSION}){_VERSION_ENDS}"
+)
 # The same pin without the capture groups, so the pattern below can hold a copy of it in a lookahead. Naming a
 # group twice in one pattern is an error, and both patterns capture the dependency.
-_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"
+_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"
 # Match a requirement that pins no exact version, which is any requirement the pattern above does not match: the
 # lookahead rules out an exact pin, so a `==` reaching here names a range or one specifier of several. Such a
 # requirement pins no version to update, but the project behind it is checked all the same. An option line (`-r`,
 # `--index-url`), a comment line, and a direct reference (`name @ url`, a bare URL) match none of that.
-LOOSE_REQUIREMENT_REFERENCE = re.compile(rf"(?!{_EXACT_PIN})" + _REQUIREMENT_NAME + r"(?:==|===|[<>!~]=|[<>]|[;#]|$)")
-# The filename suffixes pip installs as a local archive rather than resolving as a requirement (its
-# `ARCHIVE_EXTENSIONS`). A filename with no path in front of it, `mypkg-1.0.tar.gz`, is spelled like a bare
-# requirement, so the pattern above matches it and PyPI would be asked for a package by that name.
-_ARCHIVE_SUFFIXES = (".zip", ".whl", ".tar.gz", ".tar.bz2", ".tar", ".tgz", ".tar.xz", ".txz", ".tlz", ".tar.lzma")
+LOOSE_REQUIREMENT_REFERENCE: Final[re.Pattern[str]] = re.compile(
+    rf"(?!{_EXACT_PIN}){_REQUIREMENT_NAME}(?:==|===|[<>!~]=|[<>]|[;#]|$)"
+)
 
 
 def declarations(path: Path) -> list[Reference]:
@@ -64,4 +64,9 @@ def prepend_line(path: Path, line: str) -> None:
 
 def names_an_archive(dependency: str) -> bool:
     """Return whether the requirement names a local archive, which pip installs rather than resolving."""
-    return dependency.endswith(_ARCHIVE_SUFFIXES)
+    # The filename suffixes pip installs as a local archive rather than resolving as a requirement (its
+    # `ARCHIVE_EXTENSIONS`). A filename with no path in front of it, `mypkg-1.0.tar.gz`, is spelled like a bare
+    # requirement, so the pattern above matches it and PyPI would be asked for a package by that name.
+    return dependency.endswith(
+        (".zip", ".whl", ".tar.gz", ".tar.bz2", ".tar", ".tgz", ".tar.xz", ".txz", ".tlz", ".tar.lzma")
+    )

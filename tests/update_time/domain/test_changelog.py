@@ -1,18 +1,30 @@
 """Unit tests for the changelog parsing."""
 
 import unittest
+from typing import Final
 
 from mutation_time.mutation import kills
 from update_time.domain import changelog
-from update_time.domain.changelog import get_version_changes_from_changelog
-from update_time.formats import html, restructured_text
-from update_time.formats import markdown as markdown_format
+from update_time.domain.changelog import (
+    _find_anchor,
+    _find_version_index,
+    _heading_length,
+    _heads_another_version,
+    _names_version,
+    _next_version_index,
+    _underlines_the_line_above,
+    _version_line_prefix,
+    get_version_changes_from_changelog,
+)
+from update_time.formats import markdown, restructured_text
+from update_time.formats.html import is_anchor
+from update_time.formats.restructured_text import heading_underline
 
 # The characters reStructuredText allows a heading to be underlined with, as the specification lists them at
 # https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#sections.
-_SPEC_ADORNMENT_CHARACTERS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+_SPEC_ADORNMENT_CHARACTERS: Final[str] = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 # More entry lines than the changelog module cuts a version's changes at.
-_MANY_ENTRIES = [f"- Fixed thing {number}." for number in range(40)]
+_MANY_ENTRIES: Final[tuple[str, ...]] = tuple(f"- Fixed thing {number}." for number in range(40))
 
 
 class VersionAnchorTest(unittest.TestCase):
@@ -24,8 +36,7 @@ class VersionAnchorTest(unittest.TestCase):
 
     def test_version_number_not_found(self):
         """Test that a changelog that does not name the version yields no changes."""
-        text = "Changelog\n\n## Version 0.9\n\n- Fixed ..."
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), "")
+        self.assertEqual(get_version_changes_from_changelog("Changelog\n\n## Version 0.9\n\n- Fixed ...", "1.0"), "")
 
     def test_version_in_prose_link_target_does_not_anchor_parsing(self):
         """Test that a version named in a prose link's target alone does not anchor parsing."""
@@ -35,8 +46,7 @@ class VersionAnchorTest(unittest.TestCase):
     def test_version_number_found(self):
         """Test that a changelog with the version number returns the text after the version number."""
         v1_change = "Version 1.0\n\n- Fixed ...\n- Changed ..."
-        text = f"Changelog\n\n{v1_change}"
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+        self.assertEqual(get_version_changes_from_changelog(f"Changelog\n\n{v1_change}", "1.0"), v1_change)
 
     def test_prose_mention_of_version_does_not_anchor_parsing(self):
         """Test that a prose mention in a newer section doesn't anchor parsing there, at any heading level."""
@@ -48,14 +58,14 @@ class VersionAnchorTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
 
     @kills.force_false(
-        changelog._underlines_the_line_above,
+        _underlines_the_line_above,
         "index > 0 and _heading_level(lines, index - 1) == lines[index][:1]",
         "a changelog underlining its headings with backticks or tildes reports no changes at all, its file read "
         "as one fenced code block",
         case="`",
     )
     @kills.replace(
-        changelog._find_version_index,
+        _find_version_index,
         "if _heading_level(lines, index):",
         'if line.startswith("#"):',
         "a version named in a newer entry's prose anchors the changes reported for it",
@@ -63,8 +73,8 @@ class VersionAnchorTest(unittest.TestCase):
     )
     @kills.replace(
         restructured_text,
-        "_ADORNMENT_CHARACTERS = frozenset(string.punctuation)",
-        '_ADORNMENT_CHARACTERS = frozenset("=-~")',
+        "_ADORNMENT_CHARACTERS: Final[frozenset[str]] = frozenset(string.punctuation)",
+        '_ADORNMENT_CHARACTERS: Final[frozenset[str]] = frozenset("=-~")',
         "a changelog underlining its headings with a character reStructuredText allows but does not recommend "
         "reports the changes from where a newer entry's prose names the version",
         case="!",
@@ -73,8 +83,8 @@ class VersionAnchorTest(unittest.TestCase):
         _SPEC_ADORNMENT_CHARACTERS,
         lambda adornment: kills.replace(
             restructured_text,
-            "_ADORNMENT_CHARACTERS = frozenset(string.punctuation)",
-            f"_ADORNMENT_CHARACTERS = frozenset(string.punctuation) - {{{adornment!r}}}",
+            "_ADORNMENT_CHARACTERS: Final[frozenset[str]] = frozenset(string.punctuation)",
+            f"_ADORNMENT_CHARACTERS: Final[frozenset[str]] = frozenset(string.punctuation) - {{{adornment!r}}}",
             f"a changelog underlining its headings with {adornment} reports the changes from where a newer entry's "
             "prose names the version, though reStructuredText allows that underline",
             case=adornment,
@@ -96,7 +106,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), text)
 
     @kills.delete(
-        changelog._names_version,
+        _names_version,
         "{_VERSION_START}",
         "a changelog naming a longer version that ends with this one reports the longer version's changes",
     )
@@ -108,7 +118,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.replace(
-        changelog._find_anchor,
+        _find_anchor,
         'version.endswith(".0") and version.count(".") > 1:\n        short_version = version.removesuffix(".0")',
         'version.count(".") > 1:\n        short_version = version.rsplit(".", 1)[0]',
         "a version that is no `.0` release reports the changes of the release one component shorter",
@@ -127,7 +137,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     @kills.force_false(
-        changelog._find_anchor,
+        _find_anchor,
         "start is not None and _heading_level(lines, start)",
         "a changelog heading both a version and the release one component shorter reports the shorter one's changes",
     )
@@ -138,7 +148,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     @kills.delete(
-        changelog._find_anchor,
+        _find_anchor,
         " and _heading_level(lines, start)",
         "a changelog heading a release one component shorter than the version, and naming the version in its prose, "
         "reports the prose line alone",
@@ -150,7 +160,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     @kills.delete(
-        changelog._find_anchor,
+        _find_anchor,
         " and (start is None or _heading_level(lines, short_start))",
         "a changelog without heading markup reports a `.0` version from wherever the version one component shorter "
         "is first named",
@@ -163,7 +173,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     @kills.delete(
-        changelog._find_anchor,
+        _find_anchor,
         ' and version.count(".") > 1',
         "a changelog naming a two-component version nowhere reports the entry a stray digit sits in",
     )
@@ -174,14 +184,13 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), "")
 
     @kills.delete(
-        changelog._find_version_index,
+        _find_version_index,
         "index not in fenced and ",
         "a version heading inside a fenced code block anchors the changes reported for that version",
     )
     def test_heading_inside_a_fenced_code_block_does_not_anchor_parsing(self):
         """Test that a version heading inside a fenced code block, being code, does not anchor parsing there."""
-        example = "```markdown\n## 1.0\n\n- Fixed ...\n```"
-        v2_change = f"## 2.0\n\n- Entries are now written as:\n\n{example}"
+        v2_change = "## 2.0\n\n- Entries are now written as:\n\n```markdown\n## 1.0\n\n- Fixed ...\n```"
         v1_change = "## 1.0\n\n- The real 1.0 entry."
         text = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
@@ -202,9 +211,9 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
 
     @kills.replace(
-        changelog._names_version,
-        "restructured_text.without_link_targets(markdown.without_link_targets(line))",
-        "markdown.without_link_targets(line)",
+        _names_version,
+        "without_restructured_text_link_targets(without_markdown_link_targets(line))",
+        "without_markdown_link_targets(line)",
         "a reStructuredText changelog linking each release heading to a comparison with the release before it "
         "reports the newer release's changes first",
     )
@@ -241,7 +250,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.delete(
-        changelog._next_version_index,
+        _next_version_index,
         "or _heads_a_longer_version(heading_level, line, version)",
         "a changelog heading a longer version inside a version's section reports that longer version's entry as well",
     )
@@ -252,7 +261,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     @kills.delete(
-        markdown_format,
+        markdown,
         ' "~~~"',
         "a changelog fencing a code block with tildes reports the fence as the end of the version's changes",
     )
@@ -282,7 +291,7 @@ class SectionEndTest(unittest.TestCase):
         case="reStructuredText label",
     )
     @kills.force_false(
-        html.is_anchor,
+        is_anchor,
         "_ANCHOR.fullmatch(line) is not None",
         "a towncrier changelog's changes end with the HTML anchor of the next version's section",
         case="HTML anchor",
@@ -299,21 +308,21 @@ class SectionEndTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.force_false(
-        changelog.get_version_changes_from_changelog,
+        get_version_changes_from_changelog,
         "not entries",
         "a version whose section holds its heading alone is reported with the heading as its changes",
         case="Markdown heading",
     )
     @kills.replace(
-        changelog._heading_length,
-        "return 1 if markdown.heading",
-        "return 0 if markdown.heading",
+        _heading_length,
+        "return 1 if heading",
+        "return 0 if heading",
         "a version whose section holds its Markdown heading alone is reported with the heading as its changes",
         case="Markdown heading",
     )
     @kills.delete(
-        changelog._heading_length,
-        " if markdown.heading(lines[index]) else 2",
+        _heading_length,
+        " if heading(lines[index]) else 2",
         "a version whose section holds its underlined heading alone is reported with the underline as its changes",
         case="underlined heading",
     )
@@ -326,7 +335,7 @@ class SectionEndTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0"), "")
 
     @kills.replace(
-        changelog._heading_length,
+        _heading_length,
         "return 0",
         "return 1",
         "a changelog naming the version in a line of prose alone reports its changes as empty",
@@ -344,7 +353,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.delete(
-        restructured_text.heading_underline,
+        heading_underline,
         "title.strip()\n        and ",
         "a run of punctuation that underlines nothing cuts the entry short where it stands",
     )
@@ -355,7 +364,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.replace(
-        restructured_text.heading_underline,
+        heading_underline,
         "underline = line.rstrip()",
         "underline = line.strip()",
         "a run of punctuation indented inside a literal block cuts the entry short above it",
@@ -367,7 +376,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.delete(
-        changelog._version_line_prefix,
+        _version_line_prefix,
         "None if _heading_level(lines, index) else ",
         "a heading-anchored entry ends where it names another version in prose",
     )
@@ -378,7 +387,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.replace(
-        changelog._heads_another_version,
+        _heads_another_version,
         "if not line.startswith(prefix):\n        return False\n    other_version = _VERSION.match(line, len(prefix))",
         "other_version = _VERSION.search(line)",
         "an entry naming a version in prose ends there, reporting the version's own line alone",
@@ -406,14 +415,14 @@ class SectionEndTest(unittest.TestCase):
 
     @kills.replace(
         changelog,
-        "_MAX_LENGTH = 30",
-        "_MAX_LENGTH = 20",
+        "_MAX_LENGTH: Final[int] = 30",
+        "_MAX_LENGTH: Final[int] = 20",
         "a long changelog entry is cut at 20 lines rather than at the 30 the module sets",
     )
     def test_maximum_length(self):
         """Test that a changelog naming one version only is cut at the maximum length, with a `...` indicator."""
         section = ["1.0", "", *_MANY_ENTRIES]
-        text = "Changes\n\n" + "\n".join(section) + "\n"
+        text = f"Changes\n\n{'\n'.join(section)}\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0").splitlines(), [*section[:30], "..."])
 
     def test_maximum_length_is_not_applied_when_previous_version_is_found(self):
@@ -423,7 +432,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.delete(
-        changelog._next_version_index,
+        _next_version_index,
         "or _names_version(line, version)",
         "a changelog naming a version in two headings reports the first of them's entry alone",
     )
@@ -434,7 +443,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     @kills.delete(
-        changelog._names_version,
+        _names_version,
         r"?\w",
         "a changelog heading a release candidate below its release reports the candidate's entry with the release's",
     )

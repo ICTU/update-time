@@ -3,13 +3,14 @@
 from typing import TYPE_CHECKING
 
 from update_time.io.process import is_installed
-from update_time.package_managers.node.manager_choice import choice_in_directory
-from update_time.package_managers.node.marker_policy import (
+
+from .manager_choice import choice_in_directory
+from .marker_policy import (
     MARKER_POLICY,
     MORE_THAN_ONE_MANAGER_POLICY,
     NO_LOCK_FILE_POLICY,
 )
-from update_time.package_managers.node.pnpm import PNPM
+from .pnpm import PNPM
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,8 +39,7 @@ def update_pnpm_workspace(workspace_file: Path) -> ManagerPolicy[Declaration]:
 def _catalog_policy(workspace_file: Path) -> ManagerPolicy[Declaration]:
     """Return the policy for the markers of a pnpm-workspace.yaml, by whether pnpm runs for the workspace it roots."""
     directory = workspace_file.parent
-    choice = choice_in_directory(directory)
-    if choice is not None and choice.names_more_than_one_manager():
+    if (choice := choice_in_directory(directory)) is not None and choice.names_more_than_one_manager():
         return MORE_THAN_ONE_MANAGER_POLICY
     if not PNPM.workspace_of(directory).has_a_lock():
         return NO_LOCK_FILE_POLICY

@@ -2,40 +2,36 @@
 
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final
 
 from update_time.io.log import FileContent, get_logger
 from update_time.manifests.package_json import PackageJson
-from update_time.package_managers.node.bun import BUN
-from update_time.package_managers.node.npm import NPM
-from update_time.package_managers.node.pnpm import PNPM
-from update_time.package_managers.node.yarn import YARN
+
+from .bun import BUN
+from .npm import NPM
+from .pnpm import PNPM
+from .yarn import YARN
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from update_time.io.log import Logger
 
-_LOG = get_logger("package.json")
+    from .package_manager import PackageManager
+
+
+_LOG: Final[Logger] = get_logger("package.json")
 
 # The managers Update-time can update, keyed by name. The updater resolves a detected manager name against this
 # catalog and skips a project whose `packageManager` field names a manager that isn't here, rather than mishandling it
 # by running npm (which would write a stray package-lock.json and ignore the real lock).
-SUPPORTED_MANAGERS = {manager.name: manager for manager in (NPM, PNPM, YARN, BUN)}
+SUPPORTED_MANAGERS: Final[dict[str, PackageManager]] = {manager.name: manager for manager in (NPM, PNPM, YARN, BUN)}
 # The files that name a project's package manager. A corepack `packageManager` field wins over them, and npm is the
 # default.
-_MANAGER_FILES = {name: manager.name for manager in SUPPORTED_MANAGERS.values() for name in manager.files()}
-
-
-@dataclass(frozen=True)
-class _ManagerChoice:
-    """The name of a project's package manager, and the files in the directory that named it."""
-
-    name: str
-    files: tuple[Path, ...] = ()
-
-    def names_more_than_one_manager(self) -> bool:
-        """Return whether the files name more than one package manager."""
-        return len({_MANAGER_FILES[file.name] for file in self.files}) > 1
+_MANAGER_FILES: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {name: manager.name for manager in SUPPORTED_MANAGERS.values() for name in manager.files()}
+)
 
 
 def manager_choice(package_json: PackageJson) -> _ManagerChoice:
@@ -51,7 +47,15 @@ def manager_choice(package_json: PackageJson) -> _ManagerChoice:
     for ancestor in directory.parents:
         if choice := choice_in_directory(ancestor):
             return choice
-    return _ManagerChoice("npm")
+    return _ManagerChoice(name="npm")
+
+
+def _choice_in(directory: Path, declared_manager: str) -> _ManagerChoice | None:
+    """Return the manager the package.json in the directory declares, or else the first its files name, if any."""
+    if declared_manager:
+        return _ManagerChoice(name=declared_manager)
+    files = tuple(directory / name for name in _MANAGER_FILES if (directory / name).exists())
+    return _ManagerChoice(name=_MANAGER_FILES[files[0].name], files=files) if files else None
 
 
 def choice_in_directory(directory: Path) -> _ManagerChoice | None:
@@ -68,9 +72,13 @@ def _declared_manager_in(directory: Path) -> str:
     return "" if readable is None else readable.declared_manager()
 
 
-def _choice_in(directory: Path, declared_manager: str) -> _ManagerChoice | None:
-    """Return the manager the package.json in the directory declares, or else the first its files name, if any."""
-    if declared_manager:
-        return _ManagerChoice(declared_manager)
-    files = tuple(directory / name for name in _MANAGER_FILES if (directory / name).exists())
-    return _ManagerChoice(_MANAGER_FILES[files[0].name], files) if files else None
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ManagerChoice:
+    """The name of a project's package manager, and the files in the directory that named it."""
+
+    name: str
+    files: tuple[Path, ...] = ()
+
+    def names_more_than_one_manager(self) -> bool:
+        """Return whether the files name more than one package manager."""
+        return len({_MANAGER_FILES[file.name] for file in self.files}) > 1

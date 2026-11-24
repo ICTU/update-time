@@ -5,21 +5,24 @@ Note: `import json` below resolves to the standard library's module, not this on
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Final, Self
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping, Sequence
     from pathlib import Path
 
 # What reads one JSON value and reports where it ends, and the characters JSON ignores between two values.
-_DECODER = json.JSONDecoder()
+_DECODER: Final[json.JSONDecoder] = json.JSONDecoder()
 # The name of the format, as a message about a document that does not parse names it.
-FORMAT = "JSON"
+FORMAT: Final[str] = "JSON"
 
-_WHITESPACE = " \t\n\r"
+_WHITESPACE: Final[str] = " \t\n\r"
 
 # Why a file holding valid JSON other than an object, such as `[]`, cannot be read as one.
-_NOT_AN_OBJECT = "the JSON is not an object"
+_NOT_AN_OBJECT: Final[str] = "the JSON is not an object"
+
+# Any value of a JSON document: an object, an array, a string, a number, a boolean, or null.
+type JSON = Mapping[str, JSON] | Sequence[JSON] | str | int | float | bool | None
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,13 @@ def entry_offset(contents: str, *keys: str) -> int | None:
     return offset
 
 
+def _skip_whitespace(contents: str, index: int) -> int:
+    """Return the index of the first character at or after `index` that JSON does not ignore."""
+    while index < len(contents) and contents[index] in _WHITESPACE:
+        index += 1
+    return index
+
+
 def _members(contents: str, start: int) -> Iterator[tuple[str, int, int]]:
     """Yield each member of the JSON object opening at `start`: its name, and where the name and its value sit.
 
@@ -73,17 +83,9 @@ def _members(contents: str, start: int) -> Iterator[tuple[str, int, int]]:
     while index < len(contents) and contents[index] == '"':
         name_offset = index
         name, index = _DECODER.raw_decode(contents, index)
-        colon = _skip_whitespace(contents, index)
-        value_offset = _skip_whitespace(contents, colon + 1)
+        value_offset = _skip_whitespace(contents, _skip_whitespace(contents, index) + 1)
         yield name, name_offset, value_offset
         _value, index = _DECODER.raw_decode(contents, value_offset)
         index = _skip_whitespace(contents, index)
         if index < len(contents) and contents[index] == ",":
             index = _skip_whitespace(contents, index + 1)
-
-
-def _skip_whitespace(contents: str, index: int) -> int:
-    """Return the index of the first character at or after `index` that JSON does not ignore."""
-    while index < len(contents) and contents[index] in _WHITESPACE:
-        index += 1
-    return index

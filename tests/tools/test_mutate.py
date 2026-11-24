@@ -4,18 +4,17 @@ import io
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from typing import Final
 from unittest.mock import Mock, call, patch
 
 from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, _snippets, main
 
 from mutation_time.mutation import CHECKS_OFF, kills
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
-_ORIGINAL = "before\nold\nafter\n"
-_INPUT = f"old\n{_SEPARATOR}\nnew\n"
-# A file whose two functions end on the same line, so the file holds the snippet twice and each function holds it once.
-_ANCHORED = "def one():\n    return 0\n\n\ndef two():\n    return 0\n"
+_ORIGINAL: Final[str] = "before\nold\nafter\n"
+_INPUT: Final[str] = f"old\n{_SEPARATOR}\nnew\n"
 
 
 class SnippetsTest(unittest.TestCase):
@@ -33,31 +32,6 @@ class SnippetsTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     """Unit tests for running a command against a mutated file."""
 
-    def probe(
-        self,
-        path: Mock,
-        returncode: int = 1,
-        text: str = _INPUT,
-        argv: list[str] | None = None,
-        outputs: tuple[str, ...] = ("",),
-    ) -> int:
-        """Run the probe over the path with the given command result and outputs, and return its exit code."""
-        mutated = Mock(returncode=returncode, stdout=outputs[0], stderr="")
-        baselines = [Mock(returncode=0, stdout=output, stderr="") for output in outputs[1:]]
-        run = Mock(side_effect=[mutated, *baselines])
-        self.reported = io.StringIO()
-        self.path_class = Mock(return_value=path)
-        with (
-            patch.object(sys, "argv", argv or ["mutate.py", "file.py"]),
-            patch("sys.stdin", io.StringIO(text)),
-            patch("tools.mutate.Path", self.path_class),
-            patch("tools.mutate.subprocess.run", run),
-            redirect_stdout(self.reported),
-            redirect_stderr(io.StringIO()),
-        ):
-            self.run_command = run
-            return main()
-
     def test_the_file_is_mutated_and_restored(self):
         """Test that the snippet is replaced, inside a function too, the command run, and the file put back."""
         for case, original, mutated in (
@@ -72,6 +46,30 @@ class MainTest(unittest.TestCase):
                     ["just", "test"], check=False, capture_output=True, text=True, env=_ENVIRONMENT
                 )
 
+    def probe(
+        self,
+        path: Mock,
+        returncode: int = 1,
+        text: str = _INPUT,
+        argv: list[str] | None = None,
+        outputs: tuple[str, ...] = ("",),
+    ) -> int:
+        """Run the probe over the path with the given command result and outputs, and return its exit code."""
+        mutated = Mock(returncode=returncode, stdout=outputs[0], stderr="")
+        run = Mock(side_effect=[mutated, *[Mock(returncode=0, stdout=output, stderr="") for output in outputs[1:]]])
+        self.reported = io.StringIO()
+        self.path_class = Mock(return_value=path)
+        with (
+            patch.object(sys, "argv", argv or ["mutate.py", "file.py"]),
+            patch("sys.stdin", io.StringIO(text)),
+            patch("tools.mutate.Path", self.path_class),
+            patch("tools.mutate.subprocess.run", run),
+            redirect_stdout(self.reported),
+            redirect_stderr(io.StringIO()),
+        ):
+            self.run_command = run
+            return main()
+
     def test_the_kills_checks_are_skipped(self):
         """Test that the command runs with the mutation checks off, so its kill list names the tests that failed."""
         self.probe(mock_path(_ORIGINAL))
@@ -85,12 +83,14 @@ class MainTest(unittest.TestCase):
     )
     def test_an_anchor_named_after_the_file(self):
         """Test that a snippet the file holds twice is replaced inside the definition the anchor names."""
-        path = mock_path(_ANCHORED)
+        # A file whose two functions end on the same line, so the file holds the snippet twice and each function once.
+        anchored = "def one():\n    return 0\n\n\ndef two():\n    return 0\n"
+        path = mock_path(anchored)
         text = f"return 0\n{_SEPARATOR}\nreturn 1\n"
         self.assertEqual(self.probe(path, argv=["mutate.py", "file.py:two"], text=text), 0)
         self.path_class.assert_called_once_with("file.py")
         mutated = "def one():\n    return 0\n\n\ndef two():\n    return 1\n"
-        self.assertEqual(path.write_text.call_args_list, [call(mutated), call(_ANCHORED)])
+        self.assertEqual(path.write_text.call_args_list, [call(mutated), call(anchored)])
 
     def test_a_command_of_its_own(self):
         """Test that a command given after the file is run instead of the default."""
@@ -108,7 +108,7 @@ class MainTest(unittest.TestCase):
             "ERROR: test_other (tests.io.test_log.LoggerTests.test_other)",
             "Ran 3 tests in 0.1s",
         ]
-        output = "\n".join(reported_lines) + "\n"
+        output = f"{'\n'.join(reported_lines)}\n"
         self.probe(mock_path(_ORIGINAL), outputs=(output, output))
         reported = self.reported.getvalue()
         self.assertIn("killed by test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[update] ", reported)

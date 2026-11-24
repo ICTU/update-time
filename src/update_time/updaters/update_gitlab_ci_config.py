@@ -1,5 +1,7 @@
 """GitLab CI config updater script finds images and updates to the latest versions."""
 
+from typing import TYPE_CHECKING, Final
+
 from update_time.domain.file_type import GITLAB_CI_CONFIG
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
@@ -7,7 +9,10 @@ from update_time.manifests.yaml_image import YAML_IMAGE_REFERENCE
 from update_time.references.file import update_file
 from update_time.sources.oci import TagGetter
 
-_LOG = get_logger("gitlab ci")
+if TYPE_CHECKING:
+    from update_time.io.log import Logger
+
+_LOG: Final[Logger] = get_logger("gitlab ci")
 
 
 def _update_gitlab_ci_config() -> None:
@@ -16,10 +21,5 @@ def _update_gitlab_ci_config() -> None:
         update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, source=TagGetter().source, logger=_LOG)
 
 
-def main() -> None:  # pragma: no cover
-    """Update the images in the repository's GitLab CI configuration."""
+if __name__ == "__main__":
     _update_gitlab_ci_config()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

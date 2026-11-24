@@ -6,12 +6,19 @@ https://peps.python.org/pep-0723/.
 """
 
 import re
+from typing import Final
 
-# The pattern PEP 723 itself gives for a metadata block of type `script`: the opening line, the commented lines
-# that follow it, and the closing line.
-_BLOCK = re.compile(r"(?m)^# /// script$\s(?P<content>(^#(| .*)$\s)+)^# ///$")
+# The pattern PEP 723 gives for a metadata block of type `script`, with the groups that only group made non-capturing.
+_BLOCK: Final[re.Pattern[str]] = re.compile(
+    r"""
+    ^\#\ ///\ script$\s  # the opening line
+    (?P<content>(?:^\#(?:|\ .*)$\s)+)  # the commented lines that follow it
+    ^\#\ ///$  # the closing line
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
 # The line that opens a block. A file carrying one is a script, whether or not the block is ever closed.
-_OPENING = re.compile(r"^# /// script\s*$", re.MULTILINE)
+_OPENING: Final[re.Pattern[str]] = re.compile(r"^# /// script\s*$", re.MULTILINE)
 
 
 def has_block(contents: str) -> bool:

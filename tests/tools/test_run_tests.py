@@ -5,6 +5,7 @@ import sys
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import MagicMock, Mock, patch
 
 from tools.run_tests import _expanded_test_names, _run_shard, _ShardResult, main
@@ -12,33 +13,13 @@ from tools.run_tests import _expanded_test_names, _run_shard, _ShardResult, main
 from mutation_time.mutation import KillsTestLoader
 
 
-def _passes() -> None:
-    """Pass, as a test that finds nothing wrong does."""
-
-
-def _fails() -> None:
-    """Fail, as a test whose assertion does not hold does."""
-    message = "the assertion does not hold"
-    raise AssertionError(message)
-
-
-def _errs() -> None:
-    """Raise an error other than a failed assertion, as a test that breaks does."""
-    message = "the test breaks"
-    raise ValueError(message)
-
-
-def _package(*modules: str) -> Mock:
-    """Return a directory holding the test modules at the given paths, relative to the repository root."""
-    return Mock(is_dir=Mock(return_value=True), rglob=Mock(return_value=[Path(module) for module in modules]))
-
-
 class ExpandedTestNamesTest(unittest.TestCase):
     """Unit tests for the names `unittest` is handed."""
 
     def test_a_package_expands_into_its_test_modules(self):
         """Test that a package is replaced by the dotted names of the test modules under it, sorted."""
-        package = _package("tests/pkg/sub/test_b.py", "tests/pkg/test_a.py")
+        module_paths = [Path(f"tests/pkg/{path}") for path in ("sub/test_b.py", "test_a.py")]
+        package = Mock(is_dir=Mock(return_value=True), rglob=Mock(return_value=module_paths))
         with patch("tools.run_tests.Path", Mock(return_value=package)):
             self.assertEqual(_expanded_test_names(["tests.pkg"]), ["tests.pkg.sub.test_b", "tests.pkg.test_a"])
         package.rglob.assert_called_once_with("test_*.py")
@@ -65,6 +46,22 @@ class RunShardTest(unittest.TestCase):
         self.assertTrue(result.report.startswith("=" * 70), "the report writes a progress line before the failures")
 
 
+def _passes() -> None:
+    """Pass, as a test that finds nothing wrong does."""
+
+
+def _fails() -> None:
+    """Fail, as a test whose assertion does not hold does."""
+    message = "the assertion does not hold"
+    raise AssertionError(message)
+
+
+def _errs() -> None:
+    """Raise an error other than a failed assertion, as a test that breaks does."""
+    message = "the test breaks"
+    raise ValueError(message)
+
+
 class MainTest(unittest.TestCase):
     """Unit tests for what the command line runs and writes."""
 
@@ -75,15 +72,6 @@ class MainTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def run_main(self, results: list[_ShardResult], *argv: str) -> tuple[int, str, MagicMock]:
-        """Run the command line with the shards showing the results, and return its exit code, output, and pool."""
-        pool = self.executor.return_value.__enter__.return_value
-        pool.map.return_value = results
-        written = io.StringIO()
-        with patch.object(sys, "argv", ["run_tests.py", *argv]), redirect_stdout(written):
-            exit_code = main()
-        return exit_code, written.getvalue(), pool
-
     def test_the_pool_gets_half_the_cores(self):
         """Test that the pool gets half the cores, since the coverage pass and the mutations pass run side by side."""
         for case, cores, workers in (
@@ -92,17 +80,29 @@ class MainTest(unittest.TestCase):
             ("unknown", None, 1),
         ):
             with self.subTest(case), patch("os.process_cpu_count", Mock(return_value=cores)):
-                self.run_main([_ShardResult(1, 0, 0, "")], "tests.a.test_x")
+                self.run_main([_ShardResult(tests_run=1, failures=0, errors=0, report="")], "tests.a.test_x")
                 self.assertEqual(self.executor.call_args.kwargs["max_workers"], workers)
+
+    def run_main(self, results: list[_ShardResult], *argv: str) -> _Run:
+        """Run the command line with the shards showing the results, and return its exit code, output, and pool."""
+        pool = self.executor.return_value.__enter__.return_value
+        pool.map.return_value = results
+        written = io.StringIO()
+        with patch.object(sys, "argv", ["run_tests.py", *argv]), redirect_stdout(written):
+            exit_code = main()
+        return _Run(exit_code, written.getvalue(), pool)
 
     def test_the_pool_spawns_its_workers(self):
         """Test that the pool spawns its workers, which reach them over pipes rather than the sockets tests refuse."""
-        self.run_main([_ShardResult(1, 0, 0, "")], "tests.a.test_x")
+        self.run_main([_ShardResult(tests_run=1, failures=0, errors=0, report="")], "tests.a.test_x")
         self.assertEqual(self.executor.call_args.kwargs["mp_context"].get_start_method(), "spawn")
 
     def test_a_run_whose_shards_pass_writes_the_number_of_tests_they_ran(self):
         """Test that each test name runs as a shard of its own, and that the run adds up the tests the shards ran."""
-        results = [_ShardResult(3, 0, 0, "report a"), _ShardResult(2, 0, 0, "report b")]
+        results = [
+            _ShardResult(tests_run=3, failures=0, errors=0, report="report a"),
+            _ShardResult(tests_run=2, failures=0, errors=0, report="report b"),
+        ]
         exit_code, written, pool = self.run_main(results, "tests.a.test_x", "tests.b.test_y")
         self.assertEqual(exit_code, 0)
         self.assertEqual(pool.map.call_args.args[:2], (_run_shard, ["tests.a.test_x", "tests.b.test_y"]))
@@ -114,7 +114,9 @@ class MainTest(unittest.TestCase):
             with self.subTest(case):
                 modules = Mock(return_value=["tests.a.test_x", "tests.a.test_y"])
                 with patch("tools.run_tests._expanded_test_names", modules):
-                    _exit_code, _written, pool = self.run_main([_ShardResult(1, 0, 0, "")] * 2, *argv)
+                    _exit_code, _written, pool = self.run_main(
+                        [_ShardResult(tests_run=1, failures=0, errors=0, report="")] * 2, *argv
+                    )
                 modules.assert_called_once_with(packages)
                 self.assertEqual(pool.map.call_args.args[:2], (_run_shard, ["tests.a.test_x", "tests.a.test_y"]))
 
@@ -122,7 +124,9 @@ class MainTest(unittest.TestCase):
         """Test that each shard loads the tests carrying a kills decorator alone where the run says so, else all."""
         for case, argv, loader_class in (("all", [], unittest.TestLoader), ("kills", ["--kills"], KillsTestLoader)):
             with self.subTest(case):
-                _exit_code, _written, pool = self.run_main([_ShardResult(1, 0, 0, "")], *argv, "tests.a.test_x")
+                _exit_code, _written, pool = self.run_main(
+                    [_ShardResult(tests_run=1, failures=0, errors=0, report="")], *argv, "tests.a.test_x"
+                )
                 _run, names, loaders = pool.map.call_args.args
                 self.assertEqual(list(names), ["tests.a.test_x"])
                 self.assertIs(type(next(iter(loaders))), loader_class)
@@ -135,7 +139,18 @@ class MainTest(unittest.TestCase):
             ("both", 1, 2, "FAILED (failures=1, errors=2)"),
         ):
             with self.subTest(case):
-                results = [_ShardResult(3, 0, 0, "report a\n"), _ShardResult(2, failures, errors, "report b\n")]
+                results = [
+                    _ShardResult(tests_run=3, failures=0, errors=0, report="report a\n"),
+                    _ShardResult(tests_run=2, failures=failures, errors=errors, report="report b\n"),
+                ]
                 exit_code, written, _pool = self.run_main(results, "tests.a.test_x", "tests.b.test_y")
                 self.assertEqual(exit_code, 1)
                 self.assertEqual(written, f"report b\nRan 5 tests\n\n{verdict}\n")
+
+
+class _Run(NamedTuple):
+    """What a run of the command line gives: its exit code, its output, and the pool its shards ran in."""
+
+    exit_code: int
+    output: str
+    pool: MagicMock

@@ -15,7 +15,7 @@ from update_time.domain.cooldown import (
 )
 from update_time.domain.dependency import DependencyVersion, Release
 
-from tests.update_time.helpers import days_ago
+from tests.update_time.domain_objects import days_ago
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -58,7 +58,7 @@ class CooldownCutoffTest(unittest.TestCase):
 
     def test_cutoff_is_the_cooldown_ago(self):
         """Test that the cutoff is the instant the cooldown reaches back to."""
-        cutoff = datetime.fromisoformat(cooldown_cutoff(30))
+        cutoff = datetime.fromisoformat(cooldown_cutoff(30))  # Read before the now() below, so the gap is 30 days
         self.assertEqual((datetime.now(UTC) - cutoff).days, 30)
 
     def test_cutoff_reaching_past_the_earliest_date(self):
@@ -79,16 +79,16 @@ class CooldownWalkTest(unittest.TestCase):
 class FirstEligibleTest(unittest.TestCase):
     """Unit tests for walking the candidates newest-first."""
 
+    def test_no_candidates(self):
+        """Test that the current version is returned unchanged when there are no candidates."""
+        self.assertEqual(DependencyVersion(version="1.0"), self.walked_without_cooldown([], DependencyVersion))
+
     @staticmethod
     def walked_without_cooldown(
         candidates: list[str], resolve: Callable[[str], DependencyVersion | None]
     ) -> DependencyVersion:
         """Return what a walk without a cooldown resolves the candidates to, for a reference on version 1.0."""
         return first_eligible(candidates, lambda candidate, _: resolve(candidate), lambda _: False, "1.0", 0)
-
-    def test_no_candidates(self):
-        """Test that the current version is returned unchanged when there are no candidates."""
-        self.assertEqual(DependencyVersion(version="1.0"), self.walked_without_cooldown([], DependencyVersion))
 
     def test_first_candidate_eligible(self):
         """Test that the first eligible candidate is returned."""

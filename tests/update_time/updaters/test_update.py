@@ -9,7 +9,7 @@ import threading
 import unittest
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 from unittest.mock import Mock, call, patch
 
 import update_time
@@ -17,16 +17,16 @@ from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
-from update_time.io import log as log_module
-from update_time.io import process as process_module
+from update_time.io import process
 from update_time.io.filesystem import _EXCLUDE_PATHS
-from update_time.io.log import LOG_LEVEL
+from update_time.io.log import LOG_LEVEL, set_log_level
 from update_time.io.process import Processes
-from update_time.updaters import update as update_module
+from update_time.updaters import update
 from update_time.updaters.update import _SCRIPTS, _SRC, _Script, _Scripts, main
 
-from tests.helpers import patch_environ, patch_pathlib_path
-from tests.update_time.helpers import setting_names
+from tests.environment import patch_environ
+from tests.file_mocks import patch_pathlib_path
+from tests.update_time.base_test_cases import setting_names
 
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
@@ -34,47 +34,50 @@ if TYPE_CHECKING:
 # The scripts that may not run beside another, spelled out so this pins which ones rather than echoing the registry
 # back at itself: package_json rewrites the package.json files that node_engine rewrites too. The parallel ones need
 # no list of their own, since which scripts exist at all is pinned against the files on disk.
-_SEQUENTIAL_SCRIPT_NAMES = ("package_json",)
+_SEQUENTIAL_SCRIPT_NAMES: Final[tuple[str, ...]] = ("package_json",)
 
-_PLATFORM = "macOS-26.7.1-arm64-arm-64bit-Mach-O"
+_PLATFORM: Final[str] = "macOS-26.7.1-arm64-arm-64bit-Mach-O"
 
 # How long a stand-in updater runs when nothing stops it, so a run that fails to stop it cannot hang the tests.
-_PATIENCE = 0.5
+_PATIENCE: Final[float] = 0.5
 
 # How many stand-in updaters have started when the last of them sends the run a SIGTERM.
-_STARTED_WHEN_SIGNALLED = 3
+_STARTED_WHEN_SIGNALLED: Final[int] = 3
 
 
-class _Updater:
-    """A stand-in for an updater process, which runs until it is stopped."""
+class RegistrationTest(unittest.TestCase):
+    """Unit tests for the agreement between the registered updater scripts and the dependency types."""
 
-    def __init__(self, pid: int) -> None:
-        """Start the stand-in."""
-        self.pid = pid
-        self.stopped = threading.Event()
+    @kills.delete(
+        update,
+        'DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script(name="jsdelivr"),),\n',
+        "an updater script is left out of the registry, so it never runs",
+    )
+    def test_the_registration_agrees_with_the_scripts_on_disk(self):
+        """Test that the registry names every dependency type and every `update_*.py` script beside it."""
+        on_disk = {path.stem.removeprefix("update_") for path in _SRC.glob("update_*.py")}
+        self.assertNotEqual(on_disk, set())  # An empty scan would pass the assertion below without examining anything
+        self.assertEqual(_registration_problems(_SCRIPTS, on_disk), [])
 
-    def wait(self) -> int:
-        """Run until the stand-in is stopped, or until the patience runs out, and return the exit code."""
-        return -signal.SIGTERM if self.stopped.wait(_PATIENCE) else 0
+    def test_dependency_type_without_a_script_is_reported(self):
+        """Test that a dependency type no updater script is registered for is reported, naming the type."""
+        scripts = dict.fromkeys(list(DEPENDENCY_TYPES)[:-1], (_Script(name="a_script"),))
+        expected = [f"no updater script is registered for '{list(DEPENDENCY_TYPES)[-1].name}'"]
+        self.assertEqual(_registration_problems(_Scripts(scripts=scripts), {"a_script"}), expected)
 
-
-class _Updaters:
-    """Stand-ins for the updaters a run starts, one of which sends the run a SIGTERM while others run."""
-
-    def __init__(self) -> None:
-        """Start with none."""
-        self.started: list[_Updater] = []
-
-    def start(self, _command: Command, **_kwargs: object) -> _Updater:
-        """Start a stand-in for the command."""
-        self.started.append(updater := _Updater(pid=len(self.started)))
-        if len(self.started) == _STARTED_WHEN_SIGNALLED:
-            os.kill(os.getpid(), signal.SIGTERM)
-        return updater
-
-    def stop_group(self, pid: int, _signal: int) -> None:
-        """Stop the stand-in that leads the process group."""
-        self.started[pid].stopped.set()
+    def test_scripts_disagreeing_with_the_files_on_disk_are_reported(self):
+        """Test that a script on disk nothing registers, and a registered script that is not on disk, are reported."""
+        registered = dict.fromkeys(DEPENDENCY_TYPES, (_Script(name="registered"),))
+        cases = {
+            "on disk but registered for no dependency type": (
+                {"registered", "stray"},
+                ["the updater script 'stray' is on disk but registered for no dependency type"],
+            ),
+            "registered but not on disk": (set(), ["the updater script 'registered' is registered but not on disk"]),
+        }
+        for case, (on_disk, expected) in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(_registration_problems(_Scripts(scripts=registered), on_disk), expected)
 
 
 def _registration_problems(registered: _Scripts, on_disk: set[str]) -> list[str]:
@@ -93,47 +96,12 @@ def _registration_problems(registered: _Scripts, on_disk: set[str]) -> list[str]
     return problems
 
 
-class RegistrationTest(unittest.TestCase):
-    """Unit tests for the agreement between the registered updater scripts and the dependency types."""
-
-    @kills.delete(
-        update_module,
-        'DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script("jsdelivr"),),\n',
-        "an updater script is left out of the registry, so it never runs",
-    )
-    def test_the_registration_agrees_with_the_scripts_on_disk(self):
-        """Test that the registry names every dependency type and every `update_*.py` script beside it."""
-        on_disk = {path.stem.removeprefix("update_") for path in _SRC.glob("update_*.py")}
-        self.assertNotEqual(on_disk, set())  # An empty scan would pass the assertion below without examining anything
-        self.assertEqual(_registration_problems(_SCRIPTS, on_disk), [])
-
-    def test_dependency_type_without_a_script_is_reported(self):
-        """Test that a dependency type no updater script is registered for is reported, naming the type."""
-        scripts = dict.fromkeys(list(DEPENDENCY_TYPES)[:-1], (_Script("a_script"),))
-        expected = [f"no updater script is registered for '{list(DEPENDENCY_TYPES)[-1].name}'"]
-        self.assertEqual(_registration_problems(_Scripts(scripts), {"a_script"}), expected)
-
-    def test_scripts_disagreeing_with_the_files_on_disk_are_reported(self):
-        """Test that a script on disk nothing registers, and a registered script that is not on disk, are reported."""
-        registered = dict.fromkeys(DEPENDENCY_TYPES, (_Script("registered"),))
-        cases = {
-            "on disk but registered for no dependency type": (
-                {"registered", "stray"},
-                ["the updater script 'stray' is on disk but registered for no dependency type"],
-            ),
-            "registered but not on disk": (set(), ["the updater script 'registered' is registered but not on disk"]),
-        }
-        for case, (on_disk, expected) in cases.items():
-            with self.subTest(case=case):
-                self.assertEqual(_registration_problems(_Scripts(registered), on_disk), expected)
-
-
 class ScriptTest(unittest.TestCase):
     """Unit tests for an updater script."""
 
     def test_command(self):
         """Test that a script's command runs the script's file with the interpreter running the run."""
-        command = _Script("dockerfile_base_image").command
+        command = _Script(name="dockerfile_base_image").command
         self.assertEqual(command.executable, sys.executable)
         self.assertEqual(command[-1].split("/")[-1], "update_dockerfile_base_image.py")
 
@@ -147,8 +115,7 @@ class ScriptsTest(unittest.TestCase):
         mock_popen.return_value.wait.return_value = 0
         self.assertEqual(_SCRIPTS.run(Processes(), Mock()), 0)
         scripts_run = [run_call.args[0][-1].split("/")[-1] for run_call in mock_popen.call_args_list]
-        expected = [f"update_{script.name}.py" for script in _SCRIPTS]
-        self.assertEqual(sorted(scripts_run), sorted(expected))
+        self.assertEqual(sorted(scripts_run), sorted([f"update_{script.name}.py" for script in _SCRIPTS]))
         # The scripts that may not run beside another are the last ones run, in whichever order among themselves.
         sequential = {f"update_{name}.py" for name in _SEQUENTIAL_SCRIPT_NAMES}
         self.assertEqual(set(scripts_run[-len(sequential) :]), sequential)
@@ -159,7 +126,7 @@ class ScriptsTest(unittest.TestCase):
         self.assertEqual(_SCRIPTS.run(Processes(), Mock()), 1)
 
     @kills.replace(
-        update_module._Scripts.run,
+        update._Scripts.run,
         "return 1",
         "return exit_code",
         "a signal ends an updater, and the run still exits as a success",
@@ -179,6 +146,12 @@ class ScriptsTest(unittest.TestCase):
 class UpdateMainTest(unittest.TestCase):
     """Unit tests for the main function."""
 
+    def test_main_updates_dependencies(self, mock_popen: Mock):
+        """Test that main parses the arguments and then updates the dependencies."""
+        exit_code, environment = self.run_main(mock_popen)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[COOLDOWN.name], "7")
+
     def run_main(
         self, mock_popen: Mock, *argv: str, inside_git: bool = True, environment: dict[str, str] | None = None
     ) -> tuple[int, dict[str, str]]:
@@ -188,7 +161,7 @@ class UpdateMainTest(unittest.TestCase):
         though `patch.dict` restores the real environment afterwards.
         """
         mock_popen.return_value.wait.return_value = 0
-        for signal_number in update_module._STOP_SIGNALS:
+        for signal_number in update._STOP_SIGNALS:
             self.addCleanup(signal.signal, signal_number, signal.getsignal(signal_number))
         root = logging.getLogger()
         self.addCleanup(setattr, root, "handlers", root.handlers[:])
@@ -207,12 +180,6 @@ class UpdateMainTest(unittest.TestCase):
                 return main(), dict(os.environ)
             except SystemExit as system_exit:
                 return cast(int, system_exit.code), dict(os.environ)
-
-    def test_main_updates_dependencies(self, mock_popen: Mock):
-        """Test that main parses the arguments and then updates the dependencies."""
-        exit_code, environment = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[COOLDOWN.name], "7")
 
     def test_main_passes_cooldown_to_subprocesses(self, mock_popen: Mock):
         """Test that main exports the cooldown in the environment so the updater subprocesses inherit it."""
@@ -247,12 +214,12 @@ class UpdateMainTest(unittest.TestCase):
         self.assertEqual(environment[_EXCLUDE_PATHS.name], "vendor,packages/legacy")
 
     @kills.delete(
-        update_module._pass_settings_down,
+        update._pass_settings_down,
         "STALE_AFTER.set(args.stale_after)",
         "the updaters run on the default staleness threshold, whatever --stale-after says",
     )
     @kills.delete(
-        update_module._pass_settings_down,
+        update._pass_settings_down,
         "VULNERABILITY_LEVEL.set(args.vulnerability_level)",
         "the updaters run on the default risk level, whatever --vulnerability-level says",
     )
@@ -313,7 +280,7 @@ class UpdateMainTest(unittest.TestCase):
         mock_logger.forced_outside_git_repository.assert_called_once_with(Path.cwd())
 
     @kills.replace(
-        update_module._report_context,
+        update._report_context,
         "bool(os.environ.get(name))",
         "name in os.environ",
         "a credential variable set to the empty string is logged as set, though the run goes without it",
@@ -370,12 +337,12 @@ class UpdateMainTest(unittest.TestCase):
                 mock_logger.stopped.assert_called_once_with(signal_number)
 
     @kills.delete(
-        update_module._Scripts.run,
+        update._Scripts.run,
         " or processes.stop_signal is not None",
         "the run logs a stopped update for every updater it stopped itself",
     )
     @kills.replace(
-        process_module.Processes._start,
+        process.Processes._start,
         "if self.stop_signal is not None:  #",
         "if False:  #",
         "a signal that lands while an updater starts leaves that updater running",
@@ -396,7 +363,7 @@ class UpdateMainTest(unittest.TestCase):
         mock_logger.update_stopped.assert_not_called()
 
     @kills.delete(
-        log_module.set_log_level,
+        set_log_level,
         "_configure_root_logger()",
         "the parent logs at the level of whichever module logged first, rather than at --log-level",
     )
@@ -404,3 +371,35 @@ class UpdateMainTest(unittest.TestCase):
         """Test that main logs at the level --log-level sets, whichever module configured the log before main ran."""
         self.run_main(mock_popen, "--log-level", "DEBUG")
         self.assertEqual(logging.getLevelName(logging.getLogger().level), "DEBUG")
+
+
+class _Updaters:
+    """Stand-ins for the updaters a run starts, one of which sends the run a SIGTERM while others run."""
+
+    def __init__(self) -> None:
+        """Start with none."""
+        self.started: list[_Updater] = []
+
+    def start(self, _command: Command, **_kwargs: object) -> _Updater:
+        """Start a stand-in for the command."""
+        self.started.append(updater := _Updater(pid=len(self.started)))
+        if len(self.started) == _STARTED_WHEN_SIGNALLED:
+            os.kill(os.getpid(), signal.SIGTERM)
+        return updater
+
+    def stop_group(self, pid: int, _signal: int) -> None:
+        """Stop the stand-in that leads the process group."""
+        self.started[pid].stopped.set()
+
+
+class _Updater:
+    """A stand-in for an updater process, which runs until it is stopped."""
+
+    def __init__(self, pid: int) -> None:
+        """Start the stand-in."""
+        self.pid = pid
+        self.stopped = threading.Event()
+
+    def wait(self) -> int:
+        """Run until the stand-in is stopped, or until the patience runs out, and return the exit code."""
+        return -signal.SIGTERM if self.stopped.wait(_PATIENCE) else 0

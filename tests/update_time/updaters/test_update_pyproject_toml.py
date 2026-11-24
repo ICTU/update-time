@@ -3,7 +3,8 @@
 import tomllib
 from itertools import repeat
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final, override
 from unittest.mock import ANY, Mock, call, patch
 
 from packaging.requirements import Requirement
@@ -12,60 +13,82 @@ from packaging.specifiers import SpecifierSet
 from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
-from update_time.io.log import Logger, ToolTask
-from update_time.lock_files import uv_lock
-from update_time.manifests import pyproject_config
-from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
-from update_time.manifests.pyproject_toml import PyprojectToml
-from update_time.package_managers.uv import lock, marker_policy, uv
-from update_time.primitives.location import Location
-from update_time.updaters import uv_pins
-from update_time.updaters.update_pyproject_toml import _update_pyproject_tomls
-
-from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
-from tests.update_time.fixtures import CHANGELOG
-from tests.update_time.helpers import (
-    SCAN_ROOT,
-    ExecutablesOnPathTestCase,
-    message_of,
-    published_version,
-    pyproject,
-    uv_path_source,
+from update_time.io.log import (
+    Logger,
+    ToolTask,
+    _Fields,  # simplint: ignore[private-import-path] # annotates with it
 )
-from tests.update_time.package_managers.helpers import CONFIGURED_EXCLUDE_NEWER
-from tests.update_time.sources.helpers import github_commits_json, github_release_json
-from tests.update_time.updaters.helpers import (
-    LOCK_FAILS,
-    NO_SOLUTION,
-    PYPROJECT_TOML,
+from update_time.lock_files.uv_lock import UvLock, _lowest, _project_dependencies, _versions_of
+from update_time.manifests import pyproject_config
+from update_time.manifests.pyproject_toml import PyprojectToml
+from update_time.manifests.python_dependency_toml import Declaration
+from update_time.package_managers.uv import marker_policy
+from update_time.package_managers.uv.lock import (
+    _LockSnapshot,
+    _LockTarget,
+    _LockUpdate,
+    _Member,
+    _MemberSnapshot,
+    _read_workspace,
+    _update_together,
+)
+from update_time.package_managers.uv.uv import (
+    _LOG,
+    _Signals,
+    _warn_about_the_managers,
+    decision,
+    settings_hold_exclude_newer,
+)
+from update_time.primitives.location import Location
+from update_time.updaters.update_pyproject_toml import _update_pyproject_tomls
+from update_time.updaters.uv_pins import warn_about_pins
+
+from tests.file_mocks import FakeFiles, mock_path, patch_pathlib_path
+from tests.http_mocks import mock_response, patch_get
+from tests.update_time.base_test_cases import ExecutablesOnPathTestCase
+from tests.update_time.fixtures import CHANGELOG, SCAN_ROOT
+from tests.update_time.io.log_fields import published_version
+from tests.update_time.io.log_messages import message_of
+from tests.update_time.manifests.manifest_contents import pyproject, pyproject_per_line, uv_path_source
+from tests.update_time.package_managers.uv_settings import CONFIGURED_EXCLUDE_NEWER
+from tests.update_time.sources.github_answers import github_commits_json, github_release_json
+from tests.update_time.sources.osv_answers import no_vulnerabilities
+from tests.update_time.sources.pypi_answers import (
     UPLOAD_TIME_WITH_CHANGELOG,
     UPLOAD_TIME_WITHOUT_CHANGELOG,
+    pypi_answer,
+)
+
+from .scanning import PYPROJECT_TOML
+from .uv_lock import (
+    LOCK_FAILS,
+    NO_SOLUTION,
     UvLockTestCase,
     failing_uv_lock,
     locked_package,
-    no_vulnerabilities,
-    pypi_answer,
-    pyproject_per_line,
     uv_locks,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
     from contextlib import AbstractContextManager
 
+    from mutation_time.mutation import Registration
     from update_time.primitives.command import Command
-    from update_time.sources.pypi import _ReleaseMetadata
+    from update_time.sources.pypi import _ReleaseMetadata  # simplint: ignore[private-import-path] # annotates with it
+
+    from tests.process_mocks import RunStub
 
 
 # What the log renders for version 1.1, whose changelog PyPI does not name in `files_after_update`.
-_NEW_VERSION = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
+_NEW_VERSION: Final[str] = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
 
 # A run stops with one of these errors once the pyproject.toml updater stops checking that a table is a table.
-_ARRAYS_NOT_IN_A_TABLE = "AttributeError: 'str' object has no attribute 'items'"
-_KEYS_NOT_IN_A_TABLE = "AttributeError: 'str' object has no attribute 'get'"
+_ARRAYS_NOT_IN_A_TABLE: Final[str] = "AttributeError: 'str' object has no attribute 'items'"
+_KEYS_NOT_IN_A_TABLE: Final[str] = "AttributeError: 'str' object has no attribute 'get'"
 
 
-def _kills_table_check(row: str, table: str, error: str) -> Callable[[Callable[..., object]], Callable[..., object]]:
+def _kills_table_check(row: str, table: str, error: str) -> Registration:
     """Return a decorator registering the mutation that deletes the row checking that the table is a table."""
     return kills.delete(
         pyproject_config,
@@ -77,35 +100,35 @@ def _kills_table_check(row: str, table: str, error: str) -> Callable[[Callable[.
 
 
 # A pyproject.toml that declares build requirements alone, which uv neither resolves nor locks.
-_BUILD_REQUIREMENTS_ALONE = '[build-system]\nrequires = ["hatchling==1.20.0"]\n'
+_BUILD_REQUIREMENTS_ALONE: Final[str] = '[build-system]\nrequires = ["hatchling==1.20.0"]\n'
 
 # An empty `[tool.uv]` table, which marks a pyproject.toml without a uv.lock beside it as a uv project.
-_UV_TABLE = "[tool.uv]\n"
+_UV_TABLE: Final[str] = "[tool.uv]\n"
 
 # A `[tool.uv]` table that tells uv not to manage the project.
-_UV_TABLE_UNMANAGED = "[tool.uv]\nmanaged = false\n"
+_UV_TABLE_UNMANAGED: Final[str] = "[tool.uv]\nmanaged = false\n"
 
 # A `[tool.pdm]` table and a `[tool.poetry]` table, which pdm-backend and poetry-core read their settings from.
-_PDM_TABLE = "[tool.pdm]\ndistribution = true\n"
-_POETRY_TABLE = '[tool.poetry]\nname = "x"\n'
+_PDM_TABLE: Final[str] = "[tool.pdm]\ndistribution = true\n"
+_POETRY_TABLE: Final[str] = '[tool.poetry]\nname = "x"\n'
 
 
 # The lock files of uv, pdm, and Poetry beside the pyproject.toml at the root of the scan.
-_UV_LOCK = SCAN_ROOT / "uv.lock"
-_PDM_LOCK = SCAN_ROOT / "pdm.lock"
-_POETRY_LOCK = SCAN_ROOT / "poetry.lock"
+_UV_LOCK: Final[Path] = SCAN_ROOT / "uv.lock"
+_PDM_LOCK: Final[Path] = SCAN_ROOT / "pdm.lock"
+_POETRY_LOCK: Final[Path] = SCAN_ROOT / "poetry.lock"
 
 # A workspace root at the root of the scan includes `member`, which declares its dependencies in this pyproject.toml.
-_MEMBER = SCAN_ROOT / "member/pyproject.toml"
+_MEMBER: Final[Path] = SCAN_ROOT / "member/pyproject.toml"
 
 # A workspace root that includes `member` and `other`, and sources `other` from the workspace.
-_ROOT_SOURCING_OTHER = (
+_ROOT_SOURCING_OTHER: Final[str] = (
     '[tool.uv.workspace]\nmembers = ["member", "other"]\n\n[tool.uv.sources]\nother = { workspace = true }\n'
 )
 
 # A uv.lock lists a dependency of the project in an extra, and one in a dependency group, under this table and group.
-_EXTRA = ("optional-dependencies", "cli")
-_GROUP = ("dev-dependencies", "dev")
+_EXTRA: Final[tuple[str, str]] = ("optional-dependencies", "cli")
+_GROUP: Final[tuple[str, str]] = ("dev-dependencies", "dev")
 
 
 def _uv_lock(
@@ -121,99 +144,20 @@ def _uv_lock(
     return f"version = 1\n\n{project}{listed}\n\n{locked_package(package, version)}"
 
 
-def _forked_uv_lock(below_python_3_12: str, from_python_3_12: str) -> str:
-    """Return a uv.lock that locks `package` for the project at one version below Python 3.12, and at another from it.
-
-    It also locks `package` at 1.0 for `other`, a dependency of the project that needs that version.
-    """
-    project = '[[package]]\nname = "project"\nversion = "0"\nsource = { virtual = "." }\ndependencies = [\n'
-    project += '    { name = "other" },\n'
-    forks = ((below_python_3_12, "python_full_version < '3.12'"), (from_python_3_12, "python_full_version >= '3.12'"))
-    for version, marker in forks:
-        project += f'    {{ name = "package", version = "{version}", marker = "{marker}" }},\n'
-    other = '[[package]]\nname = "other"\nversion = "1"\ndependencies = [{ name = "package", version = "1.0" }]\n'
-    packages = "\n".join(locked_package("package", version) for version in ("1.0", below_python_3_12, from_python_3_12))
-    return f"version = 1\n\n{project}]\n\n{other}\n{packages}"
-
-
-def _root_declaring(spec: str) -> str:
-    """Return a workspace root that includes `member` and declares the dependency."""
-    return f'[project]\nname = "root"\ndependencies = ["{spec}"]\n[tool.uv.workspace]\nmembers = ["member"]\n'
-
-
-def _workspace_above_the_scan(member: str) -> dict[Path, str]:
-    """Return the pyproject.toml of `member`, and of a workspace root that includes it and declares a dependency."""
-    return {PYPROJECT_TOML: _root_declaring("other==1.0"), _MEMBER: member}
-
-
-def _scan_from_the_member() -> AbstractContextManager[Mock]:
-    """Return a patch that makes the directory of `member` the scan root, which leaves the workspace root out."""
-    return patch("pathlib.Path.cwd", return_value=_MEMBER.parent)
-
-
 # A uv.lock before the run that leaves out `package`, since it locks another package.
-_LOCK_WITHOUT_THE_PACKAGE = _uv_lock("1.0", "other")
+_LOCK_WITHOUT_THE_PACKAGE: Final[str] = _uv_lock("1.0", "other")
 
 # Two projects, each the root of a workspace of its own. `app` sources `lib` by path, and both pin `package` exactly.
-_LIB = SCAN_ROOT / "lib/pyproject.toml"
-_APP = SCAN_ROOT / "app/pyproject.toml"
-_LIB_AND_APP = {
-    _LIB: pyproject("package==1.0"),
-    _LIB.with_name("uv.lock"): _uv_lock("1.0"),
-    _APP: pyproject("lib", "package==1.0") + uv_path_source("lib"),
-    _APP.with_name("uv.lock"): _uv_lock("1.0"),
-}
-
-
-def _uv_lock_resolving_path_sources(
-    files: FakeFiles, locks: list[tuple[Command, dict[Path, str]]], unreachable_index: Path | None
-) -> Callable[..., object]:
-    """Return a stub of uv lock that locks `package` at a version every pin on it admits, as uv does.
-
-    A lock admits what the pins of each project the locked project declares admit as well, since these tests source
-    `lib` and `app` by path. Where the pins do not admit a version, the lock fails. With `--upgrade` the lock takes
-    the newest version admitted, and without it the version locked before, where that is still admitted. A lock with
-    `--upgrade` in the directory `unreachable_index` fails, as uv fails where it cannot reach the index. Each lock is
-    added to `locks`, with the files as they were when it ran.
-    """
-    sourced_manifests = {"lib": _LIB, "app": _APP}
-
-    def requirements(manifest: Path) -> list[Requirement]:
-        return [Requirement(spec) for spec in tomllib.loads(files[manifest])["project"]["dependencies"]]
-
-    def stub(command: Command, *_arguments: object, **_options: object) -> object:
-        locks.append((command, dict(files)))
-        directory = Path(command[command.index("--directory") + 1])
-        locked_manifest = directory / "pyproject.toml"
-        names = [requirement.name for requirement in requirements(locked_manifest)]
-        declared_manifests = [sourced_manifests[name] for name in names if name in sourced_manifests]
-        specifier = SpecifierSet()
-        for manifest in [locked_manifest, *declared_manifests]:
-            for requirement in requirements(manifest):
-                if requirement.name == "package":
-                    specifier &= requirement.specifier
-        admitted = list(specifier.filter(["1.0", "1.1"]))
-        if not admitted or (directory == unreachable_index and "--upgrade" in command):
-            failing_uv_lock()
-        lock = directory / "uv.lock"
-        locked = tomllib.loads(files[lock])["package"][1]["version"]
-        version = locked if locked in admitted and "--upgrade" not in command else admitted[-1]
-        files[lock] = _uv_lock(version)
-        return Mock(stdout="", stderr="")
-
-    return stub
-
-
-def _redundant_update_fields(reason: Reason, directive: str = "ignore[update]") -> dict[str, object]:
-    """Return the fields of the warning that the directive on the dependency `pyproject()` declares is redundant."""
-    return {"directive": directive, "dependency": "package", "location": Location(PYPROJECT_TOML, 2), "reason": reason}
-
-
-def _discovered_pyproject_toml(glob: Mock, contents: str) -> Mock:
-    """Return the single mock pyproject.toml the scan discovers, holding the contents."""
-    pyproject_toml = mock_path(contents, parent=SCAN_ROOT)
-    glob.return_value = [pyproject_toml]
-    return pyproject_toml
+_LIB: Final[Path] = SCAN_ROOT / "lib/pyproject.toml"
+_APP: Final[Path] = SCAN_ROOT / "app/pyproject.toml"
+_LIB_AND_APP: Final[MappingProxyType[Path, str]] = MappingProxyType(
+    {
+        _LIB: pyproject("package==1.0"),
+        _LIB.with_name("uv.lock"): _uv_lock("1.0"),
+        _APP: pyproject("lib", "package==1.0") + uv_path_source("lib"),
+        _APP.with_name("uv.lock"): _uv_lock("1.0"),
+    }
+)
 
 
 class _PyprojectTomlLockTestCase(UvLockTestCase):
@@ -222,6 +166,7 @@ class _PyprojectTomlLockTestCase(UvLockTestCase):
     manifest = PYPROJECT_TOML
     lock_file = _UV_LOCK
 
+    @override
     def update(self) -> None:
         """Run the pyproject.toml updater."""
         _update_pyproject_tomls()
@@ -234,24 +179,18 @@ class _PyprojectTomlLockTestCase(UvLockTestCase):
 @patch("update_time.updaters.update_pyproject_toml.warn_about_pins", Mock())
 @patch("update_time.package_managers.uv.lock.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
-@patch("requests.Session.get")
+@patch_get()
 @patch("subprocess.run")
 class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     """Unit tests for the update pyproject.tomls function."""
 
-    @staticmethod
-    def pypi_metadata(
-        changelog_url: str = "https://changelog",
-        repository: str = "https://github.com/repo/package_with_github_releases",
-    ) -> _ReleaseMetadata:
-        """Create PyPI release metadata fixture."""
-        project_urls = {"Homepage": "https://home", "repository": repository}
-        if changelog_url:
-            project_urls["Changelog"] = changelog_url
-        return {
-            "info": {"description": "Package description", "project_urls": project_urls},
-            "urls": [{"upload_time_iso_8601": UPLOAD_TIME_WITH_CHANGELOG}],
-        }
+    def test_an_exact_pin_takes_the_version_uv_lock_records(self, run: Mock, get: Mock, glob: Mock):
+        """Test that an exact pin moves to the version uv lock records, with the cooldown left to the config."""
+        self.assertEqual(self.updated_pin(run, get, glob)[PYPROJECT_TOML], pyproject("package==1.1"))
+        self.assert_path_logged(_UV_LOCK)
+        self.assert_new_version_logged("package", _NEW_VERSION, Location(PYPROJECT_TOML, 2))
+        self.assert_no_cli_cooldown(run)
+        self.assert_no_warnings_logged()
 
     def updated_pin(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
         self,
@@ -271,28 +210,6 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         """Assert that the three uv locks run without an `--exclude-newer` flag, since the cooldown lives in config."""
         self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [False, False, False])
 
-    def assert_uv_not_run_for(
-        self, run: Mock, get: Mock, glob: Mock, files: Mapping[Path, str], discovered: Sequence[Path] = ()
-    ) -> None:
-        """Assert that updating the files does not run uv, ask PyPI, or configure the cooldown, and leaves the files."""
-        run.reset_mock()
-        get.reset_mock()
-        with patch("update_time.package_managers.uv.lock.configure_cooldown") as configure_cooldown:
-            left = self.files_after_update(run, get, glob, files, _uv_lock("1.1"), discovered=discovered)
-        run.assert_not_called()
-        get.assert_not_called()
-        configure_cooldown.assert_not_called()
-        self.assertEqual(dict(left), files)
-
-    def test_an_exact_pin_takes_the_version_uv_lock_records(self, run: Mock, get: Mock, glob: Mock):
-        """Test that an exact pin moves to the version uv lock records, with the cooldown left to the config."""
-        left = self.updated_pin(run, get, glob)
-        self.assertEqual(left[PYPROJECT_TOML], pyproject("package==1.1"))
-        self.assert_path_logged(_UV_LOCK)
-        self.assert_new_version_logged("package", _NEW_VERSION, Location(PYPROJECT_TOML, 2))
-        self.assert_no_cli_cooldown(run)
-        self.assert_no_warnings_logged()
-
     def test_uv_lock_runs_on_the_file_as_written_before_upgrading_and_again_on_the_rewritten_pins(
         self, run: Mock, get: Mock, glob: Mock
     ):
@@ -304,14 +221,14 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(files_at_the_last_lock[PYPROJECT_TOML], pyproject("package==1.1"))
 
     @kills.delete(
-        lock._MemberSnapshot.steered_member,
+        _MemberSnapshot.steered_member,
         "member.warn_about_redundant_bounds(log)",
         "a bound that decides nothing in a pyproject.toml is not warned about",
     )
-    @kills.append(
-        lock._Member.warn_about_redundant_bounds,
-        "current_version=",
-        "declaration.",
+    @kills.replace(
+        _Member.warn_about_redundant_bounds,
+        "current_version=version",
+        "current_version=declaration.current_version",
         "a bound on a dependency without an exact pin is not judged at the version locked before, so it goes "
         "unreported",
     )
@@ -358,13 +275,13 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_new_version_logged("package", _NEW_VERSION, Location(PYPROJECT_TOML, 2))
 
     @kills.replace(
-        lock._LockUpdate._report_new_pins,
+        _LockUpdate._report_new_pins,
         "served = pypi_served(moved_pins)",
         "served = list(moved_pins)",
         "a pin uv resolves from elsewhere than PyPI is reported, and its changelog asked of PyPI",
     )
     @kills.delete_statement(
-        lock._LockUpdate._report_new_pins,
+        _LockUpdate._report_new_pins,
         'log.new_version(Reference(pin.name, "", declaration.location), DependencyVersion(pin.version))',
         "a pin uv resolves from elsewhere than PyPI moves without a word",
     )
@@ -384,7 +301,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_new_version_logged("other", "0.2", Location(_MEMBER, 2))
 
     @kills.delete(
-        lock._Member.reportable_declarations,
+        _Member.reportable_declarations,
         "if not declaration.build_requirement",
         "a version uv lock moves is also reported at a build requirement of its name, which uv does not lock",
     )
@@ -407,7 +324,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_logged(message, dependency="package", location=Location(PYPROJECT_TOML, 2))
 
     @kills.delete(
-        lock._LockUpdate._report_pins_with_environment_markers,
+        _LockUpdate._report_pins_with_environment_markers,
         "and not declaration.build_requirement",
         "a build requirement with an environment marker is reported as left, though uv does not lock it",
     )
@@ -427,14 +344,14 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_new_version_logged_among_others("package", _NEW_VERSION, Location(PYPROJECT_TOML, 4), ANY)
 
     @kills.replace(
-        uv_lock._project_dependencies,
+        _project_dependencies,
         'entry.get("optional-dependencies", {})',
         "{}",
         "the versions locked for the project's extras go unreported",
         case="an extra",
     )
     @kills.replace(
-        uv_lock._project_dependencies,
+        _project_dependencies,
         'entry.get("dev-dependencies", {})',
         "{}",
         "the versions locked for the project's dependency groups go unreported",
@@ -475,7 +392,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assertEqual(len(self.new_version_records()), 2)
 
     @kills.replace(
-        uv_lock._project_dependencies,
+        _project_dependencies,
         'entry.get("dependency-groups", {})',
         "{}",
         "the run leaves the dependency groups in the manifest of a uv.lock unreported",
@@ -487,27 +404,27 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         manifest = '[manifest]\nmembers = ["member"]\n\n[manifest.dependency-groups]\n'
         manifest += 'dev = [{ name = "package", specifier = ">=1.0" }]\n\n'
         member = '[[package]]\nname = "member"\nversion = "0"\nsource = { virtual = "member" }\n\n'
-        root = '[tool.uv.workspace]\nmembers = ["member"]\n\n[dependency-groups]\ndev = ["package>=1.0"]\n'
         lock_before, lock_after = (
             f"version = 1\n\n{manifest}{member}{locked_package('package', v)}" for v in ("1.0", "1.1")
         )
+        root = '[tool.uv.workspace]\nmembers = ["member"]\n\n[dependency-groups]\ndev = ["package>=1.0"]\n'
         self.files_after_update(run, get, glob, {PYPROJECT_TOML: root, _UV_LOCK: lock_before}, lock_after)
         self.assert_new_version_logged("package", _NEW_VERSION, Location(PYPROJECT_TOML, 5))
 
     @kills.delete(
-        uv_lock._versions_of,
+        _versions_of,
         '[dependency["version"]] if "version" in dependency else ',
         "a dependency locked at several versions is reported at one the project may not use",
         case="the lower version listed first",
     )
     @kills.force_false(
-        uv_lock._lowest,
+        _lowest,
         "PEP_440.is_downgrade(lowest, version)",
         "a dependency locked at several versions is pinned at the one the lock lists first",
         case="the higher version listed first",
     )
     @kills.force_true(
-        uv_lock._lowest,
+        _lowest,
         "PEP_440.is_downgrade(lowest, version)",
         "a dependency locked at several versions is pinned at the one the lock lists last",
         case="the lower version listed first",
@@ -516,11 +433,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that a dependency uv locks per Python version is pinned and reported at the lowest the project uses."""
-        contents = '[project]\ndependencies = ["package>=1.0"]\n[dependency-groups]\ndev = ["package==1.1"]\n'
         cases = {
             "the lower version listed first": (_forked_uv_lock("1.1", "1.4"), _forked_uv_lock("1.2", "1.5")),
             "the higher version listed first": (_forked_uv_lock("1.4", "1.1"), _forked_uv_lock("1.5", "1.2")),
         }
+        contents = '[project]\ndependencies = ["package>=1.0"]\n[dependency-groups]\ndev = ["package==1.1"]\n'
         for case, (lock_before, lock_after) in cases.items():
             with self.subTest(case):
                 left = self.files_after_update(
@@ -538,7 +455,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         both = '[{ name = "other" }, { name = "package" }]'
         other = '[[package]]\nname = "other"\nversion = "{}"\nsource = {{ git = "https://github.com/org/other" }}\n'
         locks = [
-            _uv_lock(package).replace('[{ name = "package" }]', both) + "\n" + other.format(other_version)
+            f"{_uv_lock(package).replace('[{ name = "package" }]', both)}\n{other.format(other_version)}"
             for other_version, package in (("0.1", "1.0"), ("0.2", "1.1"))
         ]
         self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents, _UV_LOCK: locks[0]}, locks[1])
@@ -550,9 +467,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         both = '[{ name = "other" }, { name = "package" }]'
         other = '[[package]]\nname = "other"\nversion = "{}"\nsource = {{ editable = "other" }}\n'
         locks = [
-            _uv_lock(package, project_source="member").replace('[{ name = "package" }]', both)
-            + "\n"
-            + other.format(other_version)
+            f"{_uv_lock(package, project_source='member').replace('[{ name = "package" }]', both)}\n"
+            f"{other.format(other_version)}"
             for other_version, package in (("0.1", "1.0"), ("0.2", "1.1"))
         ]
         files = {PYPROJECT_TOML: root, _MEMBER: pyproject("other", "package>=1.0"), _UV_LOCK: locks[0]}
@@ -560,7 +476,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_new_version_logged("package", _NEW_VERSION, Location(_MEMBER, 2))
 
     @kills.replace(
-        uv_lock.UvLock.recorded_versions,
+        UvLock.recorded_versions,
         'for package in packages if "version" in package',
         "for package in packages",
         "the run stops where the lock does not record a version for a dependency, such as a dynamic sibling member",
@@ -595,7 +511,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_moved_back_logged("uv", "package", "1.1", "1.0", Location(PYPROJECT_TOML, 2))
 
     @kills.replace(
-        lock._LockUpdate._rewrite,
+        _LockUpdate._rewrite,
         "except OSError as error:",
         "except ValueError as error:",
         "a pyproject.toml that cannot be written stops the run, leaving the other files of its workspace relaxed",
@@ -622,14 +538,14 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         )
 
     @kills.delete(
-        lock._LockTarget._read,
+        _LockTarget._read,
         "UnicodeDecodeError",
         "a uv.lock that is not UTF-8 stops the run",
         raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
         case="a uv.lock that is not UTF-8",
     )
     @kills.delete(
-        lock._LockTarget._read,
+        _LockTarget._read,
         "OSError, ",
         "a uv.lock without read permission stops the run",
         raises="PermissionError: [Errno 13] Permission denied: '/other/uv.lock'",
@@ -708,14 +624,14 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         """Test that the line saying the pyproject.toml is checked comes before the cooldown the run sets in it."""
 
         def configure_cooldown(root: Path) -> None:
-            uv._LOG.configured_uv_cooldown(root, "7 days")
+            _LOG.configured_uv_cooldown(root, "7 days")
 
         with patch("update_time.package_managers.uv.lock.configure_cooldown", side_effect=configure_cooldown):
             self.updated_pin(run, get, glob)
         self.assert_path_logged_first(PYPROJECT_TOML)
 
     @kills.delete(
-        lock._read_workspace,
+        _read_workspace,
         "if target.keeps_the_lock:\n        ",
         "the run writes the cooldown into the root of a workspace that it leaves without a lock",
     )
@@ -725,7 +641,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         """Test that an exact pin moves to the locked version, the cooldown goes to uv alone, and the uv.lock goes."""
         contents = (
             '[project]\nname = "a"\ndependencies = ["package>=1.0"]\n[dependency-groups]\ndev = ["package==1.0"]\n'
-            + _UV_TABLE
+            f"{_UV_TABLE}"
         )
         with (
             patch("update_time.package_managers.uv.lock.cooldown_cutoff", Mock(return_value="cutoff")),
@@ -813,13 +729,37 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(files[_LIB], pyproject("package==1.1"))
         self.assertEqual(files[_APP], pyproject("lib", "package==1.1") + uv_path_source("lib"))
 
+    def updated_lib_and_app(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
+        self,
+        run: Mock,
+        get: Mock,
+        glob: Mock,
+        changed: Mapping[Path, str],
+        discovered: list[Path],
+        *,
+        unreachable_index: Path | None = None,
+    ) -> FakeFiles:
+        """Update `lib` and `app`, with the changed files replacing theirs, and return the files.
+
+        The scan finds the files in the order `discovered` gives. The uv stub fails to upgrade the lock in the
+        directory `unreachable_index`, and records each lock in `locks`.
+        """
+        files = FakeFiles({**_LIB_AND_APP, **changed})
+        self.locks = []
+        run.side_effect = _uv_lock_resolving_path_sources(files, self.locks, unreachable_index)
+        get.side_effect = pypi_answer
+        glob.return_value = discovered
+        with files.patched():
+            _update_pyproject_tomls()
+        return files
+
     @kills.delete_statement(
-        lock._update_together,
+        _update_together,
         "lock_update.relax()",
         "each workspace of a cycle upgrades while the others still pin the version they share, so none moves",
     )
     @kills.delete(
-        lock._update_together,
+        _update_together,
         "(lock_update, lock_update.relock) for lock_update in lock_updates[:-1]",
         "an earlier workspace of a cycle keeps a lock that records the others' pins from before they moved",
     )
@@ -832,15 +772,13 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         app = pyproject("lib", "package==1.1") + uv_path_source("lib")
         self.assertEqual(files[_LIB], lib.replace("package==1.0", "package==1.1"))
         self.assertEqual(files[_APP], app)
-        last_lock_of_lib = [locked for command, locked in self.locks if str(_LIB.parent) in command][-1]
-        self.assertEqual(last_lock_of_lib[_APP], app)
+        self.assertEqual([locked for command, locked in self.locks if str(_LIB.parent) in command][-1][_APP], app)
 
     def test_a_cycle_of_path_sources_is_rolled_back_where_a_later_workspace_cannot_be_locked(
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that a workspace whose cycle partner cannot be locked gets its files back and is reported."""
-        lib = pyproject("app", "package==1.0") + uv_path_source("app")
-        changed = {_LIB: lib}
+        changed = {_LIB: (pyproject("app", "package==1.0") + uv_path_source("app"))}
         files = self.updated_lib_and_app(run, get, glob, changed, [_LIB, _APP], unreachable_index=_APP.parent)
         self.assertEqual(dict(files), {**_LIB_AND_APP, **changed})
         self.assert_no_new_version_logged()
@@ -850,7 +788,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         )
 
     @kills.replace(
-        lock._LockUpdate.move_pins,
+        _LockUpdate.move_pins,
         "if not self.lock_as_written_succeeded:\n            return False",
         "if not self.lock_as_written_succeeded:\n            return True",
         "a workspace of a cycle whose files as written uv cannot lock keeps the requirements relaxed for the cycle",
@@ -881,30 +819,6 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(files[_LIB], pyproject("package==1.1"))
         self.assertEqual(files[_APP], app)
         self.assert_uv_dependencies_not_updated_logged(_APP, "uv lock")
-
-    def updated_lib_and_app(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
-        self,
-        run: Mock,
-        get: Mock,
-        glob: Mock,
-        changed: Mapping[Path, str],
-        discovered: list[Path],
-        *,
-        unreachable_index: Path | None = None,
-    ) -> FakeFiles:
-        """Update `lib` and `app`, with the changed files replacing theirs, and return the files.
-
-        The scan finds the files in the order `discovered` gives. The uv stub fails to upgrade the lock in the
-        directory `unreachable_index`, and records each lock in `locks`.
-        """
-        files = FakeFiles({**_LIB_AND_APP, **changed})
-        self.locks = []
-        run.side_effect = _uv_lock_resolving_path_sources(files, self.locks, unreachable_index)
-        get.side_effect = pypi_answer
-        glob.return_value = discovered
-        with files.patched():
-            _update_pyproject_tomls()
-        return files
 
     def test_a_bound_that_cannot_narrow_the_requirement_holds_the_declaration_on_its_current_version(
         self, run: Mock, get: Mock, glob: Mock
@@ -986,6 +900,20 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         )
         self.assert_no_warnings_logged()
 
+    @staticmethod
+    def pypi_metadata(
+        changelog_url: str = "https://changelog",
+        repository: str = "https://github.com/repo/package_with_github_releases",
+    ) -> _ReleaseMetadata:
+        """Create PyPI release metadata fixture."""
+        project_urls = {"Homepage": "https://home", "repository": repository}
+        if changelog_url:
+            project_urls["Changelog"] = changelog_url
+        return {
+            "info": {"description": "Package description", "project_urls": project_urls},
+            "urls": [{"upload_time_iso_8601": UPLOAD_TIME_WITH_CHANGELOG}],
+        }
+
     def test_update_with_html_changelog(self, run: Mock, get: Mock, glob: Mock):
         """Test that updating a pyproject.toml with only a HTML changelog ignores the changelog."""
         get.side_effect = [
@@ -1038,15 +966,14 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_no_warnings_logged()
 
     @kills.replace(
-        lock._LockUpdate._moved_pins,
+        _LockUpdate._moved_pins,
         "PEP_440.order(locked[name].version) != PEP_440.order(declaration.current_version)",
         "locked[name].version != declaration.current_version",
         "where the lock spells a pinned 1.0 as 1.0.0, the pin becomes 1.0.0 and is reported as a new version",
     )
     def test_a_pin_uv_lock_keeps_leaves_the_pyproject_toml_as_it_was(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pin uv lock keeps, spelled more precisely, leaves the file as it was, and goes unlogged."""
-        left = self.updated_pin(run, get, glob, latest="1.0.0")
-        self.assertEqual(left[PYPROJECT_TOML], pyproject("package==1.0"))
+        self.assertEqual(self.updated_pin(run, get, glob, latest="1.0.0")[PYPROJECT_TOML], pyproject("package==1.0"))
         get.assert_not_called()
         self.assert_path_logged(_UV_LOCK)
         self.assert_no_new_version_logged()
@@ -1064,7 +991,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_uv_dependencies_not_updated_logged(PYPROJECT_TOML, "uv lock")
 
     @kills.delete(
-        uv_lock.UvLock.restore,
+        UvLock.restore,
         "missing_ok=True",
         "giving back a uv.lock that held nothing fails where uv did not write one either",
     )
@@ -1081,7 +1008,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_no_new_version_logged()
 
     @kills.delete(
-        uv.settings_hold_exclude_newer,
+        settings_hold_exclude_newer,
         'is_installed("uv") and ',
         "a missing uv is asked for its settings, for a project without a lock, and reported twice",
     )
@@ -1180,14 +1107,27 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                     PYPROJECT_TOML, message_of(Logger.no_dependencies), manager="uv", verb="resolve"
                 )
 
+    def assert_uv_not_run_for(
+        self, run: Mock, get: Mock, glob: Mock, files: Mapping[Path, str], discovered: Sequence[Path] = ()
+    ) -> None:
+        """Assert that updating the files does not run uv, ask PyPI, or configure the cooldown, and leaves the files."""
+        run.reset_mock()
+        get.reset_mock()
+        with patch("update_time.package_managers.uv.lock.configure_cooldown") as configure_cooldown:
+            left = self.files_after_update(run, get, glob, files, _uv_lock("1.1"), discovered=discovered)
+        run.assert_not_called()
+        get.assert_not_called()
+        configure_cooldown.assert_not_called()
+        self.assertEqual(dict(left), files)
+
     @kills.delete_statement(
-        uv.decision,
+        decision,
         "_LOG.not_a_uv_project(pyproject_toml, UvLock.beside(root).path)",
         "a pyproject.toml that uv does not run for, though it declares dependencies, goes unreported",
         case="neither a uv.lock nor a [tool.uv] table",
     )
     @kills.delete_statement(
-        uv.decision,
+        decision,
         "_LOG.project_marked_unmanaged(pyproject_toml, root)",
         "a pyproject.toml whose [tool.uv] table sets managed = false goes unreported",
         case="a [tool.uv] table that sets managed = false",
@@ -1259,7 +1199,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_logged(message, location=Location(PYPROJECT_TOML), signals="[tool.poetry] and [tool.pdm]")
 
     @kills.force_false(
-        uv._warn_about_the_managers,
+        _warn_about_the_managers,
         "pyproject_toml != root and is_scanned(root)",
         "each member of a workspace repeats the warning about its root",
     )
@@ -1306,7 +1246,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assert_no_warnings_logged()
 
     @kills.delete(
-        uv._warn_about_the_managers,
+        _warn_about_the_managers,
         " and is_scanned(root)",
         "a member whose workspace root lies outside the scan points at a warning nobody gives",
     )
@@ -1331,7 +1271,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
 
     @kills.delete(
         _update_pyproject_tomls,
-        "marker_policy.report_file_markers(pyproject_toml, _LOG, policy)",
+        "report_file_markers(pyproject_toml, _LOG, policy)",
         "the markers of a pyproject.toml uv does not manage go unreported",
     )
     def test_a_marker_in_a_file_uv_does_not_run_for_is_recognised(self, run: Mock, get: Mock, glob: Mock):
@@ -1353,8 +1293,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     )
     @kills.replace(
         pyproject_config,
-        '_DYNAMIC_DEPENDENCY_FIELDS = ("dependencies", "optional-dependencies")',
-        '_DYNAMIC_DEPENDENCY_FIELDS = ("optional-dependencies",)',
+        '_DYNAMIC_DEPENDENCY_FIELDS: Final[tuple[str, ...]] = ("dependencies", "optional-dependencies")',
+        '_DYNAMIC_DEPENDENCY_FIELDS: Final[tuple[str, ...]] = ("optional-dependencies",)',
         "uv does not run for a project whose dependencies its build backend declares",
         case="dynamic dependencies",
     )
@@ -1379,7 +1319,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assertTrue(uv_locks(run))
 
     @kills.delete(
-        uv._Signals.managers,
+        _Signals.managers,
         '("uv",) if "uv" in self.tables else ',
         "the tables of uv and Poetry tie in a project without a lock file",
     )
@@ -1394,10 +1334,85 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_no_warnings_logged()
 
 
-@no_vulnerabilities
+def _forked_uv_lock(below_python_3_12: str, from_python_3_12: str) -> str:
+    """Return a uv.lock that locks `package` for the project at one version below Python 3.12, and at another from it.
+
+    It also locks `package` at 1.0 for `other`, a dependency of the project that needs that version.
+    """
+    project = '[[package]]\nname = "project"\nversion = "0"\nsource = { virtual = "." }\ndependencies = [\n'
+    project += '    { name = "other" },\n'
+    forks = ((below_python_3_12, "python_full_version < '3.12'"), (from_python_3_12, "python_full_version >= '3.12'"))
+    for version, marker in forks:
+        project += f'    {{ name = "package", version = "{version}", marker = "{marker}" }},\n'
+    packages = "\n".join(locked_package("package", version) for version in ("1.0", below_python_3_12, from_python_3_12))
+    other = '[[package]]\nname = "other"\nversion = "1"\ndependencies = [{ name = "package", version = "1.0" }]\n'
+    return f"version = 1\n\n{project}]\n\n{other}\n{packages}"
+
+
+def _root_declaring(spec: str) -> str:
+    """Return a workspace root that includes `member` and declares the dependency."""
+    return f'[project]\nname = "root"\ndependencies = ["{spec}"]\n[tool.uv.workspace]\nmembers = ["member"]\n'
+
+
+def _uv_lock_resolving_path_sources(
+    files: FakeFiles, locks: list[tuple[Command, dict[Path, str]]], unreachable_index: Path | None
+) -> RunStub:
+    """Return a stub of uv lock that locks `package` at a version every pin on it admits, as uv does.
+
+    A lock admits what the pins of each project the locked project declares admit as well, since these tests source
+    `lib` and `app` by path. Where the pins do not admit a version, the lock fails. With `--upgrade` the lock takes
+    the newest version admitted, and without it the version locked before, where that is still admitted. A lock with
+    `--upgrade` in the directory `unreachable_index` fails, as uv fails where it cannot reach the index. Each lock is
+    added to `locks`, with the files as they were when it ran.
+    """
+    sourced_manifests = {"lib": _LIB, "app": _APP}
+
+    def requirements(manifest: Path) -> list[Requirement]:
+        return [Requirement(spec) for spec in tomllib.loads(files[manifest])["project"]["dependencies"]]
+
+    def stub(command: Command, *_arguments: object, **_options: object) -> Mock:
+        locks.append((command, dict(files)))
+        directory = Path(command[command.index("--directory") + 1])
+        locked_manifest = directory / "pyproject.toml"
+        names = [requirement.name for requirement in requirements(locked_manifest)]
+        declared_manifests = [sourced_manifests[name] for name in names if name in sourced_manifests]
+        specifier = SpecifierSet()
+        for manifest in [locked_manifest, *declared_manifests]:
+            for requirement in requirements(manifest):
+                if requirement.name == "package":
+                    specifier &= requirement.specifier
+        admitted = list(specifier.filter(["1.0", "1.1"]))
+        if not admitted or (directory == unreachable_index and "--upgrade" in command):
+            failing_uv_lock()
+        lock = directory / "uv.lock"
+        locked = tomllib.loads(files[lock])["package"][1]["version"]
+        files[lock] = _uv_lock(locked if locked in admitted and "--upgrade" not in command else admitted[-1])
+        return Mock(stdout="", stderr="")
+
+    return stub
+
+
+def _discovered_pyproject_toml(glob: Mock, contents: str) -> Mock:
+    """Return the single mock pyproject.toml the scan discovers, holding the contents."""
+    pyproject_toml = mock_path(contents, parent=SCAN_ROOT)
+    glob.return_value = [pyproject_toml]
+    return pyproject_toml
+
+
+def _workspace_above_the_scan(member: str) -> dict[Path, str]:
+    """Return the pyproject.toml of `member`, and of a workspace root that includes it and declares a dependency."""
+    return {PYPROJECT_TOML: _root_declaring("other==1.0"), _MEMBER: member}
+
+
+def _scan_from_the_member() -> AbstractContextManager[Mock]:
+    """Return a patch that makes the directory of `member` the scan root, which leaves the workspace root out."""
+    return patch("pathlib.Path.cwd", return_value=_MEMBER.parent)
+
+
+@no_vulnerabilities()
 @patch("update_time.package_managers.uv.lock.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
-@patch("requests.Session.get", side_effect=pypi_answer)
+@patch_get()
 @patch("subprocess.run")
 class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
     """Unit tests for the directives a run reports as redundant in a pyproject.toml."""
@@ -1415,21 +1430,21 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 )
 
     @kills.replace(
-        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        Declaration.unnarrowable_reason,
         "Reason.BUILD_REQUIREMENT_NOT_LOCKED",
         "Reason.BOUND_DECIDES_NOTHING",
         "a bound Update-time does not narrow for a build requirement is reported as if uv resolved the version",
         case="build requirement",
     )
     @kills.replace(
-        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        Declaration.unnarrowable_reason,
         "Reason.URL_RATHER_THAN_VERSION",
         "Reason.BOUND_DECIDES_NOTHING",
         "a bound Update-time does not narrow for a direct URL is reported as if uv resolved the version",
         case="direct URL",
     )
     @kills.replace(
-        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        Declaration.unnarrowable_reason,
         "Reason.ENVIRONMENT_MARKER_PIN_KEPT",
         "Reason.BOUND_DECIDES_NOTHING",
         "a bound Update-time does not narrow for a pin with an environment marker is reported as if uv resolved the "
@@ -1437,7 +1452,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         case="exact pin with an environment marker",
     )
     @kills.replace(
-        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        Declaration.unnarrowable_reason,
         "Reason.BOUND_ON_A_HELD_BACK_UPDATE",
         "Reason.BOUND_DECIDES_NOTHING",
         "a bound Update-time does not narrow for a pin whose update is held back is reported as if uv resolved the "
@@ -1514,7 +1529,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 self.assert_no_ignored_logged()
 
     @kills.replace(
-        uv.decision,
+        decision,
         "else Decision.UNMANAGED",
         "else Decision.NOTHING_TO_RESOLVE",
         "the markers of a file pdm manages are judged as if uv ran for it",
@@ -1551,7 +1566,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that an `ignore[update]` and a bound beside a uv.lock and a poetry.lock follow the warning on both."""
-        several_managers = {
+        several_managers: _Fields = {
             "location": Location(PYPROJECT_TOML),
             "signals": (Location(_UV_LOCK), Location(_POETRY_LOCK)),
         }
@@ -1566,8 +1581,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                     _UV_LOCK: _uv_lock("1.0"),
                     _POETRY_LOCK: "",
                 }
-                left = self.files_after_update(run, get, glob, files, None)
-                self.assertEqual(dict(left), files)
+                self.assertEqual(dict(self.files_after_update(run, get, glob, files, None)), files)
                 self.assert_warnings_logged(
                     (message_of(Logger.signals_of_more_than_one_manager), several_managers),
                     (message_of(Logger.redundant_directive), _redundant_update_fields(reason, directive)),
@@ -1605,8 +1619,8 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 self.assert_no_ignored_logged()
 
     @kills.replace(
-        uv_pins.warn_about_pins,
-        "declarations = uv.declarations_of(file)",
+        warn_about_pins,
+        "declarations = declarations_of(file)",
         "declarations = file.declarations()",
         "the run checks a member's dependency against PyPI where the workspace root sources it",
     )
@@ -1630,8 +1644,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
     ):
         """Test that a bound beside an `ignore[update]` on a dependency without an exact pin is reported."""
         contents = pyproject("package>=0.9", marker="ignore[update] allow[update<2]")
-        files = {PYPROJECT_TOML: contents, _UV_LOCK: _uv_lock("1.0")}
-        self.files_after_update(run, get, glob, files, _uv_lock("1.0"))
+        self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents, _UV_LOCK: _uv_lock("1.0")}, _uv_lock("1.0"))
         self.assertEqual(self.text_locked_with_upgrade(), contents.replace("package>=0.9", "package==1.0,>=0.9"))
         self.assert_redundant_directive_logged(
             Reason.BOUND_ON_A_HELD_BACK_UPDATE, "package", Location(PYPROJECT_TOML, 2), "allow[update<2]"
@@ -1802,7 +1815,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         )
 
     @kills.delete(
-        lock._LockSnapshot.steered_update,
+        _LockSnapshot.steered_update,
         " if locked else None",
         "without uv, a directive is judged by a lock uv did not write for the files as they are",
     )
@@ -1829,9 +1842,14 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         )
 
 
+def _redundant_update_fields(reason: Reason, directive: str = "ignore[update]") -> _Fields:
+    """Return the fields of the warning that the directive on the dependency `pyproject()` declares is redundant."""
+    return {"directive": directive, "dependency": "package", "location": Location(PYPROJECT_TOML, 2), "reason": reason}
+
+
 @patch("update_time.package_managers.uv.lock.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
-@patch("requests.Session.get")
+@patch_get()
 @patch("subprocess.run")
 class CheckedPinsTest(ExecutablesOnPathTestCase):
     """Unit test for handing the discovered manifests to the checks uv-delegated updaters share."""

@@ -1,7 +1,7 @@
 """Find the files to scan for references."""
 
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.primitives.environment import EnvVar
 
@@ -9,11 +9,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from update_time.domain.file_type import FileType
-    from update_time.io.log import Logger
+
+    from .log import Logger
 
 # Private channel that passes --exclude-path from the CLI to the updater subprocesses. The scan-root-relative
 # directories to skip, validated by the CLI (relative, non-escaping) so they are trusted here.
-_EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
+_EXCLUDE_PATHS: Final[EnvVar[list[Path]]] = EnvVar(
     "_UPDATE_TIME_EXCLUDE_PATHS",
     default=[],
     parse=lambda value: [Path(entry) for entry in value.split(",") if entry],
@@ -21,32 +22,7 @@ _EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
 )
 
 # Directories whose contents `glob_for` always skips.
-ALWAYS_IGNORED_DIRECTORIES = ("build", "target", "node_modules", "__pycache__")
-
-
-def _hidden(names: Iterable[str]) -> list[str]:
-    """Return the hidden (dot-prefixed) names."""
-    return [name for name in names if name.startswith(".")]
-
-
-def _holds_unnamed_hidden_part(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
-    """Return whether a hidden part of the path does not match any of the pattern's hidden segments."""
-    return any(
-        not any(PurePath(part).full_match(segment, case_sensitive=case_sensitive) for segment in hidden_segments)
-        for part in _hidden(relative_path.parts)
-    )
-
-
-def _is_skipped(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
-    """Return whether the path holds a hidden part the pattern does not name, or an ignored directory."""
-    if _holds_unnamed_hidden_part(relative_path, hidden_segments, case_sensitive=case_sensitive):
-        return True
-    return any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts)
-
-
-def _is_excluded(relative_path: Path) -> bool:
-    """Return whether the path, relative to the scan root, lies in a directory passed to `--exclude-path`."""
-    return any(relative_path.is_relative_to(excluded_dir) for excluded_dir in _EXCLUDE_PATHS.get())
+ALWAYS_IGNORED_DIRECTORIES: Final[tuple[str, ...]] = ("build", "target", "node_modules", "__pycache__")
 
 
 def is_scanned(path: Path) -> bool:
@@ -58,15 +34,44 @@ def is_scanned(path: Path) -> bool:
     return not _is_skipped(relative_path, [], case_sensitive=None) and not _is_excluded(relative_path)
 
 
+def _is_skipped(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
+    """Return whether the path holds a hidden part the pattern does not name, or an ignored directory."""
+    if _holds_unnamed_hidden_part(relative_path, hidden_segments, case_sensitive=case_sensitive):
+        return True
+    return any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts)
+
+
+def _holds_unnamed_hidden_part(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
+    """Return whether a hidden part of the path does not match any of the pattern's hidden segments."""
+    return any(
+        not any(PurePath(part).full_match(segment, case_sensitive=case_sensitive) for segment in hidden_segments)
+        for part in _hidden(relative_path.parts)
+    )
+
+
+def _hidden(names: Iterable[str]) -> list[str]:
+    """Return the hidden (dot-prefixed) names."""
+    return [name for name in names if name.startswith(".")]
+
+
+def _is_excluded(relative_path: Path) -> bool:
+    """Return whether the path, relative to the scan root, lies in a directory passed to `--exclude-path`."""
+    return any(relative_path.is_relative_to(excluded_dir) for excluded_dir in _EXCLUDE_PATHS.get())
+
+
 def inside_git_repository(start: Path | None = None) -> bool:
     """Return whether the given directory (default: the working directory) sits inside a git repository.
 
-    Walks up from the directory to the filesystem root looking for a `.git` entry. Uses `.exists()` rather than
-    `.is_dir()` because git worktrees and submodules record `.git` as a *file* (a pointer), not a directory. Checking
-    for the entry directly keeps Update-time dependency-free and works even where `git` is not installed.
+    Looks for a `.git` entry in the directory or above it, a file as much as a directory, since git worktrees and
+    submodules record `.git` as a file (a pointer). Checking for the entry directly keeps Update-time dependency-free
+    and works even where `git` is not installed.
     """
-    directory = Path.cwd() if start is None else start
-    return any((parent / ".git").exists() for parent in (directory, *directory.parents))
+    return nearest_path(Path.cwd() if start is None else start, ".git") is not None
+
+
+def nearest_path(directory: Path, name: str) -> Path | None:
+    """Return the nearest path of the name, from the directory upwards, or None where the ancestors hold none."""
+    return next((path for ancestor in (directory, *directory.parents) if (path := ancestor / name).exists()), None)
 
 
 def glob_for(file_type: FileType) -> Iterator[Path]:
@@ -84,8 +89,7 @@ def glob_for(file_type: FileType) -> Iterator[Path]:
     for glob_pattern in file_type.patterns:
         hidden_segments = _hidden(PurePath(glob_pattern).parts)
         case_sensitive = file_type.case_sensitivity(glob_pattern)
-        walk = start.rglob if file_type.recursive else start.glob
-        for path in walk(glob_pattern, case_sensitive=case_sensitive):
+        for path in (start.rglob if file_type.recursive else start.glob)(glob_pattern, case_sensitive=case_sensitive):
             if _is_excluded(path.relative_to(root)):
                 continue
             if not _is_skipped(path.relative_to(start), hidden_segments, case_sensitive=case_sensitive):

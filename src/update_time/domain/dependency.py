@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum, auto
 from functools import total_ordering
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Final, Self
 
 from packaging.version import InvalidVersion, Version
 
@@ -26,6 +26,19 @@ type VersionString = str
 # What a source answers the yank checks about a version: whether the source withdrew it, or None where it is unknown.
 type YankGetter = Callable[[DependencyName, VersionString], Yank | None]
 
+
+@dataclass(frozen=True)
+class Yank:
+    """A version's withdrawal state: whether it was withdrawn — yanked on PyPI, deprecated on npm — and why."""
+
+    yanked: bool = False
+    reason: str = ""  # The maintainer's reason, empty when none was given
+
+    def __str__(self) -> str:
+        """Render the withdrawal as the maintainer's reason, quoted, or `reason not specified` when they gave none."""
+        return f'"{self.reason}"' if self.reason else "reason not specified"
+
+
 # What a source's changelog records for a version.
 type ChangesGetter = Callable[[DependencyName, VersionString], Changes]
 
@@ -42,7 +55,7 @@ class PinnedDependency:
 
 
 # The characters a Python distribution's name treats as one and the same separator (see `normalized_python_name`).
-_NAME_SEPARATORS = re.compile(r"[-_.]+")
+_NAME_SEPARATORS: Final[re.Pattern[str]] = re.compile(r"[-_.]+")
 
 
 def normalized_python_name(name: DependencyName) -> DependencyName:
@@ -58,34 +71,23 @@ def normalized_python_name(name: DependencyName) -> DependencyName:
 # The main version of a string that is not a version on its own, such as an image tag or a tag-like pin:
 # the run starting at a digit and stopping before a `-`, so `python3.12-bookworm-slim` yields `3.12`. Possessive
 # (`*+`) so the engine never backtracks into it, giving back characters to salvage a failing match.
-MAIN_VERSION = r"\d[^-]*+"
+MAIN_VERSION: Final[str] = r"\d[^-]*+"
 
 # A run of version numbers: digits and the dots between them, such as `3.14`, or the `4.1.100` of `4.1.100.Final`.
-VERSION_NUMBERS = r"\d+(?:\.\d+)*"
+VERSION_NUMBERS: Final[str] = r"\d+(?:\.\d+)*"
 
 # A label after a snapshot's date, such as the `slim` of `trixie-20260803-slim`. A dash separates it from the date.
-_LABEL_AFTER_A_DATE = r"(?:-|$)(?P<suffix>.*)$"
+_LABEL_AFTER_A_DATE: Final[str] = r"(?:-|$)(?P<suffix>.*)$"
 
 # A snapshot named by the date it was built, such as `bookworm-20260803`, after the label of its line.
-DATED_SNAPSHOT = r"(?P<prefix>.+-)(?P<version>\d{8})" + _LABEL_AFTER_A_DATE
+DATED_SNAPSHOT: Final[str] = rf"(?P<prefix>.+-)(?P<version>\d{{8}}){_LABEL_AFTER_A_DATE}"
 
 # A snapshot named by the date it was built, such as `2023-10-20`, or by the date and time, such as
 # `2026-02-12-23-06-03`, after an optional label, such as the `x86_64-` of `x86_64-2023-10-20`. Its version is the
 # date with the dashes dropped.
-DASHED_SNAPSHOT = r"(?P<prefix>(?:.+-)?)(?P<version>\d{4}-\d{2}-\d{2}(?:-\d{2}-\d{2}-\d{2})?)" + _LABEL_AFTER_A_DATE
-
-
-def is_valid(version: VersionString) -> bool:
-    """Return whether `packaging` parses the version as PEP 440.
-
-    Anything that is not a version on its own reads as invalid: a branch such as `main`, a bare commit SHA, or an
-    image tag such as `python3.12-bookworm-slim`.
-    """
-    try:
-        Version(version)
-    except InvalidVersion:
-        return False
-    return True
+DASHED_SNAPSHOT: Final[str] = (
+    rf"(?P<prefix>(?:.+-)?)(?P<version>\d{{4}}-\d{{2}}-\d{{2}}(?:-\d{{2}}-\d{{2}}-\d{{2}})?){_LABEL_AFTER_A_DATE}"
+)
 
 
 class Unserved(StrEnum):
@@ -131,18 +133,6 @@ class ImageNotLookedUp(StrEnum):
     )
 
 
-@dataclass(frozen=True)
-class Yank:
-    """A version's withdrawal state: whether it was withdrawn — yanked on PyPI, deprecated on npm — and why."""
-
-    yanked: bool = False
-    reason: str = ""  # The maintainer's reason, empty when none was given
-
-    def __str__(self) -> str:
-        """Render the withdrawal as the maintainer's reason, quoted, or `reason not specified` when they gave none."""
-        return f'"{self.reason}"' if self.reason else "reason not specified"
-
-
 class ArchivedSubject(StrEnum):
     """What a source archives: PyPI archives a project, GitHub a repository."""
 
@@ -161,7 +151,7 @@ class Archival:
 
 # A version lower than any real version, standing in for a version that reads as none, so any two versions compare
 # and order uniformly and the one that reads as none sorts lowest.
-LOWEST_VERSION = Version("0")
+LOWEST_VERSION: Final[Version] = Version("0")
 
 
 @total_ordering
@@ -190,6 +180,19 @@ class Release:
         return max(releases, default=None)
 
 
+def is_valid(version: VersionString) -> bool:
+    """Return whether `packaging` parses the version as PEP 440.
+
+    Anything that is not a version on its own reads as invalid: a branch such as `main`, a bare commit SHA, or an
+    image tag such as `python3.12-bookworm-slim`.
+    """
+    try:
+        Version(version)
+    except InvalidVersion:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class Project:
     """What a source reports about the project behind a dependency, rather than about one of its versions."""
@@ -199,7 +202,7 @@ class Project:
 
 
 # The project of a reference the source reports nothing about.
-NO_PROJECT = Project()
+NO_PROJECT: Final[Project] = Project()
 
 
 def every_project(_dependency: DependencyName) -> bool:
@@ -241,10 +244,10 @@ class Changes(str):
 
 
 # The changes of a version no changelog records, which no markup is written in.
-NO_CHANGES = Changes("", markdown=False, url="")
+NO_CHANGES: Final[Changes] = Changes("", markdown=False, url="")
 
 # What a version carries when its source does not date it.
-UNDATED: LookedUp[datetime] = LookedUp(None)
+UNDATED: Final[LookedUp[datetime]] = LookedUp(None)
 
 
 @dataclass(frozen=True)
@@ -271,4 +274,4 @@ class DependencyVersion:
 
 
 # A reference carries this release where the run does not resolve a version for it.
-NO_RELEASE = DependencyVersion(version="")
+NO_RELEASE: Final[DependencyVersion] = DependencyVersion(version="")

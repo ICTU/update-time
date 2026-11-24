@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date
 from functools import cache, cached_property, partial, total_ordering
 from http import HTTPStatus
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, NotRequired, TypedDict, cast
 
 from packaging.version import InvalidVersion, Version
 
@@ -23,7 +23,6 @@ from update_time.domain.dependency import (
     LOWEST_VERSION,
     MAIN_VERSION,
     UNDATED,
-    Archival,
     DependencyName,
     DependencyVersion,
     FloatingPin,
@@ -41,7 +40,8 @@ from update_time.domain.source import Source
 from update_time.io.fetch import fetch, fetch_json, json_body, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import DeferredLookup, LookedUp
-from update_time.sources import docker_hub
+
+from .docker_hub import archival, credentials, last_pushed, newest_pushes, tag_listing
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,31 +49,32 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import VersionBound
     from update_time.io.fetch import Response
+    from update_time.io.log import Logger
     from update_time.primitives.lookup import Lookup
 
-_LOG = get_logger("oci")
+_LOG: Final[Logger] = get_logger("oci")
 
 # The tag Docker resolves a reference naming no tag to, which floats like any other channel.
-_DEFAULT_TAG = "latest"
+_DEFAULT_TAG: Final[str] = "latest"
 
 # The labels naming a channel the registry re-points rather than a variant of the image. A version tag can
 # carry one — `24-lts` names whichever 24 release is the LTS one — so a pin keeping it would float on.
-_CHANNEL_LABELS = frozenset({_DEFAULT_TAG, "lts", "stable", "edge"})
+_CHANNEL_LABELS: Final[frozenset[str]] = frozenset({_DEFAULT_TAG, "lts", "stable", "edge"})
 
 # Image references without a registry host are on Docker Hub, whose OCI registry host differs from the user-facing
 # `docker.io` alias and whose images live under an implicit `library/` namespace.
-_DOCKER_HUB_OCI_HOST = "registry-1.docker.io"
+_DOCKER_HUB_OCI_HOST: Final[str] = "registry-1.docker.io"
 
 # The page size for the registry's tag listing. `_tag_names` follows the registry's pagination links, so this only
 # sizes the pages, it does not cap how many tags are considered.
-_TAGS_PAGE_SIZE = 1000
+_TAGS_PAGE_SIZE: Final[int] = 1000
 
 # What a registry's challenge says when it refuses the token rather than the repository the token is for.
-_AUTHORIZATION_REFUSED = 'error="invalid_token"'
+_AUTHORIZATION_REFUSED: Final[str] = 'error="invalid_token"'
 
 # Media types offered when resolving a manifest digest, so the registry returns the multi-arch index digest (the
 # digest to pin) when the image is multi-arch, and the single image-manifest digest otherwise.
-_MANIFEST_MEDIA_TYPES = (
+_MANIFEST_MEDIA_TYPES: Final[tuple[str, ...]] = (
     "application/vnd.oci.image.index.v1+json",
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -86,19 +87,19 @@ _MANIFEST_MEDIA_TYPES = (
 # Tags without a version (e.g. `bookworm-slim`) don't match at all; `version` still validates the match with packaging.
 # The prefix class is possessive (`*+`) for the same reason `MAIN_VERSION` is: the engine never backtracks across
 # it to salvage a failing match, which keeps matching linear.
-_TAG = re.compile(rf"(?P<prefix>[^\d-]*+)(?P<version>{MAIN_VERSION})-?(?P<suffix>.*)$")
+_TAG: Final[re.Pattern[str]] = re.compile(rf"(?P<prefix>[^\d-]*+)(?P<version>{MAIN_VERSION})-?(?P<suffix>.*)$")
 
 # A dated snapshot the repository labels. `_TAG` reads no version in one, its prefix admitting no dash, so the label
 # is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.
-_DATED_SNAPSHOT = re.compile(DATED_SNAPSHOT)
+_DATED_SNAPSHOT: Final[re.Pattern[str]] = re.compile(DATED_SNAPSHOT)
 
 # A snapshot named by a date spelled with dashes. `_TAG` would read its year as the version and the rest as a suffix,
 # so this is tried first.
-_DASHED_SNAPSHOT = re.compile(DASHED_SNAPSHOT)
+_DASHED_SNAPSHOT: Final[re.Pattern[str]] = re.compile(DASHED_SNAPSHOT)
 
 # A build number after the version, such as the `_10` of `26.0.2_10`. PEP 440 spells it as a local version, `+10`,
 # which orders the builds of one version and leaves the version itself at `26.0.2`.
-_BUILD_NUMBER = re.compile(r"_(\d+)$")
+_BUILD_NUMBER: Final[re.Pattern[str]] = re.compile(r"_(\d+)$")
 
 # What orders two tags: each version axis, and the number of components it is spelled with.
 type _SortKey = tuple[Version, Version, int, int]
@@ -108,8 +109,13 @@ type _SortKey = tuple[Version, Version, int, int]
 type _AliasKey = tuple[Version, int, tuple[Version, ...], int]
 
 
+_DATE_SPELLING_PATTERN: Final[re.Pattern[str]] = re.compile(r"\d")
+
+
 @total_ordering
-@dataclass(frozen=True)
+@dataclass(  # simplint: ignore[dataclass-slots] # its cached properties need the instance's __dict__
+    frozen=True, kw_only=True
+)
 class _Tag:
     """An image tag: name-only when listed, with a digest and (Docker Hub only) push date once resolved."""
 
@@ -117,15 +123,36 @@ class _Tag:
     digest: str = ""
     pushed: Lookup[datetime] = UNDATED  # When Docker Hub says the tag was pushed, or why it could not say
 
-    @cached_property
-    def _match(self) -> re.Match[str] | None:
-        """Parse the tag name into its prefix, version, and suffix once, or None when the tag has no version."""
-        return _DASHED_SNAPSHOT.match(self.name) or _TAG.match(self.name) or _DATED_SNAPSHOT.match(self.name)
+    def __lt__(self, other: _Tag) -> bool:
+        """Order tags by version axes (main version, then embedded suffix version), so candidates sort newest-first.
+
+        This flat ordering picks the highest candidate; `is_newer_or_equal` is the separate axis-wise check that
+        decides candidacy.
+        """
+        return self._sort_key < other._sort_key
 
     @property
-    def prefix(self) -> str:
-        """Return the label before the version, as `python` in `python3.12` or `x86_64-` in `x86_64-2023-10-20`."""
-        return self._match.group("prefix") if self._match else ""
+    def _sort_key(self) -> _SortKey:
+        """Return what orders tags newest-first: both version axes, and how precisely each of them is spelled.
+
+        Tags whose versions are equal are ordered by precision, so 1.3 sorts below 1.3.0. Tags differing in a label
+        alone share a key, which is a tie the aliases of one digest are ordered on separately.
+        """
+        return (
+            self.sortable_version,
+            self.sortable_suffix_version,
+            len(self.sortable_version.release),
+            len(self.sortable_suffix_version.release),
+        )
+
+    @property
+    def sortable_version(self) -> Version:
+        """Return the tag's version, or the lowest sentinel when it has none, for ordering and comparison.
+
+        Unlike `version` this is never None, so tags (and, via `_suffix_tag`, their suffixes) compare and sort
+        uniformly; a tag without a valid version sorts and compares as the lowest.
+        """
+        return self.version or LOWEST_VERSION
 
     @cached_property
     def version(self) -> Version | None:
@@ -142,23 +169,18 @@ class _Tag:
         except InvalidVersion:
             return None
 
-    @property
-    def sortable_version(self) -> Version:
-        """Return the tag's version, or the lowest sentinel when it has none, for ordering and comparison.
-
-        Unlike `version` this is never None, so tags (and, via `_suffix_tag`, their suffixes) compare and sort
-        uniformly; a tag without a valid version sorts and compares as the lowest.
-        """
-        return self.version or LOWEST_VERSION
+    @cached_property
+    def _match(self) -> re.Match[str] | None:
+        """Parse the tag name into its prefix, version, and suffix once, or None when the tag has no version."""
+        return _DASHED_SNAPSHOT.match(self.name) or _TAG.match(self.name) or _DATED_SNAPSHOT.match(self.name)
 
     @property
-    def suffix(self) -> str:
-        """Return the non-version suffix of the tag (e.g., 'slim' in '3.12-slim'), or empty string if none.
+    def sortable_suffix_version(self) -> Version:
+        """Return the embedded suffix version, or the lowest sentinel when the suffix has none, for ordering.
 
-        Only meaningful for a tag that has a version (it's compared between a candidate and the current tag, both of
-        which have one); a tag without a version doesn't match and the suffix is reported as empty.
+        The suffix is a tag in its own right, so this is simply its `sortable_version`.
         """
-        return self._match.group("suffix") if self._match else ""
+        return self._suffix_tag.sortable_version
 
     @cached_property
     def _suffix_tag(self) -> _Tag:
@@ -171,62 +193,38 @@ class _Tag:
         return _Tag(name=self.suffix)
 
     @property
-    def suffix_label(self) -> tuple[str, str]:
-        """Return the non-version part of the suffix, which must match exactly to prevent variant drift.
+    def suffix(self) -> str:
+        """Return the non-version suffix of the tag (e.g., 'slim' in '3.12-slim'), or empty string if none.
 
-        The two strings are the parts of the suffix around its embedded version: the label before it and the
-        remainder after it (`alpine3.19-slim` -> `('alpine', 'slim')`, `alpine3.23` -> `('alpine', '')`). Returning
-        them as a pair keeps them comparable without a separator that could collide. A suffix without an embedded
-        version has no version to strip, so its whole string is the label (and the second string is empty), and the
-        check reduces to an exact-suffix match (`slim` still only matches `slim`).
+        Only meaningful for a tag that has a version (it's compared between a candidate and the current tag, both of
+        which have one); a tag without a version doesn't match and the suffix is reported as empty.
         """
-        if self._suffix_tag.version is None:
-            return (self.suffix, "")
-        return (self._suffix_tag.prefix, self._suffix_tag.suffix)
+        return self._match.group("suffix") if self._match else ""
+
+    def is_candidate_for(self, current: _Tag) -> bool:
+        """Return whether this tag (known by name only) is a possible update of the current tag.
+
+        These are the checks that can be made from the tag name alone, used to narrow the set of tags whose
+        metadata (digest and push date) is worth fetching.
+        """
+        if self.version is None:
+            return False  # Ignore tags if the version is not valid
+        if self.version.is_prerelease:
+            return False  # Ignore tags if the version is a prerelease
+        if self._date_spelling != current._date_spelling:
+            return False  # Ignore a snapshot for a release and vice versa, and a timestamp for a date and vice versa
+        if self.prefix != current.prefix:
+            return False  # Ignore tags with a different prefix so e.g. python3.x isn't replaced by pypy3.x
+        if self.suffix_label != current.suffix_label:
+            return False  # Ignore tags whose suffix label differs so we don't change e.g. fat to slim, or alpine to fat
+        return self.is_newer_or_equal(current)
 
     @property
-    def sortable_suffix_version(self) -> Version:
-        """Return the embedded suffix version, or the lowest sentinel when the suffix has none, for ordering.
-
-        The suffix is a tag in its own right, so this is simply its `sortable_version`.
-        """
-        return self._suffix_tag.sortable_version
-
-    @property
-    def _sort_key(self) -> _SortKey:
-        """Return what orders tags newest-first: both version axes, and how precisely each of them is spelled.
-
-        Tags whose versions are equal are ordered by precision, so 1.3 sorts below 1.3.0. Tags differing in a label
-        alone share a key, which is a tie the aliases of one digest are ordered on separately.
-        """
-        return (
-            self.sortable_version,
-            self.sortable_suffix_version,
-            len(self.sortable_version.release),
-            len(self.sortable_suffix_version.release),
-        )
-
-    def __lt__(self, other: _Tag) -> bool:
-        """Order tags by version axes (main version, then embedded suffix version), so candidates sort newest-first.
-
-        This flat ordering picks the highest candidate; `is_newer_or_equal` is the separate axis-wise check that
-        decides candidacy.
-        """
-        return self._sort_key < other._sort_key
-
-    def is_newer_or_equal(self, tag: _Tag) -> bool:
-        """Return whether this tag is at least as new as `tag` on every version axis.
-
-        A tag's version axes are its main version and, recursively, the version embedded in its suffix (`alpine3.23`),
-        so this compares `sortable_version` at each level and descends into the suffix until neither side has one.
-        Equal counts (a tag is always at least as new as itself). Labels are compared separately by `is_candidate_for`;
-        matching labels already pin any deeper suffix remainder, so the levels below the embedded version are equal.
-        """
-        if tag.sortable_version > self.sortable_version:
-            return False  # This version axis would go down.
-        if not (self.suffix or tag.suffix):
-            return True  # Neither side has a suffix, so there is no deeper version axis to compare.
-        return self._suffix_tag.is_newer_or_equal(tag._suffix_tag)
+    def _date_spelling(self) -> str | None:
+        """Return how the snapshot spells its date, as `0000-00-00` for `2023-10-20`, or None for a release."""
+        if not self._is_dated_snapshot:
+            return None
+        return _DATE_SPELLING_PATTERN.sub("0", cast("re.Match[str]", self._match).group("version"))
 
     @property
     def _is_dated_snapshot(self) -> bool:
@@ -247,29 +245,37 @@ class _Tag:
         return True
 
     @property
-    def _date_spelling(self) -> str | None:
-        """Return how the snapshot spells its date, as `0000-00-00` for `2023-10-20`, or None for a release."""
-        if not self._is_dated_snapshot:
-            return None
-        return re.sub(r"\d", "0", cast("re.Match[str]", self._match).group("version"))
+    def prefix(self) -> str:
+        """Return the label before the version, as `python` in `python3.12` or `x86_64-` in `x86_64-2023-10-20`."""
+        return self._match.group("prefix") if self._match else ""
 
-    def is_candidate_for(self, current: _Tag) -> bool:
-        """Return whether this tag (known by name only) is a possible update of the current tag.
+    @property
+    def suffix_label(self) -> tuple[str, str]:
+        """Return the non-version part of the suffix, which must match exactly to prevent variant drift.
 
-        These are the checks that can be made from the tag name alone, used to narrow the set of tags whose
-        metadata (digest and push date) is worth fetching.
+        The two strings are the parts of the suffix around its embedded version: the label before it and the
+        remainder after it (`alpine3.19-slim` -> `('alpine', 'slim')`, `alpine3.23` -> `('alpine', '')`). Returning
+        them as a pair keeps them comparable without a separator that could collide. A suffix without an embedded
+        version has no version to strip, so its whole string is the label (and the second string is empty), and the
+        check reduces to an exact-suffix match (`slim` still only matches `slim`).
         """
-        if self.version is None:
-            return False  # Ignore tags if the version is not valid
-        if self.version.is_prerelease:
-            return False  # Ignore tags if the version is a prerelease
-        if self._date_spelling != current._date_spelling:
-            return False  # Ignore a snapshot for a release and vice versa, and a timestamp for a date and vice versa
-        if self.prefix != current.prefix:
-            return False  # Ignore tags with a different prefix so e.g. python3.x isn't replaced by pypy3.x
-        if self.suffix_label != current.suffix_label:
-            return False  # Ignore tags whose suffix label differs so we don't change e.g. fat to slim, or alpine to fat
-        return self.is_newer_or_equal(current)
+        if self._suffix_tag.version is None:
+            return (self.suffix, "")
+        return (self._suffix_tag.prefix, self._suffix_tag.suffix)
+
+    def is_newer_or_equal(self, tag: _Tag) -> bool:
+        """Return whether this tag is at least as new as `tag` on every version axis.
+
+        A tag's version axes are its main version and, recursively, the version embedded in its suffix (`alpine3.23`),
+        so this compares `sortable_version` at each level and descends into the suffix until neither side has one.
+        Equal counts (a tag is always at least as new as itself). Labels are compared separately by `is_candidate_for`;
+        matching labels already pin any deeper suffix remainder, so the levels below the embedded version are equal.
+        """
+        if tag.sortable_version > self.sortable_version:
+            return False  # This version axis would go down.
+        if not (self.suffix or tag.suffix):
+            return True  # Neither side has a suffix, so there is no deeper version axis to compare.
+        return self._suffix_tag.is_newer_or_equal(tag._suffix_tag)
 
 
 def _split_domain(image: str) -> tuple[str | None, str]:
@@ -332,7 +338,7 @@ def _resolved_tag(
     match as they otherwise would.
     """
     current = _Tag(name=current_tag or _DEFAULT_TAG)
-    if _is_floating(current):
+    if current.version is None and not any(character.isdigit() for character in current.name):
         return _resolved_floating_tag(image, current)
     names = _tag_names(image)
     if names.absent:
@@ -379,6 +385,12 @@ class TagGetter:
 
     image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None] = _pulled
 
+    def __call__(
+        self, pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /
+    ) -> DependencyVersion:
+        """Return the tag to pin the reference to."""
+        return get_latest_tag(pinned, version_bound, cooldown_days)
+
     @property
     def source(self) -> Source:
         """Return the source that resolves image tags through this getter."""
@@ -388,12 +400,6 @@ class TagGetter:
             dates_versions_of=_is_on_docker_hub,
             why_image_not_looked_up=self._image_not_looked_up,
         )
-
-    def __call__(
-        self, pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /
-    ) -> DependencyVersion:
-        """Return the tag to pin the reference to."""
-        return get_latest_tag(pinned, version_bound, cooldown_days)
 
     def _image_not_looked_up(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
         """Return why no registry is asked about the pinned image, or None when one is."""
@@ -409,24 +415,14 @@ class ImagesNotPulled:
     images: set[str]
     reason: ImageNotLookedUp
 
+    def __call__(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
+        """Return the reason when the reference is among the images, or None when it is not."""
+        return self.reason if f"{pinned.name}{tag_of(pinned.version)}" in self._without_digests else None
+
     @cached_property
     def _without_digests(self) -> frozenset[str]:
         """Return the images without their digests, since a reference is matched by name and tag."""
         return frozenset(image.partition("@")[0] for image in self.images)
-
-    def __call__(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
-        """Return the reason when the reference is among the images, or None when it is not."""
-        as_written = f"{pinned.name}{tag_of(pinned.version)}"
-        return self.reason if as_written in self._without_digests else None
-
-
-def _is_floating(tag: _Tag) -> bool:
-    """Return whether the tag names a channel the registry re-points, rather than a version or a dated snapshot.
-
-    A channel names no version and carries no digit. `latest` and `bookworm` are channels. `dev-2024` is not,
-    because its digits name a build.
-    """
-    return tag.version is None and not any(character.isdigit() for character in tag.name)
 
 
 def _resolved_floating_tag(image: DependencyName, current: _Tag) -> DependencyVersion:
@@ -438,7 +434,7 @@ def _resolved_floating_tag(image: DependencyName, current: _Tag) -> DependencyVe
     """
     if not _is_docker_hub_image(image):
         return _walked_floating_tag(image, current)
-    if (listing := docker_hub.tag_listing(_repository(image), current.name).value) is None:
+    if (listing := tag_listing(_repository(image), current.name).value) is None:
         return _repository_not_served(current)
     if not (digest := listing.digests.get(current.name)):
         reason_no_version_was_pinned = (
@@ -455,7 +451,7 @@ def _resolved_floating_tag(image: DependencyName, current: _Tag) -> DependencyVe
 # How many tags the walk asks for a manifest at most, so that a repository whose tags the floating tag's image
 # sorts below cannot turn one reference into dozens of requests. A floating tag serves a recent image, so its
 # concrete tag sorts high among the versions; a walk that reaches this many without a match gives up.
-_MAX_FLOATING_TAG_PROBES = 25
+_MAX_FLOATING_TAG_PROBES: Final[int] = 25
 
 
 def _walked_floating_tag(image: DependencyName, current: _Tag) -> DependencyVersion:
@@ -533,8 +529,7 @@ def _alias_rank(alias: _Tag, labels: list[str]) -> tuple[int, _AliasKey]:
     picks the highest of the aliases its listing gives, and another registry walks them in this order until one
     serves the digest.
     """
-    carried = sum(_carries(alias, label) for label in labels)
-    return carried, _alias_key(alias, labels)
+    return sum(_carries(alias, label) for label in labels), _alias_key(alias, labels)
 
 
 def _alias_key(alias: _Tag, labels: list[str]) -> _AliasKey:
@@ -590,12 +585,8 @@ def _labels(tag: _Tag) -> tuple[_Tag, ...]:
 @partial(ProjectGetter, declares_archival=_is_docker_hub_image)
 def _project(image: DependencyName) -> Project:
     """Return what the image's registry reports about the image: its newest release and its archival, where it can."""
-    return Project(newest=_newest_release(image), archival=_archival(image))
-
-
-def _archival(image: str) -> Archival | None:
-    """Return whether the image's repository is archived, or None where its registry does not say."""
-    return docker_hub.archival(_repository(image)) if _is_docker_hub_image(image) else None
+    image_archival = archival(_repository(image)) if _is_docker_hub_image(image) else None
+    return Project(newest=_newest_release(image), archival=image_archival)
 
 
 def _newest_release(image: str) -> Release | None:
@@ -611,12 +602,11 @@ def _newest_release(image: str) -> Release | None:
     """
     if not _is_docker_hub_image(image):
         return None
-    if not (pushes := docker_hub.newest_pushes(_repository(image))):
+    if not (pushes := newest_pushes(_repository(image))):
         return None
     published = max(pushes.values())
     pushed_together = [_Tag(name=name) for name, pushed in pushes.items() if pushed == published]
-    named_by = max(pushed_together, key=lambda tag: _alias_key(tag, labels=[]))
-    return Release(version=named_by.name, published=published)
+    return Release(version=max(pushed_together, key=lambda tag: _alias_key(tag, labels=[])).name, published=published)
 
 
 def _eligible_tag(image: str, current: _Tag, candidate: _Tag, walk: CooldownWalk) -> DependencyVersion | None:
@@ -663,7 +653,7 @@ def _credentials(image: str) -> tuple[str, str] | None:
 
     Docker Hub is currently the only registry we hold credentials for; all other registries are queried anonymously.
     """
-    return docker_hub.credentials() if _is_docker_hub_image(image) else None
+    return credentials() if _is_docker_hub_image(image) else None
 
 
 @cache
@@ -687,11 +677,17 @@ def _tag_names(image: str) -> LookedUp[list[str]]:
         if not response.ok:
             _LOG.request_failed(response.url, response)
             break
-        if (page := json_body(LookedUp(response), _LOG).value) is None:
+        if (page := json_body(LookedUp(response), _LOG, body=_TagListJSON).value) is None:
             break
         names.extend(page.get("tags") or [])
         url = next_page_url(response)
     return LookedUp(names)
+
+
+class _TagListJSON(TypedDict):
+    """One page of an OCI registry's tag list."""
+
+    tags: NotRequired[list[str] | None]
 
 
 def _refuses_the_repository(response: Response) -> bool:
@@ -715,8 +711,7 @@ def _get_tag(image: str, name: str) -> _Tag | None:
         return None
     if not _is_docker_hub_image(image):
         return _Tag(name=name, digest=digest)
-    pushed = DeferredLookup(partial(docker_hub.last_pushed, _repository(image), name))
-    return _Tag(name=name, digest=digest, pushed=pushed)
+    return _Tag(name=name, digest=digest, pushed=DeferredLookup(partial(last_pushed, _repository(image), name)))
 
 
 @cache
@@ -742,6 +737,9 @@ def _auth_headers(host: str, repository: str, credentials: tuple[str, str] | Non
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+_REGISTRY_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r'\b(\w++)="([^"]*)"')
+
+
 @cache
 def _registry_token(host: str, repository: str, credentials: tuple[str, str] | None = None) -> str | None:
     """Return a pull token for the repository, from the token endpoint the registry's challenge names.
@@ -759,13 +757,27 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     # Pull out each `key="value"` pair. The word boundary keeps the scan linear. It rejects a start position inside
     # a run of word characters at once. No match can start there anyway: a match starting at the run's first
     # character spans the same run. The `++` and the `[^"]*` match each pair without giving characters back.
-    params = dict(re.findall(r'\b(\w++)="([^"]*)"', challenge))
+    params = dict(_REGISTRY_TOKEN_PATTERN.findall(challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
-    found = fetch_json(realm, _LOG, statuses_meaning_absent=(HTTPStatus.FORBIDDEN,), params=params, auth=credentials)
+    found = fetch_json(
+        realm,
+        _LOG,
+        body=_TokenJSON,
+        statuses_meaning_absent=(HTTPStatus.FORBIDDEN,),
+        params=params,
+        auth=credentials,
+    )
     if (token := found.value) is None:
         return None
     return token.get("token") or token.get("access_token")
 
 
-SOURCE = Source(project=_project, new_version=get_latest_tag, dates_versions_of=_is_on_docker_hub)
+class _TokenJSON(TypedDict):
+    """A registry's token, under the name `token` or `access_token`."""
+
+    token: NotRequired[str]
+    access_token: NotRequired[str]
+
+
+SOURCE: Final[Source] = Source(project=_project, new_version=get_latest_tag, dates_versions_of=_is_on_docker_hub)

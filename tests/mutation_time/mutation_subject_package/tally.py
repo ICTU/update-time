@@ -1,6 +1,6 @@
 """Hold a tally, and import the module that writes its summary, which imports this module back."""
 
-from tests.mutation_time.mutation_subject_package import report
+from . import report  # archunit: ignore(the cycle is what the tests of this package check)
 
 
 class Tally:

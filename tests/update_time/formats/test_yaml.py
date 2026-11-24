@@ -7,7 +7,7 @@ from typing import cast
 from mutation_time.mutation import kills
 from update_time.formats import yaml
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
 
 class ReadTest(unittest.TestCase):
@@ -81,10 +81,6 @@ class DocumentTest(unittest.TestCase):
     # More nodes than any document below has, so a walk that does not end fails rather than hangs.
     MAX_NODES = 100
 
-    def nodes_of(self, contents: str) -> list[yaml.Document]:
-        """Return the nodes of the YAML document the contents parse into, at most `MAX_NODES` of them."""
-        return list(itertools.islice(cast("yaml.Document", yaml.read(mock_path(contents))).nodes(), self.MAX_NODES))
-
     @kills.force_false(
         yaml.Document.nodes,
         "id(value) in returned_ids",
@@ -92,8 +88,13 @@ class DocumentTest(unittest.TestCase):
     )
     def test_nodes_of_a_self_referencing_anchor(self):
         """Test that a node an alias refers back to is returned once, rather than walked without end."""
-        nodes = self.nodes_of("a: &x\n  b: *x\n")
-        self.assertEqual(len(nodes), 2)  # The document, and the mapping under `a` that holds itself under `b`.
+        self.assertEqual(
+            len(self.nodes_of("a: &x\n  b: *x\n")), 2
+        )  # The document, and the mapping under `a` that holds itself under `b`.
+
+    def nodes_of(self, contents: str) -> list[yaml.Document]:
+        """Return the nodes of the YAML document the contents parse into, at most `MAX_NODES` of them."""
+        return list(itertools.islice(cast("yaml.Document", yaml.read(mock_path(contents))).nodes(), self.MAX_NODES))
 
     @kills.delete(
         yaml._children,

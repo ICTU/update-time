@@ -3,38 +3,52 @@
 import unittest
 from http import HTTPStatus
 from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import ANY, Mock, patch
+from typing import TYPE_CHECKING, Final
+from unittest.mock import ANY, Mock
 
 from mutation_time.mutation import kills
 from update_time.domain.reference import Reference
 from update_time.domain.vulnerability import RISK_LEVELS, Ecosystem, Vulnerability
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
-from update_time.sources import osv
-from update_time.sources.osv import _RISK_LEVEL_BANDS, get_vulnerabilities
+from update_time.sources.osv import (
+    _RISK_LEVEL_BANDS,
+    _entry_names,
+    _events_name,
+    _in_range,
+    _risk_level,
+    _vulnerability,
+    get_vulnerabilities,
+)
 
-from tests.helpers import mock_response, unparsable_response
-from tests.update_time.helpers import LoggingTestCase, message_of, vulnerability
-from tests.update_time.sources.helpers import osv_action_entry, osv_action_package, osv_advisory, osv_api
+from tests.http_mocks import mock_response, patch_post, unparsable_response
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.domain_objects import vulnerability
+from tests.update_time.io.log_messages import message_of
+
+from .osv_answers import osv_action_entry, osv_action_package, osv_advisory, osv_api
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
-_ADVISORY = "PYSEC-2021-109"
-_SUMMARY = "SQL injection in QuerySet.order_by"
+    from update_time.formats.json import JSON
+
+    from tests.http_mocks import RequestStub
+
+_ADVISORY: Final[str] = "PYSEC-2021-109"
+_SUMMARY: Final[str] = "SQL injection in QuerySet.order_by"
 # The summary of the second vulnerability, and of a vulnerability's second advisory, for the tests that serve either.
-_OTHER_SUMMARY = "Denial of service in Django"
-_REFERENCE = Reference("django", "3.2.0", Location(Path("requirements.txt"), 1))
+_OTHER_SUMMARY: Final[str] = "Denial of service in Django"
+_REFERENCE: Final[Reference] = Reference("django", "3.2.0", Location(Path("requirements.txt"), 1))
 # A second pin, for the tests of a batch that answers about every pin at once.
-_OTHER_REFERENCE = Reference("flask", "1.0", Location(Path("requirements.txt"), 2))
+_OTHER_REFERENCE: Final[Reference] = Reference("flask", "1.0", Location(Path("requirements.txt"), 2))
 # Further advisory ids, for the tests that serve more than one advisory. OSV holds an advisory per database, and the
 # databases name one vulnerability by a `GHSA`, a `CVE`, a `PYSEC`, and a `BIT` identifier.
-_GHSA = "GHSA-1111-1111-1111"
-_CVE = "CVE-2021-1111"
-_BIT = "BIT-django-2021-1111"
+_GHSA: Final[str] = "GHSA-1111-1111-1111"
+_CVE: Final[str] = "CVE-2021-1111"
+_BIT: Final[str] = "BIT-django-2021-1111"
 # A CVSS vector the `cvss` package refuses, since `AV:X` is not a value the metric can take.
-_MALFORMED_VECTOR = "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+_MALFORMED_VECTOR: Final[str] = "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 
 
 def _expected_vulnerability(
@@ -44,30 +58,9 @@ def _expected_vulnerability(
     return vulnerability(advisory, summary, level, aliases)
 
 
-def _osv_answering_the_query_with(answer: Mock) -> Callable[..., Mock]:
-    """Return what OSV answers a post with: a batch reporting an advisory for the pin, and the answer to its query."""
-    batch = mock_response({"results": [{"vulns": [{"id": _ADVISORY}]}]})
-
-    def serve(url: str, **_kwargs: object) -> Mock:
-        return batch if url.endswith("/querybatch") else answer
-
-    return serve
-
-
-@patch("requests.Session.post")
+@patch_post()
 class GetVulnerabilitiesTest(LoggingTestCase):
     """Unit tests for getting the vulnerabilities of the version a reference is pinned to."""
-
-    def assert_vulnerabilities(
-        self, mock_post: Mock, advisories: Sequence[dict[str, object]], expected: list[Vulnerability]
-    ) -> None:
-        """Assert that the reference's version is read as the expected vulnerabilities, given what OSV answers."""
-        mock_post.side_effect = osv_api(*advisories)
-        self.assertEqual(get_vulnerabilities([_REFERENCE], Ecosystem.PYPI), [expected])
-
-    def assert_level(self, mock_post: Mock, advisory: dict[str, object], level: str) -> None:
-        """Assert that the advisory is read as a vulnerability of the given risk level."""
-        self.assert_vulnerabilities(mock_post, [advisory], [_expected_vulnerability(_ADVISORY, level)])
 
     def test_risk_level_derived_from_a_cvss_vector(self, mock_post: Mock):
         """Test that an advisory reporting no risk level is read at the level its CVSS base score bands into."""
@@ -80,6 +73,17 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         for level, vector in vectors.items():
             with self.subTest(level=level):
                 self.assert_level(mock_post, osv_advisory(_ADVISORY, _SUMMARY, vectors={"CVSS_V3": vector}), level)
+
+    def assert_level(self, mock_post: Mock, advisory: dict[str, JSON], level: str) -> None:
+        """Assert that the advisory is read as a vulnerability of the given risk level."""
+        self.assert_vulnerabilities(mock_post, [advisory], [_expected_vulnerability(_ADVISORY, level)])
+
+    def assert_vulnerabilities(
+        self, mock_post: Mock, advisories: Sequence[dict[str, JSON]], expected: list[Vulnerability]
+    ) -> None:
+        """Assert that the reference's version is read as the expected vulnerabilities, given what OSV answers."""
+        mock_post.side_effect = osv_api(*advisories)
+        self.assertEqual(get_vulnerabilities([_REFERENCE], Ecosystem.PYPI), [expected])
 
     def test_the_newest_cvss_vector_sets_the_risk_level(self, mock_post: Mock):
         """Test that the v4 vector sets the level of an advisory carrying both, where the two band differently.
@@ -94,8 +98,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
 
     def test_malformed_cvss_vector(self, mock_post: Mock):
         """Test that an advisory whose CVSS vector cannot be scored is read at no level, and warned about."""
-        advisory = osv_advisory(_ADVISORY, _SUMMARY, vectors={"CVSS_V3": _MALFORMED_VECTOR})
-        self.assert_level(mock_post, advisory, "")
+        self.assert_level(mock_post, osv_advisory(_ADVISORY, _SUMMARY, vectors={"CVSS_V3": _MALFORMED_VECTOR}), "")
         self.assert_logged(message_of(Logger.malformed_cvss_vector), advisory=_ADVISORY, error=ANY)
 
     def test_advisory_without_a_severity(self, mock_post: Mock):
@@ -103,7 +106,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         self.assert_level(mock_post, osv_advisory(_ADVISORY, _SUMMARY), "")
 
     @kills.replace(
-        osv._vulnerability,
+        _vulnerability,
         'frozenset(record.get("aliases") or []),',
         'frozenset(record.get("aliases", [])),',
         "an advisory whose aliases OSV reports as null ends the run with a traceback",
@@ -111,7 +114,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         case="aliases",
     )
     @kills.replace(
-        osv._banded_risk_level,
+        _risk_level,
         'for severity in record.get("severity") or []}',
         'for severity in record.get("severity", [])}',
         "an advisory whose severity OSV reports as null ends the run with a traceback",
@@ -152,8 +155,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         high = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         critical = osv_advisory(_ADVISORY, _OTHER_SUMMARY, level="CRITICAL", aliases=[_CVE])
         expected = [_expected_vulnerability(_ADVISORY, "critical", _OTHER_SUMMARY, aliases=[_CVE, _GHSA])]
-        cases = {"most severe first": (critical, high), "most severe second": (high, critical)}
-        for case, advisories in cases.items():
+        for case, advisories in {"most severe first": (critical, high), "most severe second": (high, critical)}.items():
             with self.subTest(case=case):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
@@ -306,38 +308,25 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         self.assert_invalid_json_logged(url)
 
 
-_ACTION = "tj-actions/changed-files"
-_ACTION_PACKAGE = osv_action_package(_ACTION)
+def _osv_answering_the_query_with(answer: Mock) -> RequestStub:
+    """Return what OSV answers a post with: a batch reporting an advisory for the pin, and the answer to its query."""
+    batch = mock_response({"results": [{"vulns": [{"id": _ADVISORY}]}]})
+
+    def serve(url: str, **_kwargs: object) -> Mock:
+        return batch if url.endswith("/querybatch") else answer
+
+    return serve
+
+
+_ACTION: Final[str] = "tj-actions/changed-files"
+_ACTION_PACKAGE: Final[dict[str, str]] = osv_action_package(_ACTION)
 # What OSV reports for an action version an advisory names.
-_ACTION_VULNERABILITIES = [_expected_vulnerability(_GHSA, "high")]
+_ACTION_VULNERABILITIES: Final[list[Vulnerability]] = [_expected_vulnerability(_GHSA, "high")]
 
 
-def _action_vulnerabilities(version: str) -> list[list[Vulnerability] | None]:
-    """Return what OSV is read as reporting for a reference to the action at the version."""
-    return get_vulnerabilities(
-        [Reference(_ACTION, version, Location(Path(".github/workflows/ci.yml"), 1))], Ecosystem.GITHUB_ACTIONS
-    )
-
-
-def _advisory_affecting(advisory: str, entry: dict[str, object]) -> dict[str, object]:
-    """Return an OSV advisory record whose one `affected` entry is the given one."""
-    return osv_advisory(advisory, _SUMMARY, level="HIGH") | {"affected": [entry]}
-
-
-def _action_advisory(advisory: str, *events: dict[str, str], **fields: object) -> dict[str, object]:
-    """Return an OSV advisory record whose one `affected` entry names the action (see `osv_action_entry`)."""
-    return _advisory_affecting(advisory, osv_action_entry(_ACTION, *events, **fields))
-
-
-@patch("requests.Session.post")
+@patch_post()
 class GitHubActionVulnerabilitiesTest(LoggingTestCase):
     """Unit tests for getting the vulnerabilities of the version a GitHub Action is pinned to."""
-
-    def assert_cases(self, cases: dict[str, tuple[str, list[Vulnerability]]]) -> None:
-        """Assert that each case's action version is read as its expected vulnerabilities."""
-        for case, (version, expected) in cases.items():
-            with self.subTest(case=case):
-                self.assertEqual(_action_vulnerabilities(version), [expected])
 
     def test_references_to_one_action_share_the_request_for_its_advisories(self, mock_post: Mock):
         """Test that OSV is asked about an action without a version, once in full for references at two versions."""
@@ -360,6 +349,12 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
             }
         )
 
+    def assert_cases(self, cases: dict[str, tuple[str, list[Vulnerability]]]) -> None:
+        """Assert that each case's action version is read as its expected vulnerabilities."""
+        for case, (version, expected) in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(_action_vulnerabilities(version), [expected])
+
     def test_a_version_is_reported_up_to_and_including_the_last_affected_one(self, mock_post: Mock):
         """Test that an action version is reported up to the range's last affected version, and no longer past it."""
         mock_post.side_effect = osv_api(_action_advisory(_GHSA, {"introduced": "2.0.0"}, {"last_affected": "45.0.7"}))
@@ -368,7 +363,7 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
         )
 
     @kills.replace(
-        osv._events_name,
+        _events_name,
         "named = False\n    return named",
         "return False\n    return named",
         "a range is read as ending at its first fix, so a version after a reintroduction goes unreported",
@@ -381,8 +376,8 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
 
     def test_an_entry_for_another_package_or_for_none_is_passed_over(self, mock_post: Mock):
         """Test that an advisory's entry for another ecosystem, another action, or no package passes the action over."""
-        ranges = [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]
-        entries: dict[str, dict[str, object]] = {
+        ranges: list[JSON] = [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]
+        entries: dict[str, dict[str, JSON]] = {
             "another ecosystem": {"package": {"name": _ACTION, "ecosystem": "npm"}, "ranges": ranges},
             "another action": {
                 "package": {"name": "tj-actions/branch-names", "ecosystem": "GitHub Actions"},
@@ -396,14 +391,14 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
                 self.assertEqual(_action_vulnerabilities("v45.0.0"), [[]])
 
     @kills.delete(
-        osv._entry_names,
+        _entry_names,
         ' if range_["type"] == "ECOSYSTEM"',
         "a range of commits is read as a range of versions, and its commit SHA warned about as unreadable",
     )
     def test_a_git_range_is_passed_over(self, mock_post: Mock):
         """Test that a `GIT` range is passed over, so a version the `ECOSYSTEM` range fixes stays unreported."""
-        versions = {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "0.1.22"}]}
-        commits = {
+        versions: JSON = {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "0.1.22"}]}
+        commits: JSON = {
             "type": "GIT",
             "events": [{"introduced": "0"}, {"fixed": "f77273f4c914e4bf38440cf36a0369cb64a37489"}],
         }
@@ -462,7 +457,7 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
         )
 
     @kills.delete(
-        osv._in_range,
+        _in_range,
         " and at <= version",
         "an open range names a version below its introduction, wherever the last known affected range holds it",
     )
@@ -480,6 +475,23 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
         self.assertEqual(_action_vulnerabilities("v4.0.0"), [_ACTION_VULNERABILITIES])
 
 
+def _action_advisory(advisory: str, *events: dict[str, str], **fields: JSON) -> dict[str, JSON]:
+    """Return an OSV advisory record whose one `affected` entry names the action (see `osv_action_entry`)."""
+    return _advisory_affecting(advisory, osv_action_entry(_ACTION, *events, **fields))
+
+
+def _action_vulnerabilities(version: str) -> list[list[Vulnerability] | None]:
+    """Return what OSV is read as reporting for a reference to the action at the version."""
+    return get_vulnerabilities(
+        [Reference(_ACTION, version, Location(Path(".github/workflows/ci.yml"), 1))], Ecosystem.GITHUB_ACTIONS
+    )
+
+
+def _advisory_affecting(advisory: str, entry: dict[str, JSON]) -> dict[str, JSON]:
+    """Return an OSV advisory record whose one `affected` entry is the given one."""
+    return osv_advisory(advisory, _SUMMARY, level="HIGH") | {"affected": [entry]}
+
+
 class RiskLevelBandTest(unittest.TestCase):
     """Test that the CVSS bands and the risk levels the domain orders name the same levels."""
 
@@ -489,5 +501,4 @@ class RiskLevelBandTest(unittest.TestCase):
         A level added to one and not the other would leave scores banding to a level nothing compares against, or a
         threshold no score can reach.
         """
-        banded = [level for _lowest_score, level in _RISK_LEVEL_BANDS if level]
-        self.assertEqual(banded, list(reversed(RISK_LEVELS)))
+        self.assertEqual([level for _lowest_score, level in _RISK_LEVEL_BANDS if level], list(reversed(RISK_LEVELS)))

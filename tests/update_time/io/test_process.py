@@ -8,20 +8,23 @@ import unittest
 from functools import partial
 from logging import DEBUG
 from pathlib import Path
+from typing import Final, override
 from unittest.mock import Mock, call, patch
 
 from mutation_time.mutation import kills
-from update_time.io import process as process_module
+from update_time.io import process
 from update_time.io.log import Logger
-from update_time.io.process import Processes, run, tool_version
+from update_time.io.process import Processes, _tool_version, run, tool_version
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 
-from tests.helpers import patch_environ
-from tests.update_time.helpers import LoggingTestCase, message_of
+from tests.environment import patch_environ
+from tests.update_time.base_test_cases import LoggingTestCase
+
+from .log_messages import message_of
 
 # The tests run a tool in this directory.
-_PROJECT = Path("/project")
+_PROJECT: Final[Path] = Path("/project")
 
 
 @patch("subprocess.run")
@@ -56,8 +59,7 @@ class RunTests(LoggingTestCase):
         mock_run.return_value = Mock(stdout="", stderr="")
         with patch_environ({"HOME": "/home", "YARN_NPM_MINIMAL_AGE_GATE": "60"}, clear=True):
             run(Command("yarn", "up"), environment={"YARN_NPM_MINIMAL_AGE_GATE": "10080"})
-            expected = os.environ | {"YARN_NPM_MINIMAL_AGE_GATE": "10080"}
-            self.assertEqual(mock_run.call_args.kwargs["env"], expected)
+            self.assertEqual(mock_run.call_args.kwargs["env"], (os.environ | {"YARN_NPM_MINIMAL_AGE_GATE": "10080"}))
             run(Command("yarn", "up"))
         self.assertIsNone(mock_run.call_args.kwargs["env"])
 
@@ -125,6 +127,7 @@ class RunTests(LoggingTestCase):
 class DebugLogTests(LoggingTestCase):
     """Unit tests for what running a command logs at debug level: the command, and the version of the tool."""
 
+    @override
     def setUp(self) -> None:
         """Log at debug level, where the commands and the tool versions are logged."""
         super().setUp()
@@ -132,13 +135,8 @@ class DebugLogTests(LoggingTestCase):
         self.addCleanup(root.setLevel, root.level)
         root.setLevel(DEBUG)
 
-    @staticmethod
-    def commands_run(mock_run: Mock) -> list[tuple[Command, Path | None]]:
-        """Return each command the stub for subprocess.run received, with the directory it ran in."""
-        return [(each.args[0], each.kwargs["cwd"]) for each in mock_run.call_args_list]
-
     @kills.delete(
-        process_module.run,
+        process.run,
         "_LOG.command_run(command, directory, variables)",
         "the debug log leaves out the commands Update-time runs, so it does not show the options they ran with",
     )
@@ -202,9 +200,12 @@ class DebugLogTests(LoggingTestCase):
             ],
         )
 
-    @kills.uncache(
-        process_module._tool_version, "a run at DEBUG asks a tool for the version that a caller asked it for already"
-    )
+    @staticmethod
+    def commands_run(mock_run: Mock) -> list[tuple[Command, Path | None]]:
+        """Return each command the stub for subprocess.run received, with the directory it ran in."""
+        return [(each.args[0], each.kwargs["cwd"]) for each in mock_run.call_args_list]
+
+    @kills.uncache(_tool_version, "a run at DEBUG asks a tool for the version that a caller asked it for already")
     def test_a_version_asked_for_before_a_run_is_not_asked_for_again(self, mock_run: Mock):
         """Test that a run logging the version that a caller asked for already does not ask for it a second time."""
         mock_run.return_value = Mock(stdout="4.18.1\n", stderr="")
@@ -280,7 +281,7 @@ class ProcessesTest(unittest.TestCase):
     """Unit tests for the processes a run started."""
 
     @kills.replace(
-        process_module.Processes._start,
+        process.Processes._start,
         "if self.stop_signal is not None:\n            return None",
         "if False:\n            return None",
         "a process starts after the run stopped, and outlives the run",

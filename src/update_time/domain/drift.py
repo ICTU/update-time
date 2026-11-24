@@ -2,12 +2,12 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.marker import Scope
+from .marker import Scope
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from update_time.domain.marker import Marker
+    from .marker import Marker
 
 
 def report_drift(

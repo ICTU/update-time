@@ -5,7 +5,7 @@ Check the catalogs of the pnpm-workspace.yaml and .yarnrc.yml files as well.
 
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.directive import Reason
 from update_time.domain.file_type import PACKAGE_JSON, PNPM_WORKSPACE_YAML, YARNRC_YML
@@ -24,23 +24,23 @@ from update_time.package_managers.node.pnpm_workspace import update_pnpm_workspa
 from update_time.package_managers.policy import report_markers
 from update_time.primitives.text import prose_list
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_redundant_directives
-from update_time.sources import npmjs
+from update_time.sources.npmjs import SOURCE
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.reference import Reference
+    from update_time.io.log import Logger
     from update_time.manifests.npm_declaration import Declaration
     from update_time.package_managers.policy import ManagerPolicy
 
-_LOG = get_logger("package.json")
+_LOG: Final[Logger] = get_logger("package.json")
 
 # The warnings that a package.json, or a file holding catalogs, cannot be read, naming what was looked for.
-_UNREADABLE_PACKAGE_JSON = partial(_LOG.unreadable_file, content=FileContent.DEPENDENCY_LINES)
-_UNREADABLE_CATALOGS = partial(_LOG.unreadable_file, content=FileContent.CATALOGS)
+_UNREADABLE_PACKAGE_JSON: Final[partial[None]] = partial(_LOG.unreadable_file, content=FileContent.DEPENDENCY_LINES)
+_UNREADABLE_CATALOGS: Final[partial[None]] = partial(_LOG.unreadable_file, content=FileContent.CATALOGS)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _CheckedFile:
     """The declarations of a file to check, and the policy their markers are judged by."""
 
@@ -79,7 +79,9 @@ def _update_package_jsons() -> None:
                 checked_package_json.judged_by(manager.checked_catalogs(checked_package_json.package_json))
             )
     catalog_policies |= _yarn_catalog_policies(supported)
-    files_to_check = [_CheckedFile(list(each.package_json.declarations()), each.policy) for each in supported]
+    files_to_check = [
+        _CheckedFile(declarations=list(each.package_json.declarations()), policy=each.policy) for each in supported
+    ]
     _warn_about_dependencies(files_to_check + _checked_workspace_files(catalog_policies))
     _report_undeclared_references([each.package_json for each in supported])
 
@@ -96,7 +98,7 @@ def _checked_workspace_files(catalog_policies: dict[Path, ManagerPolicy[Declarat
     for path, policy in catalog_policies.items():
         _LOG.path(path)
         if (workspace_file := CatalogsYaml.readable(path, _UNREADABLE_CATALOGS)) is not None:
-            files.append(_CheckedFile(list(workspace_file.declarations()), policy))
+            files.append(_CheckedFile(declarations=list(workspace_file.declarations()), policy=policy))
     return files
 
 
@@ -109,28 +111,18 @@ def _warn_about_dependencies(files: list[_CheckedFile]) -> None:
     registry_declarations = [
         [declaration for declaration in file.declarations if declaration.names_a_release] for file in files
     ]
-    warn_about_delegated_checks(registry_declarations, _LOG, npmjs.SOURCE)
+    warn_about_delegated_checks(registry_declarations, _LOG, SOURCE)
 
 
 def _report_undeclared_references(files: list[PackageJson]) -> None:
     """Report the marker of each dependency that the `update-time` field names and its section does not declare."""
     for file in files:
         for reference in file.undeclared_references():
-            _report_undeclared_reference(reference)
+            marker = reference.marker
+            report_marker(reference, _LOG, steers_the_update=False)
+            if marker.invalid_item is None and marker.raw:
+                _LOG.redundant_directive(reference, marker.raw, Reason.UNDECLARED_DEPENDENCY)
 
 
-def _report_undeclared_reference(reference: Reference) -> None:
-    """Report the marker of a dependency its section does not declare, and as redundant where it reads every item."""
-    marker = reference.marker
-    report_marker(reference, _LOG, steers_the_update=False)
-    if marker.invalid_item is None and marker.raw:
-        _LOG.redundant_directive(reference, marker.raw, Reason.UNDECLARED_DEPENDENCY)
-
-
-def main() -> None:  # pragma: no cover
-    """Update the dependencies in the repository's package.json files."""
+if __name__ == "__main__":
     _update_package_jsons()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

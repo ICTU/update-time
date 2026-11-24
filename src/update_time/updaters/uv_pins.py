@@ -2,9 +2,10 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.package_managers.uv import marker_policy, uv
+from update_time.package_managers.uv.marker_policy import MARKER_POLICY
+from update_time.package_managers.uv.uv import declarations_of, pypi_served
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_redundant_directives
-from update_time.sources import pypi
+from update_time.sources.pypi import SOURCE
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -28,9 +29,7 @@ def warn_about_pins(
     """
     declared: list[list[Declaration]] = []
     for file in files:
-        declarations = uv.declarations_of(file)
-        policy = policies.get(file, marker_policy.MARKER_POLICY)
-        warn_about_redundant_directives([declarations], log, policy)
+        declarations = declarations_of(file)
+        warn_about_redundant_directives([declarations], log, policies.get(file, MARKER_POLICY))
         declared.append(declarations)
-    served = [uv.pypi_served(declarations) for declarations in declared]
-    warn_about_delegated_checks(served, log, pypi.SOURCE)
+    warn_about_delegated_checks([pypi_served(declarations) for declarations in declared], log, SOURCE)

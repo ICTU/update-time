@@ -6,7 +6,7 @@ from pathlib import Path
 from mutation_time.mutation import kills
 from update_time.primitives.location import Location
 
-from tests.helpers import patch_pathlib_path
+from tests.file_mocks import patch_pathlib_path
 
 
 class LocationTest(unittest.TestCase):

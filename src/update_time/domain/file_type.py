@@ -1,6 +1,7 @@
 """The kinds of file Update-time scans, and the glob patterns that find them."""
 
 from dataclasses import dataclass
+from typing import Final
 
 
 @dataclass(frozen=True)
@@ -19,16 +20,16 @@ class FileType:
         return True if pattern in self.case_sensitive_patterns else self.case_sensitive
 
 
-_YAML_PATTERNS = ("*.yml", "*.yaml")
+_YAML_PATTERNS: Final[tuple[str, ...]] = ("*.yml", "*.yaml")
 # A devcontainer keeps its config and its Dockerfile in these folders. A config can also sit at the root, as
 # `.devcontainer.json`.
-_DEVCONTAINER_FOLDERS = (".devcontainer", ".devcontainer/*")
+_DEVCONTAINER_FOLDERS: Final[tuple[str, ...]] = (".devcontainer", ".devcontainer/*")
 
-PYPROJECT_TOML = FileType("pyproject.toml", ("pyproject.toml",))
+PYPROJECT_TOML: Final[FileType] = FileType("pyproject.toml", ("pyproject.toml",))
 # A requirements file is named `requirements.txt`, or adds a purpose to that name with a hyphen, an underscore, or a
 # dot, as `requirements-dev.txt`, `test_requirements.txt`, and `requirements.prod.txt` do. Any `.txt` file in a
 # `requirements/` directory is one too.
-REQUIREMENTS_TXT = FileType(
+REQUIREMENTS_TXT: Final[FileType] = FileType(
     "requirements.txt",
     (
         "requirements.txt",
@@ -42,19 +43,19 @@ REQUIREMENTS_TXT = FileType(
     ),
     case_sensitive=True,
 )
-INLINE_SCRIPT_METADATA = FileType("PEP 723 inline script metadata", ("*.py",))
-PACKAGE_JSON = FileType("package.json", ("package.json",))
-PNPM_WORKSPACE_YAML = FileType("pnpm-workspace.yaml", ("pnpm-workspace.yaml",))
-YARNRC_YML = FileType(".yarnrc.yml", (".yarnrc.yml",))
-POM_XML = FileType("pom.xml", ("pom.xml",))
-PYTHON_VERSION_FILE = FileType(".python-version", (".python-version",))
+INLINE_SCRIPT_METADATA: Final[FileType] = FileType("PEP 723 inline script metadata", ("*.py",))
+PACKAGE_JSON: Final[FileType] = FileType("package.json", ("package.json",))
+PNPM_WORKSPACE_YAML: Final[FileType] = FileType("pnpm-workspace.yaml", ("pnpm-workspace.yaml",))
+YARNRC_YML: Final[FileType] = FileType(".yarnrc.yml", (".yarnrc.yml",))
+POM_XML: Final[FileType] = FileType("pom.xml", ("pom.xml",))
+PYTHON_VERSION_FILE: Final[FileType] = FileType(".python-version", (".python-version",))
 # Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
 # project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). Some are hidden: Gitpod builds a
 # `.gitpod.Dockerfile`, and a devcontainer builds the `Dockerfile` beside its config, in a hidden folder. Podman names
 # a Dockerfile `Containerfile`, under the same conventions. Every pattern but `Dockerfile.*` and `Containerfile.*`
 # ignores case, so a `dockerfile` counts too, and a Python module named `dockerfile.py` does not.
-_DOCKERFILE_NAMES = ("Dockerfile", "Containerfile")
-DOCKERFILES = FileType(
+_DOCKERFILE_NAMES: Final[tuple[str, ...]] = ("Dockerfile", "Containerfile")
+DOCKERFILES: Final[FileType] = FileType(
     "Dockerfiles",
     (
         *(pattern for name in _DOCKERFILE_NAMES for pattern in (name, f"*.{name}", f"{name}.*", f".*.{name}")),
@@ -63,16 +64,16 @@ DOCKERFILES = FileType(
     case_sensitive=False,
     case_sensitive_patterns=tuple(f"{name}.*" for name in _DOCKERFILE_NAMES),
 )
-CIRCLE_CI_CONFIGS = FileType("CircleCI configs", _YAML_PATTERNS, start=".circleci")
+CIRCLE_CI_CONFIGS: Final[FileType] = FileType("CircleCI configs", _YAML_PATTERNS, start=".circleci")
 # GitLab CI reads one file at the repository root, so the scan root is read as it stands: walking it would also
 # find a nested `.gitlab-ci.yml`, which GitLab itself never reads.
-GITLAB_CI_CONFIG = FileType(".gitlab-ci.yml", (".gitlab-ci.yml",), recursive=False)
-DOCKER_COMPOSE_FILES = FileType("Docker Compose files", ("docker-compose*.yml",))
-HELM_CHARTS = FileType("Helm charts", _YAML_PATTERNS, start="helm")
-DEVCONTAINER_CONFIGS = FileType(
+GITLAB_CI_CONFIG: Final[FileType] = FileType(".gitlab-ci.yml", (".gitlab-ci.yml",), recursive=False)
+DOCKER_COMPOSE_FILES: Final[FileType] = FileType("Docker Compose files", ("docker-compose*.yml",))
+HELM_CHARTS: Final[FileType] = FileType("Helm charts", _YAML_PATTERNS, start="helm")
+DEVCONTAINER_CONFIGS: Final[FileType] = FileType(
     "devcontainer configs",
     (".devcontainer.json", *(f"{folder}/devcontainer.json" for folder in _DEVCONTAINER_FOLDERS)),
 )
-GITHUB_WORKFLOWS = FileType("YAML files under .github/", _YAML_PATTERNS, start=".github")
-PRE_COMMIT_CONFIG = FileType(".pre-commit-config.yaml", (".pre-commit-config.yaml",))
-SPHINX_CONFIG = FileType("Sphinx config", ("conf.py",), start="docs")
+GITHUB_WORKFLOWS: Final[FileType] = FileType("YAML files under .github/", _YAML_PATTERNS, start=".github")
+PRE_COMMIT_CONFIG: Final[FileType] = FileType(".pre-commit-config.yaml", (".pre-commit-config.yaml",))
+SPHINX_CONFIG: Final[FileType] = FileType("Sphinx config", ("conf.py",), start="docs")

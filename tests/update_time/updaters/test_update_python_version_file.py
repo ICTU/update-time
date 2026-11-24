@@ -1,20 +1,26 @@
 """Unit tests for the Python version file update script."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from mutation_time.mutation import kills
 from update_time.domain.directive import Reason
 from update_time.io.log import FileContent, Logger
-from update_time.package_managers.uv import uv
+from update_time.package_managers.uv.uv import workspace_pyproject_tomls
 from update_time.primitives.location import Location
-from update_time.updaters import update_python_version_file
-from update_time.updaters.update_python_version_file import _update_python_version_files
+from update_time.updaters.update_python_version_file import (
+    _report_requires_python,
+    _requires_python,
+    _update_python_version_files,
+)
 
-from tests.helpers import FakeFiles, mock_path, patch_pathlib_path
-from tests.update_time.fixtures import DIGEST, PAST_COOLDOWN_DATE, STALE_DATE
-from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, docker_hub_version, docker_tag, message_of
+from tests.file_mocks import FakeFiles, mock_path, patch_pathlib_path
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.fixtures import DIGEST, PAST_COOLDOWN_DATE, SCAN_ROOT, STALE_DATE
+from tests.update_time.io.log_messages import message_of
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
-from tests.update_time.updaters.helpers import PYPROJECT_TOML, mock_docker_hub_auth
+from tests.update_time.sources.docker_hub_answers import docker_hub_version, docker_tag
+
+from .scanning import PYPROJECT_TOML
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -22,31 +28,24 @@ if TYPE_CHECKING:
     from unittest.mock import Mock
 
 
-@mock_docker_hub_auth
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     """Unit tests for the update Python version files function."""
 
+    @override
     def setUp(self) -> None:
         """Start each test with an empty file system in memory."""
         super().setUp()
         self.files = FakeFiles()
         self.enterContext(self.files.patched())
 
-    def write_pyproject_toml(self, requires_python: str) -> None:
-        """Write a pyproject.toml with this `requires-python` into the root directory."""
-        self.files[PYPROJECT_TOML] = f'[project]\nrequires-python = "{requires_python}"\n'
-
-    def write_workspace(self, members: dict[str, str], *, exclude: str = "") -> None:
-        """Write a uv workspace whose root allows `>=3.10`, with a member under `packages/` per `requires-python`."""
-        excluded = f'exclude = ["packages/{exclude}"]\n' if exclude else ""
-        self.files[PYPROJECT_TOML] = (
-            f'[project]\nrequires-python = ">=3.10"\n\n[tool.uv.workspace]\nmembers = ["packages/*"]\n{excluded}'
-        )
-        for member, requires_python in members.items():
-            self.files[SCAN_ROOT / f"packages/{member}/pyproject.toml"] = (
-                f'[project]\nrequires-python = "{requires_python}"\n'
-            )
+    def test_unchanged(self, mock_glob: Mock):
+        """Test that the version file is not written when it already pins the latest `python` release."""
+        version_file = self.update_version_file(mock_glob, "3.13.2\n")
+        version_file.write_text.assert_not_called()
+        self.assert_path_logged(version_file)
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
 
     def update_version_file(
         self,
@@ -65,14 +64,6 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         mock_glob.return_value = [version_file]
         _update_python_version_files()
         return version_file
-
-    def test_unchanged(self, mock_glob: Mock):
-        """Test that the version file is not written when it already pins the latest `python` release."""
-        version_file = self.update_version_file(mock_glob, "3.13.2\n")
-        version_file.write_text.assert_not_called()
-        self.assert_path_logged(version_file)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
 
     def test_update(self, mock_glob: Mock):
         """Test that the entry is updated to the latest `python` release on Docker Hub."""
@@ -103,8 +94,12 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         )
         self.assert_no_warnings_logged()
 
+    def write_pyproject_toml(self, requires_python: str) -> None:
+        """Write a pyproject.toml with this `requires-python` into the root directory."""
+        self.files[PYPROJECT_TOML] = f'[project]\nrequires-python = "{requires_python}"\n'
+
     @kills.delete(
-        update_python_version_file._report_requires_python,
+        _report_requires_python,
         " and not reference.marker.ignores(Scope.UPDATE)",
         "an entry its marker holds back is logged as held back by the `requires-python` as well",
     )
@@ -112,8 +107,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that a `requires-python` is not logged as holding back an entry whose marker holds the update back."""
         self.write_pyproject_toml(">=3.10,<3.12")
         contents = "3.10  # update-time: ignore[update]\n"
-        version_file = self.update_version_file(mock_glob, contents, latest=("3.11.9", "3.15.1"))
-        version_file.write_text.assert_not_called()
+        self.update_version_file(mock_glob, contents, latest=("3.11.9", "3.15.1")).write_text.assert_not_called()
         self.assertEqual(self.records_of(message_of(Logger.held_back_by_requires_python)), [])
 
     def test_requires_python_above_the_file_bounds_the_update(self, mock_glob: Mock):
@@ -130,8 +124,19 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
         version_file.write_text.assert_called_once_with("3.11.9\n")
 
+    def write_workspace(self, members: dict[str, str], *, exclude: str = "") -> None:
+        """Write a uv workspace whose root allows `>=3.10`, with a member under `packages/` per `requires-python`."""
+        excluded = f'exclude = ["packages/{exclude}"]\n' if exclude else ""
+        self.files[PYPROJECT_TOML] = (
+            f'[project]\nrequires-python = ">=3.10"\n\n[tool.uv.workspace]\nmembers = ["packages/*"]\n{excluded}'
+        )
+        for member, requires_python in members.items():
+            self.files[SCAN_ROOT / f"packages/{member}/pyproject.toml"] = (
+                f'[project]\nrequires-python = "{requires_python}"\n'
+            )
+
     @kills.replace(
-        uv.workspace_pyproject_tomls,
+        workspace_pyproject_tomls,
         "root = _workspace_root(pyproject_toml)",
         "root = pyproject_toml",
         "a member's own `.python-version` is bounded by that member alone, though uv checks the whole workspace",
@@ -145,7 +150,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file.write_text.assert_called_once_with("3.11.9\n")
 
     @kills.delete(
-        uv.workspace_pyproject_tomls,
+        workspace_pyproject_tomls,
         " and _workspace_includes(root_dir, workspace, member)",
         "the excluded members of a workspace bound the entry, though uv leaves them out",
     )
@@ -156,7 +161,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file.write_text.assert_called_once_with("3.15.1\n")
 
     @kills.delete(
-        uv.workspace_pyproject_tomls,
+        workspace_pyproject_tomls,
         '(member / "pyproject.toml").exists() and ',
         "a directory without a pyproject.toml counts as a member, so a warning names a file that is not there",
     )
@@ -189,7 +194,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file.write_text.assert_called_once_with("3.15.1\n")
 
     @kills.force_false(
-        update_python_version_file._report_requires_python,
+        _report_requires_python,
         "not bound.keeps(Version(version), version)",
         "the run does not warn about an entry outside the `requires-python`, though uv refuses to run with it",
     )
@@ -215,7 +220,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_logged(message_of(Logger.invalid_requires_python), location=Location(PYPROJECT_TOML, 2))
 
     @kills.replace(
-        update_python_version_file._requires_python,
+        _requires_python,
         "except (OSError, UnicodeDecodeError) as error:",
         "except UnicodeDecodeError as error:",
         "a `pyproject.toml` that cannot be read stops the run for every `.python-version` file",
@@ -223,7 +228,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         case="a file it may not read",
     )
     @kills.replace(
-        update_python_version_file._requires_python,
+        _requires_python,
         "except (OSError, UnicodeDecodeError) as error:",
         "except OSError as error:",
         "a `pyproject.toml` that is not UTF-8 stops the run for every `.python-version` file",
@@ -231,7 +236,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         case="a file that is not UTF-8",
     )
     @kills.delete(
-        update_python_version_file._requires_python,
+        _requires_python,
         "_LOG.unreadable_file(pyproject_toml, error, FileContent.REQUIRES_PYTHON)",
         "a `pyproject.toml` that cannot be read goes unreported, so its `requires-python` drops out silently",
         case="a file it may not read",
@@ -262,7 +267,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_warnings_logged()
 
     @kills.uncache(
-        update_python_version_file._requires_python,
+        _requires_python,
         "every `.python-version` file under a `pyproject.toml` reads it again, and repeats its warning",
     )
     def test_a_pyproject_toml_several_version_files_share_is_warned_about_once(self, mock_glob: Mock):
@@ -285,8 +290,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_multiple_entries(self, mock_glob: Mock):
         """Test that a version file pinning several versions (as pyenv allows) updates each entry independently."""
-        version_file = self.update_version_file(mock_glob, "3.11.9\n3.12.6\n")
-        version_file.write_text.assert_called_once_with("3.13.2\n3.13.2\n")
+        self.update_version_file(mock_glob, "3.11.9\n3.12.6\n").write_text.assert_called_once_with("3.13.2\n3.13.2\n")
         self.assertEqual(
             len(self.new_version_records()), 2
         )  # Both entries were reported (the second's changelog suppressed).
@@ -294,8 +298,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_non_cpython_entries_left_untouched(self, mock_glob: Mock):
         """Test that entries that are not a plain CPython version are left untouched, even with a newer release."""
-        contents = "pypy3.10-7.3.12\nsystem\n3.13t\ncpython@3.12\n>=3.10\n"
-        version_file = self.update_version_file(mock_glob, contents)
+        version_file = self.update_version_file(mock_glob, "pypy3.10-7.3.12\nsystem\n3.13t\ncpython@3.12\n>=3.10\n")
         version_file.write_text.assert_not_called()
         self.assert_path_logged(version_file)
         self.assert_no_new_version_logged()

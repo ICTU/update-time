@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Self
 
 from update_time.domain.dependency import PinnedDependency
 from update_time.domain.version_scheme import PEP_440
-from update_time.formats import toml
+from update_time.formats.toml import read
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -57,7 +57,7 @@ class UvLock:
         its package, one per Python version or platform. A dependency without one takes each version the lock holds,
         as a script's dependency does where uv forks its resolution. Return None where there is no lock to read.
         """
-        if (lock := toml.read(self.path)) is None:
+        if (lock := read(self.path)) is None:
             return None
         packages: list[dict] = lock.get("package", [])
         # The lock lists the dependency groups of a workspace root without `[project]` in `[manifest]`.
@@ -77,19 +77,6 @@ class UvLock:
         )
 
 
-def _grouped(pins: Iterable[PinnedDependency]) -> RecordedVersions:
-    """Return the versions of the pins, grouped by name, in the order of the pins."""
-    grouped: RecordedVersions = {}
-    for pin in pins:
-        grouped.setdefault(pin.name, []).append(pin.version)
-    return grouped
-
-
-def _versions_of(dependency: dict, locked: RecordedVersions) -> list[VersionString]:
-    """Return the version the lock names beside the dependency, or else each version it holds of the package."""
-    return [dependency["version"]] if "version" in dependency else locked.get(dependency["name"], [])
-
-
 def _lowest(versions: Sequence[VersionString]) -> VersionString:
     """Return the lowest of the versions, the first where PEP 440 does not order them."""
     lowest, *others = versions
@@ -97,6 +84,14 @@ def _lowest(versions: Sequence[VersionString]) -> VersionString:
         if PEP_440.is_downgrade(lowest, version):
             lowest = version
     return lowest
+
+
+def _grouped(pins: Iterable[PinnedDependency]) -> RecordedVersions:
+    """Return the versions of the pins, grouped by name, in the order of the pins."""
+    grouped: RecordedVersions = {}
+    for pin in pins:
+        grouped.setdefault(pin.name, []).append(pin.version)
+    return grouped
 
 
 def _project_dependencies(entry: dict) -> list[dict]:
@@ -107,3 +102,8 @@ def _project_dependencies(entry: dict) -> list[dict]:
         *entry.get("dependency-groups", {}).values(),
     )
     return [*entry.get("dependencies", []), *entry.get("requirements", []), *chain.from_iterable(groups)]
+
+
+def _versions_of(dependency: dict, locked: RecordedVersions) -> list[VersionString]:
+    """Return the version the lock names beside the dependency, or else each version it holds of the package."""
+    return [dependency["version"]] if "version" in dependency else locked.get(dependency["name"], [])

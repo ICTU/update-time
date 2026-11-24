@@ -20,9 +20,9 @@ import io
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from tools.generate_log_svg import generate as generate_log_output
+from tools.generate_log_svg import generate
 from tools.generated_files import write_or_check
 from tools.log_index import LOG_INDEX, generate_log_index
 from tools.log_samples import sample_log_lines
@@ -31,14 +31,13 @@ from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.staleness import STALE_AFTER
 
 if TYPE_CHECKING:
-    from update_time.domain.dependency_type import DependencyType
     from update_time.domain.file_type import FileType
 
-_ROOT = Path(__file__).parents[1]
-_DOCS = _ROOT / "docs"
-_README = _ROOT / "README.md"
+_ROOT: Final[Path] = Path(__file__).parents[1]
+_DOCS: Final[Path] = _ROOT / "docs"
+_README: Final[Path] = _ROOT / "README.md"
 _TEMPLATE = _DOCS / "README.md.in"
-_SCREENSHOT = _DOCS / "log-output.svg"
+_SCREENSHOT: Final[Path] = _DOCS / "log-output.svg"
 
 
 def _help_output() -> str:
@@ -60,15 +59,14 @@ def _help_output() -> str:
     return buffer.getvalue().rstrip()
 
 
-def _table_of_contents(template: str, depth: int = 3) -> str:
+def _table_of_contents(template: str) -> str:
     """Return the table of contents: its own chapter heading, then a link per heading, in the template's order.
 
-    The depth is the deepest heading level listed, so a depth of 2 lists the chapters (`##`) alone and a depth of
-    3 adds the sections within them, indented under the chapter they belong to. The heading is generated rather
-    than written in the template, so that scanning the template can't find it and list the table of contents in
-    itself.
+    The heading is generated rather than written in the template, so that scanning the template can't find it and list
+    the table of contents in itself.
     """
-    entries = [f"{'  ' * (level - 2)}- [{title}]({anchor(title)})" for level, title in headings(template, 2, depth)]
+    toc_depth = 3
+    entries = [f"{'  ' * (level - 2)}- [{title}]({anchor(title)})" for level, title in headings(template, 2, toc_depth)]
     return "\n".join(["## ☰ Table of contents", "", *entries])
 
 
@@ -82,25 +80,19 @@ def _folder(file_type: FileType) -> str:
     return f"`{file_type.start}/`" if file_type.start else "the scan root"
 
 
-def _file_types_table(dependency_type: DependencyType) -> str:
-    """Return the table naming the files this dependency type is declared in, and how each of them is found."""
-    header = ["| Files | Globs | Folder | Recursive |", "| :---- | :---- | :----- | :-------: |"]
-    rows = [
-        f"| {file_type.name} | {_globs(file_type)} | {_folder(file_type)} | {'✅' if file_type.recursive else ''} |"
-        for file_type in dependency_type.file_types
-    ]
-    return "\n".join(header + rows)
-
-
 def _render() -> dict[Path, str]:
     """Return the content each generated file should have, keyed by the file it belongs in."""
     STALE_AFTER.set(STALE_AFTER.default)  # Pin the threshold the samples report, whatever the environment holds
-    log_output = generate_log_output()
+    log_output = generate()
     template = _TEMPLATE.read_text()
     readme = template.replace("@@TABLE_OF_CONTENTS@@", _table_of_contents(template))
     readme = readme.replace("@@HELP_OUTPUT@@", _help_output()).replace("@@LOG_OUTPUT@@", log_output.text)
-    docker_images = _file_types_table(DEPENDENCY_TYPES.docker_images)
-    readme = readme.replace("@@DOCKER_IMAGE_FILES_TABLE@@", docker_images)
+    docker_image_files = [  # A row per file Docker images are declared in, saying how Update-time finds it
+        f"| {file_type.name} | {_globs(file_type)} | {_folder(file_type)} | {'✅' if file_type.recursive else ''} |"
+        for file_type in DEPENDENCY_TYPES.docker_images.file_types
+    ]
+    header = ["| Files | Globs | Folder | Recursive |", "| :---- | :---- | :----- | :-------: |"]
+    readme = readme.replace("@@DOCKER_IMAGE_FILES_TABLE@@", "\n".join([*header, *docker_image_files]))
     samples = sample_log_lines()
     for placeholder, log_lines in samples.blocks.items():
         readme = readme.replace(placeholder, log_lines)
@@ -112,5 +104,5 @@ def main() -> None:
     write_or_check(_render(), _ROOT, "just readme")
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()

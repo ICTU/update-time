@@ -15,18 +15,21 @@ import socket
 from typing import NoReturn
 from unittest.mock import patch
 
+# Where a test tried to reach the network: a socket address, or the host name a lookup resolves.
+type _Address = str | bytes | tuple[str | int, ...] | None
 
-def _refuse(address: object) -> NoReturn:
+
+def _refuse(address: _Address) -> NoReturn:
     """Raise the refusal, naming the address the test tried to reach."""
-    message = f"test tried to reach the network at {address}"
+    message = f"test tried to reach the network at {address!s}"
     raise RuntimeError(message)
 
 
-def _refuse_connection(_self: socket.socket, address: object) -> NoReturn:
+def _refuse_connection(_self: socket.socket, address: _Address) -> NoReturn:
     _refuse(address)
 
 
-def _refuse_resolution(host: object, *_args: object, **_kwargs: object) -> NoReturn:
+def _refuse_resolution(host: _Address, *_args: object, **_kwargs: object) -> NoReturn:
     """Refuse to resolve the host name, whatever port, family, and flags the lookup passes with it."""
     _refuse(host)
 

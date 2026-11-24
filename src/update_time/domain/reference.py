@@ -2,25 +2,26 @@
 
 from dataclasses import dataclass, field, fields, replace
 from enum import Enum, StrEnum
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Final, Self
 
-from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import NO_PROJECT, PinnedDependency
-from update_time.domain.marker import NO_MARKER, Marker, Threshold
-from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.vulnerability import VULNERABILITY_LEVEL
+from .cooldown import COOLDOWN
+from .dependency import NO_PROJECT, PinnedDependency
+from .marker import NO_MARKER, Marker, Threshold
+from .staleness import STALE_AFTER
+from .vulnerability import VULNERABILITY_LEVEL
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
-    from update_time.domain.dependency import DependencyName, DependencyVersion, Project, VersionString
     from update_time.primitives.location import Location
+
+    from .dependency import DependencyName, DependencyVersion, Project, VersionString
 
 # A variable or a template standing in for part of a reference, whose value Update-time does not know: a `$VAR` or
 # `${VAR}`, a Helm `{{ .Values.tag }}`, or a CircleCI `<< parameters.tag >>`. A `$VAR` takes every word character
 # after its `$` and gives none back. Otherwise the regex tries every split between a variable and the characters
 # around it, which takes seconds on a line that holds several variables and does not match.
-VARIABLE = r"\$\w++|\$\{[^}]*\}|\{\{[^}]*\}\}|<<[^>]*>>"
+VARIABLE: Final[str] = r"\$\w++|\$\{[^}]*\}|\{\{[^}]*\}\}|<<[^>]*>>"
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,14 @@ class Reference:
     can_hold_a_hash_pin: bool = False
     marker: Marker = field(default=NO_MARKER, kw_only=True)
 
+    @classmethod
+    def from_reference(cls, reference: Reference, **resolved: object) -> Self:
+        """Return this kind of reference, carrying what it shares with the given one and what a source resolved."""
+        shared = {attribute.name for attribute in fields(cls)} & {attribute.name for attribute in fields(reference)}
+        values = {name: getattr(reference, name) for name in shared}
+        values.update(resolved)
+        return cls(**values)
+
     @property
     def pinned(self) -> PinnedDependency:
         """Return the dependency and the version this reference pins it to."""
@@ -66,26 +75,6 @@ class Reference:
         """Return the risk level the reference is warned about vulnerabilities from: its own, or the run's."""
         return self.marker.vulnerable.value_or(VULNERABILITY_LEVEL.get())
 
-    @classmethod
-    def from_reference(cls, reference: Reference, **resolved: object) -> Self:
-        """Return this kind of reference, carrying what it shares with the given one and what a source resolved."""
-        shared = {attribute.name for attribute in fields(cls)} & {attribute.name for attribute in fields(reference)}
-        values: dict[str, Any] = {name: getattr(reference, name) for name in shared}
-        values.update(resolved)
-        return cls(**values)
-
-
-@dataclass(frozen=True, kw_only=True)
-class ResolvedReference(Reference):
-    """A resolved reference carries the release and the project a source resolved for it.
-
-    The release is the version the run leaves the reference on. That is the new version when the run updated
-    the reference, and the current version otherwise.
-    """
-
-    release: DependencyVersion
-    project: Project = NO_PROJECT
-
 
 @dataclass(frozen=True, kw_only=True)
 class DriftedPin(Reference):
@@ -99,6 +88,18 @@ class DriftedPin(Reference):
 type ReferenceResolver[ReferenceT: Reference, ResolvedT: ResolvedReference] = Callable[
     [Iterable[ReferenceT]], Iterable[ResolvedT]
 ]
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResolvedReference(Reference):
+    """A resolved reference carries the release and the project a source resolved for it.
+
+    The release is the version the run leaves the reference on. That is the new version when the run updated
+    the reference, and the current version otherwise.
+    """
+
+    release: DependencyVersion
+    project: Project = NO_PROJECT
 
 
 def resolved_references[ReferenceT: Reference, ResolvedT: ResolvedReference](

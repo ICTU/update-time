@@ -2,34 +2,57 @@
 
 import re
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, NamedTuple, TypeGuard
+from typing import TYPE_CHECKING, Final, NamedTuple, TypeGuard
 
 from update_time.domain.reference import Reference
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName
     from update_time.domain.marker import Marker
+    from update_time.formats.json import JSON
     from update_time.primitives.location import Location
 
 
-class CatalogEntry(NamedTuple):
-    """An entry of a workspace's catalogs: the name of its catalog, empty for the unnamed one, and of its dependency."""
-
-    catalog: str
-    dependency: DependencyName
-
-
 # A spec that pins a dependency to one version, such as 1.3.0, =v1.3.0, or 1.3.0+build. npm ignores the build.
-_EXACT_VERSION = re.compile(r"=?v?(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+[0-9A-Za-z.-]+)?")
+_EXACT_VERSION: Final[re.Pattern[str]] = re.compile(
+    r"""
+    =?v?  # an equals sign and a v, each of them optional
+    (?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)  # the version, with its pre-release identifiers if any
+    (?:\+[0-9A-Za-z.-]+)?  # the build, if any
+    """,
+    re.VERBOSE,
+)
 
 # The protocol of a spec that takes its version from a catalog, followed by the catalog's name, if it has one.
-_CATALOG_PROTOCOL = "catalog:"
+_CATALOG_PROTOCOL: Final[str] = "catalog:"
 
 # A spec that aliases a registry package, naming the package and the range it takes, as in `npm:react-is@^18.0.0`.
-_ALIAS = re.compile(r"npm:(?P<package>@?[^@]+)(?:@(?P<range>.*))?")
+_ALIAS: Final[re.Pattern[str]] = re.compile(
+    r"""
+    npm:(?P<package>@?[^@]+)  # the package, which may be scoped
+    (?:@(?P<range>.*))?  # the range it takes, if any
+    """,
+    re.VERBOSE,
+)
 
-# The name that pnpm and bun give the unnamed catalog, as in `catalog:default`.
-_DEFAULT_CATALOG = "default"
+
+def declaration(name: DependencyName, spec: JSON, location: Location, marker: Marker) -> Declaration:
+    """Return the declaration of the dependency with the spec, at the exact version the spec pins if any."""
+    if isinstance(spec, str) and (aliased := _ALIAS.fullmatch(spec)):
+        return replace(declaration(aliased["package"], aliased["range"] or "", location, marker), alias=name)
+    if not is_registry_spec(spec):
+        return Declaration(name, "", location, marker=marker, names_a_release=False, catalog=_catalog(spec))
+    match = _EXACT_VERSION.fullmatch(spec)
+    return Declaration(name, match["version"] if match else "", location, marker=marker, names_a_release=True)
+
+
+def is_registry_spec(spec: object) -> TypeGuard[str]:
+    """Return whether the spec is a plain semver range that resolves to an npm registry release.
+
+    A catalog, git, file, link, workspace, alias, or github-shorthand reference does not, and is recognisable by the
+    `:` or `/` it carries.
+    """
+    return isinstance(spec, str) and ":" not in spec and "/" not in spec
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,7 +74,7 @@ class Declaration(Reference):
         return self.alias or self.dependency
 
 
-def _catalog(spec: object) -> str | None:
+def _catalog(spec: JSON) -> str | None:
     """Return the name of the catalog the spec takes its version from, empty for the unnamed one, or else None."""
     if isinstance(spec, str) and spec.startswith(_CATALOG_PROTOCOL):
         return catalog_name(spec.removeprefix(_CATALOG_PROTOCOL))
@@ -60,17 +83,8 @@ def _catalog(spec: object) -> str | None:
 
 def catalog_name(name: str) -> str:
     """Return the name of the catalog that a spec or a file gives it, empty for the unnamed catalog."""
-    return "" if name == _DEFAULT_CATALOG else name
-
-
-def declaration(name: DependencyName, spec: object, location: Location, marker: Marker) -> Declaration:
-    """Return the declaration of the dependency with the spec, at the exact version the spec pins if any."""
-    if isinstance(spec, str) and (aliased := _ALIAS.fullmatch(spec)):
-        return replace(declaration(aliased["package"], aliased["range"] or "", location, marker), alias=name)
-    if not is_registry_spec(spec):
-        return Declaration(name, "", location, marker=marker, names_a_release=False, catalog=_catalog(spec))
-    match = _EXACT_VERSION.fullmatch(spec)
-    return Declaration(name, match["version"] if match else "", location, marker=marker, names_a_release=True)
+    # The name that pnpm and bun give the unnamed catalog, as in `catalog:default`.
+    return "" if name == "default" else name
 
 
 @dataclass(frozen=True)
@@ -93,10 +107,8 @@ class Catalogs:
         return None if entry is None else entry.location
 
 
-def is_registry_spec(spec: object) -> TypeGuard[str]:
-    """Return whether the spec is a plain semver range that resolves to an npm registry release.
+class CatalogEntry(NamedTuple):
+    """An entry of a workspace's catalogs: the name of its catalog, empty for the unnamed one, and of its dependency."""
 
-    A catalog, git, file, link, workspace, alias, or github-shorthand reference does not, and is recognisable by the
-    `:` or `/` it carries.
-    """
-    return isinstance(spec, str) and ":" not in spec and "/" not in spec
+    catalog: str
+    dependency: DependencyName

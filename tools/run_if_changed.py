@@ -10,9 +10,11 @@ that passes leaves the fingerprints there, so the next run skips the command unt
 Usage: `uv run --no-project python -m tools.run_if_changed --skipped-status STATUS --record NAME --inputs PATHSPEC ...
 [--pass-changed PATHSPEC ...] [--whole-files] -- COMMAND`, which exits with STATUS where every input is unchanged, and
 with the command's exit status where one changed. A command exiting with STATUS makes the tool exit with 1, so a failure
-never reads as a skip. The inputs are the files the pathspecs match. A pathspec naming one file counts that file even
-where git ignores it. The files `--pass-changed` names count as inputs too, and the command gets the ones that changed
-since it last passed after its own arguments. A change to a file `--inputs` names hands the command every one of them.
+never reads as a skip.
+
+The inputs are the files the pathspecs match. A pathspec naming one file counts that file even where git ignores it.
+The files `--pass-changed` names count as inputs too, and the command gets the ones that changed since it last passed
+after its own arguments. A change to a file `--inputs` names hands the command every one of them.
 """
 
 import argparse
@@ -25,25 +27,24 @@ import subprocess  # nosec
 import sys
 import tokenize
 from pathlib import Path
-
-# The git command that lists the files the repository holds, tracked or new, leaving out the ones it ignores. The
-# pathspecs naming the inputs go after it. A NUL ends each entry.
-_LIST_FILES = ("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--")
+from typing import Final, NamedTuple
 
 # The characters that make a pathspec a pattern rather than the path of one file.
-_GLOB = re.compile(r"[*?\[]")
-
-# Where a passing command leaves the fingerprint of its inputs, per file, under the name of its record.
-_RECORD = "build/{}-fingerprints.json"
+_GLOB: Final[re.Pattern[str]] = re.compile(r"[*?\[]")
 
 # The definitions that can open with a docstring.
-_DOCUMENTED = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+_DOCUMENTED: Final[tuple[type[ast.Module], type[ast.ClassDef], type[ast.FunctionDef], type[ast.AsyncFunctionDef]]] = (
+    ast.Module,
+    ast.ClassDef,
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+)
 
 
 def main() -> int:
     """Run the command where an input changed, and return its exit status, or the skip status where none changed."""
     arguments = _arguments()
-    record = _RECORD.format(arguments.record)
+    record = f"build/{arguments.record}-fingerprints.json"
     candidates, inputs, fingerprints = _fingerprints_of(arguments)
     recorded = _recorded(record)
     if fingerprints is not None and fingerprints == recorded:
@@ -82,19 +83,30 @@ def _arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _fingerprints_of(arguments: argparse.Namespace) -> tuple[set[str], set[str], dict[str, str] | None]:
-    """Return the files to pass, the inputs, and the fingerprint per file, or None where it cannot be taken."""
+class _Fingerprinted(NamedTuple):
+    """The files to pass where they changed, the inputs, and the fingerprint per file, or None where none was taken."""
+
+    candidates: set[str]
+    inputs: set[str]
+    fingerprints: dict[str, str] | None
+
+
+def _fingerprints_of(arguments: argparse.Namespace) -> _Fingerprinted:
+    """Return the files the arguments name, fingerprinted."""
     inputs = _paths(arguments.inputs)
     candidates = _paths(arguments.pass_changed) if arguments.pass_changed else set()
     if inputs is None or candidates is None:
-        return set(), set(), None
-    return candidates, inputs, _fingerprints(inputs | candidates, whole_files=arguments.whole_files)
+        return _Fingerprinted(set(), set(), None)
+    return _Fingerprinted(candidates, inputs, _fingerprints(inputs | candidates, whole_files=arguments.whole_files))
 
 
 def _paths(pathspecs: list[str]) -> set[str] | None:
     """Return the files the pathspecs match, or None where git cannot list them."""
+    # The git command that lists the files the repository holds, tracked or new, leaving out the ones it ignores. The
+    # pathspecs naming the inputs go after it. A NUL ends each entry.
+    list_files = ("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--")
     try:
-        result = subprocess.run((*_LIST_FILES, *pathspecs), check=False, capture_output=True, text=True)  # noqa: S603 # nosec
+        result = subprocess.run((*list_files, *pathspecs), check=False, capture_output=True, text=True)  # noqa: S603 # nosec
     except OSError as error:
         _report_changed(f"git ls-files failed: {error}")
         return None
@@ -178,5 +190,5 @@ def _report_changed(reason: str) -> None:
     sys.stderr.write(f"Reporting the inputs as changed, since {reason}\n")
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())
