@@ -4,38 +4,51 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from tools.markdown import anchors
 from update_time.io.log import Logger
+
+from .markdown import anchors
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping
 
-_ROOT = Path(__file__).parents[1]
-LOG_INDEX = _ROOT / "docs" / "log-messages.md"
-_TEMPLATE = _ROOT / "docs" / "log-messages.md.in"
-_TEMPLATE_NAME = _TEMPLATE.relative_to(_ROOT)
+_ROOT: Final[Path] = Path(__file__).parents[1]
+LOG_INDEX: Final[Path] = _ROOT / "docs" / "log-messages.md"
+_TEMPLATE: Final[Path] = _ROOT / "docs" / "log-messages.md.in"
+_TEMPLATE_NAME: Final[Path] = _TEMPLATE.relative_to(_ROOT)
 
 # A placeholder in the template names the message whose heading and sample replace it.
-_PLACEHOLDER = re.compile(r"@@(?P<name>[a-z]+(?:-[a-z]+)*)@@")
+_PLACEHOLDER: Final[re.Pattern[str]] = re.compile(
+    r"""
+    @@
+    (?P<name>[a-z]+(?:-[a-z]+)*)  # the message's name: words of lower-case letters, joined by hyphens
+    @@
+    """,
+    re.VERBOSE,
+)
 
 # A link from the index to a section of the README, captured by the anchor it points at.
-_README_LINK = re.compile(r"\]\(\.\./README\.md(#[^)]+)\)")
+_README_LINK: Final[re.Pattern[str]] = re.compile(r"\]\(\.\./README\.md(#[^)]+)\)")
 
 
 def generate_log_index(samples: Mapping[str, str], readme: str) -> str:
     """Return the index of the log messages, from its template, the sample of each name, and the README it links to."""
     template = _TEMPLATE.read_text()
     _stop_on_dead_links(template, readme)
-    names = [message.name for message in Logger.messages()]
-    return _log_index(template, samples, names)
+    return _log_index(template, samples, [message.name for message in Logger.messages()])
 
 
 def _stop_on_dead_links(template: str, readme: str) -> None:
     """Stop the generator where the template links to an anchor that the headings of the README do not provide."""
     dead = set(_README_LINK.findall(template)) - anchors(readme)
     _stop_on(f"{_TEMPLATE_NAME} links to README sections that do not exist", dead)
+
+
+def _stop_on(problem: str, culprits: set[str]) -> None:
+    """Stop the generator where there are culprits, naming the problem and each of them."""
+    if culprits:
+        sys.exit(f"{problem}: {', '.join(sorted(culprits))}")
 
 
 def _log_index(template: str, samples: Mapping[str, str], names: Collection[str]) -> str:
@@ -57,12 +70,6 @@ def _stop_unless_complete(placed: Counter[str], samples: Mapping[str, str], name
     }
     for problem, culprits in problems.items():
         _stop_on(problem, culprits)
-
-
-def _stop_on(problem: str, culprits: set[str]) -> None:
-    """Stop the generator where there are culprits, naming the problem and each of them."""
-    if culprits:
-        sys.exit(f"{problem}: {', '.join(sorted(culprits))}")
 
 
 def _entry(name: str, sample: str) -> str:

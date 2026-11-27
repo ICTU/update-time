@@ -2,11 +2,12 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.formats import yaml as yaml_format
+from update_time.formats.yaml import FORMAT, read
 from update_time.io.file import rewrite_file
 from update_time.io.filesystem import glob_for
-from update_time.references.rewrite import update_references_in_lines
 from update_time.sources.oci import ImagesNotPulled, TagGetter
+
+from .rewrite import update_references_in_lines
 
 if TYPE_CHECKING:
     import re
@@ -20,6 +21,23 @@ if TYPE_CHECKING:
     from update_time.formats.yaml import Document
     from update_time.io.log import Logger
     from update_time.primitives.line import Line
+
+
+def update_yaml_files(
+    file_type: FileType,
+    *,
+    regexp: str | re.Pattern[str],
+    find_images: Callable[[Document], set[str]],
+    reason: ImageNotLookedUp,
+    logger: Logger,
+) -> None:
+    """Update the images in the files of this kind, leaving the ones `find_images` reads from each file unchanged."""
+    for path in glob_for(file_type):
+        if (document := read(path)) is None:
+            logger.invalid_file(path, FORMAT)
+        else:
+            get_new_version = TagGetter(ImagesNotPulled(find_images(document), reason))
+            update_file(path, regexp, source=get_new_version.source, logger=logger)
 
 
 def update_file(
@@ -50,21 +68,3 @@ def update_file(
         ),
         logger,
     )
-
-
-def update_yaml_files(
-    file_type: FileType,
-    *,
-    regexp: str | re.Pattern[str],
-    find_images: Callable[[Document], set[str]],
-    reason: ImageNotLookedUp,
-    logger: Logger,
-) -> None:
-    """Update the images in the files of this kind, leaving the ones `find_images` reads from each file unchanged."""
-    for path in glob_for(file_type):
-        document = yaml_format.read(path)
-        if document is None:
-            logger.invalid_file(path, yaml_format.FORMAT)
-        else:
-            get_new_version = TagGetter(ImagesNotPulled(find_images(document), reason))
-            update_file(path, regexp, source=get_new_version.source, logger=logger)

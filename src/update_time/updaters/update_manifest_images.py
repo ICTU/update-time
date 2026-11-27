@@ -1,5 +1,7 @@
 """Manifest image updater script finds image tags and updates them to latest compatible versions."""
 
+from typing import TYPE_CHECKING, Final
+
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
 from update_time.io.filesystem import glob_for
@@ -9,7 +11,10 @@ from update_time.manifests.yaml_image import YAML_IMAGE_REFERENCE
 from update_time.references.file import update_file, update_yaml_files
 from update_time.sources.oci import TagGetter
 
-_LOG = get_logger("manifest images")
+if TYPE_CHECKING:
+    from update_time.io.log import Logger
+
+_LOG: Final[Logger] = get_logger("manifest images")
 
 
 def _update_manifest_images() -> None:
@@ -29,10 +34,5 @@ def _update_manifest_images() -> None:
         update_file(helm_chart, YAML_IMAGE_REFERENCE, source=TagGetter().source, logger=_LOG)
 
 
-def main() -> None:  # pragma: no cover
-    """Update the images in the repository's Docker Compose and Helm manifests."""
+if __name__ == "__main__":
     _update_manifest_images()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

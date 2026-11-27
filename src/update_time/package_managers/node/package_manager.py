@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.filesystem import is_scanned
@@ -11,21 +11,23 @@ from update_time.io.process import is_installed, run
 from update_time.lock_files.locked_versions import ROOT_PROJECT
 from update_time.manifests.npm_declaration import Catalogs
 from update_time.manifests.package_json import PackageJson
-from update_time.package_managers.node.marker_policy import (
+from update_time.primitives.command import Command
+
+from .marker_policy import (
     BINARY_LOCK_POLICY,
     MARKER_POLICY,
     NO_LOCK_FILE_POLICY,
     WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY,
     CheckedPackageJson,
 )
-from update_time.package_managers.node.project_update import ProjectSnapshot, ProjectUpdate, log_updates
-from update_time.primitives.command import Command
+from .project_update import ProjectSnapshot, ProjectUpdate, log_updates
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
+    from update_time.io.log import Logger
     from update_time.lock_files.locked_versions import LockedVersions
     from update_time.manifests.catalogs_yaml import CatalogsYaml
     from update_time.manifests.npm_declaration import Declaration
@@ -33,15 +35,7 @@ if TYPE_CHECKING:
     from update_time.primitives.command import Result
 
 
-_LOG = get_logger("package.json")
-
-
-@dataclass(frozen=True)
-class CooldownArguments:
-    """What a manager's update takes to apply Update-time's cooldown: options, or variables in its environment."""
-
-    options: tuple[str, ...] = ()
-    environment: Mapping[str, str] = field(default_factory=dict)
+_LOG: Final[Logger] = get_logger("package.json")
 
 
 @dataclass(frozen=True)
@@ -65,90 +59,12 @@ class ConfiguredCooldown:
         return None
 
 
-@dataclass(frozen=True)
-class _Workspace:
-    """A workspace of a Node package manager, and its root, where the workspace's lock and catalogs sit.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManagerCooldown:
+    """How a manager takes Update-time's cooldown, and where a project sets a cooldown of its own."""
 
-    A project outside a workspace is a workspace of its own, rooted in the project's directory.
-    """
-
-    manager: PackageManager
-    root: Path
-
-    def has_a_lock(self) -> bool:
-        """Return whether a lock file that Update-time reads sits at the root."""
-        return any((self.root / name).exists() for name in self.manager.lock_files)
-
-    def catalogs(self) -> Catalogs:
-        """Return the catalogs the file at the root holds, or none where the manager has no catalogs."""
-        read = self.manager.catalogs
-        return Catalogs() if read is None else read(self.root)
-
-    def root_file(self) -> Path:
-        """Return the file at the root that names the members: the manager's workspace file, else the package.json."""
-        return self.root / (self.manager.workspace_file or "package.json")
-
-    def policy_for_a_project_left_as_it_is(self, path: Path) -> ManagerPolicy[Declaration] | None:
-        """Return the policy for the markers of a package.json the manager does not run for, or None where it runs.
-
-        The manager runs only where the scan reaches the root and a lock file that Update-time reads sits there,
-        since the update would otherwise write one, or leave its versions unread. It also runs only where the version
-        of the manager that runs at the root can update the project. The warning about a lock Update-time cannot read,
-        or about the manager's version, names the root, so a member points at it.
-        """
-        manager = self.manager
-        if not is_scanned(self.root):
-            _LOG.workspace_root_outside_the_scan(path, manager.name, self.root_file())
-            return WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY
-        if self.has_a_lock():
-            policy = _version_policy(self)
-        elif manager.binary_lock is not None and (binary_lock := self.root / manager.binary_lock).exists():
-            policy = _binary_lock_policy(self, binary_lock)
-        else:
-            _LOG.no_lock_file(path, manager.name, self.root / manager.lock_files[0])
-            return NO_LOCK_FILE_POLICY
-        if policy is not None and path.parent.resolve() != self.root.resolve():
-            _LOG.left_with_the_workspace_root(path, manager.name, self.root_file())
-        return policy
-
-    def update(self, package_json: PackageJson | None) -> PackageJson | None:
-        """Update the workspace's projects at its root, log what moved, and return the root's package.json as left.
-
-        A pnpm workspace root can hold a pnpm-workspace.yaml without a package.json.
-        """
-        manager = self.manager
-        path = self.root_file() if package_json is None else package_json.path
-        directory = path.parent
-        cooldown = manager.cooldown_for(path)
-        listed_before = manager.locked_versions(directory)
-        catalogs_before = self.catalogs()
-        root_path = directory / "package.json"
-        snapshots = [ProjectSnapshot(ROOT_PROJECT, root_path, package_json, listed_before.get(ROOT_PROJECT, {}))]
-        for member, locked in listed_before.items():
-            if member != ROOT_PROJECT:
-                member_path = directory / member / "package.json"
-                snapshots.append(ProjectSnapshot(member, member_path, PackageJson.readable(member_path), locked))
-        if (packages := manager.updated_packages(listed_before)) is None:
-            return package_json
-        update = Command(*manager.update, *cooldown.options, *packages)
-        manager.run_command(update, directory, cooldown.environment)
-        listed_after = manager.locked_versions(directory)
-        updates = [ProjectUpdate.of(snapshot, listed_after) for snapshot in snapshots]
-        log_updates(manager.name, updates, catalogs_before, self.catalogs())
-        return updates[0].after
-
-
-@cache
-def _version_policy(workspace: _Workspace) -> ManagerPolicy[Declaration] | None:
-    """Return the policy for a workspace whose manager's version cannot update it, warning at its root once."""
-    return workspace.manager.version_policy(workspace.root_file(), workspace.root)
-
-
-@cache
-def _binary_lock_policy(workspace: _Workspace, binary_lock: Path) -> ManagerPolicy[Declaration]:
-    """Return the policy for a workspace locked in a binary lock, warning at its root once how to convert the lock."""
-    _LOG.binary_lock(workspace.root_file(), binary_lock, workspace.root / workspace.manager.lock_files[0])
-    return BINARY_LOCK_POLICY
+    setting: Callable[[Path], str | None]  # The setting that holds the project's own cooldown, if one does
+    arguments: Callable[[int], CooldownArguments]
 
 
 @dataclass(frozen=True)
@@ -161,8 +77,7 @@ class PackageManager:
     lock_files: tuple[str, ...]
     binary_lock: str | None  # Update-time cannot read this lock, which the manager may write instead
     workspace_file: str | None
-    cooldown_setting: Callable[[Path], str | None]  # The setting that holds the project's own cooldown, if one does
-    cooldown_arguments: Callable[[int], CooldownArguments]
+    cooldown: ManagerCooldown
     locked_versions: Callable[[Path], LockedVersions]
     catalogs: Callable[[Path], Catalogs] | None  # Read the catalogs that the file at the workspace root holds
     # Name the packages to update, or return None where there are none. An update that names none updates them all.
@@ -195,12 +110,12 @@ class PackageManager:
 
     def workspace_of(self, directory: Path) -> _Workspace:
         """Return the workspace that the project in the directory belongs to."""
-        return _Workspace(self, self.find_workspace_root(directory))
+        return _Workspace(manager=self, root=self.find_workspace_root(directory))
 
     def cooldown_for(self, path: Path) -> CooldownArguments:
         """Return the arguments that apply Update-time's cooldown, or log the project's own and return none."""
-        if (setting := self.cooldown_setting(path.parent)) is None:
-            return self.cooldown_arguments(COOLDOWN.get())
+        if (setting := self.cooldown.setting(path.parent)) is None:
+            return self.cooldown.arguments(COOLDOWN.get())
         _LOG.project_cooldown(path, f"{self.name} {setting}", COOLDOWN.get())
         return CooldownArguments()
 
@@ -223,6 +138,99 @@ class PackageManager:
             return CheckedPackageJson(package_json, MARKER_POLICY)
         after = workspace.update(package_json)
         return None if after is None else CheckedPackageJson(after, MARKER_POLICY)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Workspace:
+    """A workspace of a Node package manager, and its root, where the workspace's lock and catalogs sit.
+
+    A project outside a workspace is a workspace of its own, rooted in the project's directory.
+    """
+
+    manager: PackageManager
+    root: Path
+
+    def policy_for_a_project_left_as_it_is(self, path: Path) -> ManagerPolicy[Declaration] | None:
+        """Return the policy for the markers of a package.json the manager does not run for, or None where it runs.
+
+        The manager runs only where the scan reaches the root and a lock file that Update-time reads sits there,
+        since the update would otherwise write one, or leave its versions unread. It also runs only where the version
+        of the manager that runs at the root can update the project. The warning about a lock Update-time cannot read,
+        or about the manager's version, names the root, so a member points at it.
+        """
+        manager = self.manager
+        if not is_scanned(self.root):
+            _LOG.workspace_root_outside_the_scan(path, manager.name, self.root_file())
+            return WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY
+        if self.has_a_lock():
+            policy = _version_policy(self)
+        elif manager.binary_lock is not None and (binary_lock := self.root / manager.binary_lock).exists():
+            policy = _binary_lock_policy(self, binary_lock)
+        else:
+            _LOG.no_lock_file(path, manager.name, self.root / manager.lock_files[0])
+            return NO_LOCK_FILE_POLICY
+        if policy is not None and path.parent.resolve() != self.root.resolve():
+            _LOG.left_with_the_workspace_root(path, manager.name, self.root_file())
+        return policy
+
+    def root_file(self) -> Path:
+        """Return the file at the root that names the members: the manager's workspace file, else the package.json."""
+        return self.root / (self.manager.workspace_file or "package.json")
+
+    def has_a_lock(self) -> bool:
+        """Return whether a lock file that Update-time reads sits at the root."""
+        return any((self.root / name).exists() for name in self.manager.lock_files)
+
+    def update(self, package_json: PackageJson | None) -> PackageJson | None:
+        """Update the workspace's projects at its root, log what moved, and return the root's package.json as left.
+
+        A pnpm workspace root can hold a pnpm-workspace.yaml without a package.json.
+        """
+        manager = self.manager
+        path = self.root_file() if package_json is None else package_json.path
+        directory = path.parent
+        cooldown = manager.cooldown_for(path)
+        listed_before = manager.locked_versions(directory)
+        catalogs_before = self.catalogs()
+        root_path = directory / "package.json"
+        snapshots = [ProjectSnapshot(ROOT_PROJECT, root_path, package_json, listed_before.get(ROOT_PROJECT, {}))]
+        for member, locked in listed_before.items():
+            if member != ROOT_PROJECT:
+                member_path = directory / member / "package.json"
+                snapshots.append(ProjectSnapshot(member, member_path, PackageJson.readable(member_path), locked))
+        if (packages := manager.updated_packages(listed_before)) is None:
+            return package_json
+        manager.run_command(Command(*manager.update, *cooldown.options, *packages), directory, cooldown.environment)
+        listed_after = manager.locked_versions(directory)
+        updates = [ProjectUpdate.of(snapshot, listed_after) for snapshot in snapshots]
+        log_updates(manager.name, updates, catalogs_before, self.catalogs())
+        return updates[0].after
+
+    def catalogs(self) -> Catalogs:
+        """Return the catalogs the file at the root holds, or none where the manager has no catalogs."""
+        read = self.manager.catalogs
+        return Catalogs() if read is None else read(self.root)
+
+
+@cache
+def _version_policy(workspace: _Workspace) -> ManagerPolicy[Declaration] | None:
+    """Return the policy for a workspace whose manager's version cannot update it, warning at its root once."""
+    return workspace.manager.version_policy(workspace.root_file(), workspace.root)
+
+
+@cache
+def _binary_lock_policy(workspace: _Workspace, binary_lock: Path) -> ManagerPolicy[Declaration]:
+    """Return the policy for a workspace locked in a binary lock, warning at its root once how to convert the lock."""
+    _LOG.binary_lock(workspace.root_file(), binary_lock, workspace.root / workspace.manager.lock_files[0])
+    return BINARY_LOCK_POLICY
+
+
+@dataclass(frozen=True)
+class CooldownArguments:
+    """What a manager's update takes to apply Update-time's cooldown: options, or variables in its environment."""
+
+    options: tuple[str, ...] = ()
+    environment: Mapping[str, str] = field(default_factory=dict)
 
 
 def catalogs_of(catalog_file: PackageJson | CatalogsYaml | None) -> Catalogs:

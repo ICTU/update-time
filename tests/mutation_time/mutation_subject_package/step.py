@@ -1,3 +1,5 @@
 """Hold the step of the counter in this package."""
 
-STEP = 1
+from typing import Final
+
+STEP: Final[int] = 1

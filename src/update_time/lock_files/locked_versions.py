@@ -1,7 +1,7 @@
 """Hold the versions a lock file records per project, and read them from the report of a list command."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, VersionString
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 # The path of the root project relative to the workspace root. The locked versions of each project are keyed by the
 # project's path relative to the workspace root, as the list commands of npm and pnpm report them and bun's lock
 # records them.
-ROOT_PROJECT = Path()
+ROOT_PROJECT: Final[Path] = Path()
 
 # The top-level versions of each project that a lock file records, keyed by the path of the project.
 type LockedVersions = dict[Path, dict[DependencyName, VersionString]]

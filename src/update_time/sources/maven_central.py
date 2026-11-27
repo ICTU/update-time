@@ -9,59 +9,55 @@ import re
 from datetime import UTC, datetime
 from functools import cache, partial
 from http import HTTPStatus
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.dependency import NO_CHANGES, Archival, Changes, Project, ProjectGetter, Release, every_project
+from update_time.domain.dependency import NO_CHANGES, Changes, Project, ProjectGetter, Release, every_project
 from update_time.domain.source import Source
 from update_time.domain.vulnerability import Ecosystem
-from update_time.formats import xml
+from update_time.formats.xml import FORMAT, parse
 from update_time.io.fetch import fetch, look_up
 from update_time.io.log import get_logger
-from update_time.manifests import pom_xml as pom_xml_manifest
+from update_time.manifests import pom_xml
+from update_time.manifests.pom_xml import coordinates, is_resolved, parent, scm_urls, source_urls
 from update_time.primitives.iterables import unique
 from update_time.primitives.lookup import LookedUp
-from update_time.sources.github import (
+
+from .github import (
     GitHubRepository,
+    archival,
     changes_from_changelog_file,
     changes_from_tagged_release,
     github_repository,
     release_tags,
 )
-from update_time.sources.github import archival as github_archival
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from update_time.domain.dependency import DependencyName, VersionString
     from update_time.formats.xml import XmlElement
+    from update_time.io.log import Logger
 
-_LOG = get_logger("maven central")
-
-_MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
+_LOG: Final[Logger] = get_logger("maven central")
 
 # A row of the listing: a version's directory and its date, in GMT. Matching the date by its shape ensures undated
 # rows, such as the link to the parent directory, are skipped.
-_VERSION_ROW = re.compile(
-    r'<a href="(?P<version>[\w.+-]+)/"[^>]*>[^<]*</a>\s+(?P<published>\d{4}-\d{2}-\d{2} \d{2}:\d{2})'
+_VERSION_ROW: Final[re.Pattern[str]] = re.compile(
+    r"""
+    <a\ href="(?P<version>[\w.+-]+)/"[^>]*>[^<]*</a>  # the link to the version's directory
+    \s+(?P<published>\d{4}-\d{2}-\d{2}\ \d{2}:\d{2})  # its date
+    """,
+    re.VERBOSE,
 )
-_PUBLISHED_FORMAT = "%Y-%m-%d %H:%M"
+_PUBLISHED_FORMAT: Final[str] = "%Y-%m-%d %H:%M"
 
 
 @partial(ProjectGetter, declares_archival=every_project)
 def project(artefact: DependencyName) -> Project:
     """Return the artefact's newest release on Maven Central, with the archival GitHub declares for its source."""
-    return Project(newest=_newest_release(artefact), archival=_archival(artefact))
-
-
-def _archival(artefact: DependencyName) -> Archival | None:
-    """Return what GitHub declares about the artefact's repository, or None where it is not known.
-
-    It is not known where the poms do not name a GitHub repository, and where GitHub can't be asked about the one they
-    name.
-    """
     repository = _repository(artefact).value
-    return None if repository is None else github_archival(repository)
+    return Project(newest=_newest_release(artefact), archival=None if repository is None else archival(repository))
 
 
 def _get_changes(artefact: DependencyName, version: VersionString) -> Changes:
@@ -77,9 +73,9 @@ def _get_changes(artefact: DependencyName, version: VersionString) -> Changes:
 
 
 # The qualifier Maven appends to a version, such as `-jre` or `.Final`, which a repository may leave out of its tags.
-_QUALIFIER = re.compile(r"[.-][A-Za-z].*$")
+_QUALIFIER: Final[re.Pattern[str]] = re.compile(r"[.-][A-Za-z].*$")
 # A Maven project may prefix a version's tag with one of these instead of a `v`, as JUnit tags `r6.1.3`.
-_VERSION_PREFIXES = ("r", "version-", "REL")
+_VERSION_PREFIXES: Final[tuple[str, ...]] = ("r", "version-", "REL")
 
 
 def _spellings(version: VersionString) -> tuple[str, str]:
@@ -92,7 +88,7 @@ def _release_tags(artefact: DependencyName, repository: GitHubRepository, versio
 
     A repository may tag a release by the artifact's name, without its group, or by its own name.
     """
-    _group_id, artifact_id = pom_xml_manifest.coordinates(artefact)
+    _group_id, artifact_id = pom_xml.coordinates(artefact)
     tags = (
         tag
         for spelling in _spellings(version)
@@ -152,37 +148,31 @@ def _parent_pom(pom: XmlElement) -> LookedUp[XmlElement]:
 
     There is none where the pom's `<scm>` names a URL of its own, or where the pom does not name a parent.
     """
-    if pom_xml_manifest.scm_urls(pom):
+    if scm_urls(pom):
         return LookedUp(None, absent=True)
-    parent = pom_xml_manifest.parent(pom)
-    return LookedUp(None, absent=True) if parent is None else LookedUp(_pom(parent.name, parent.version))
+    parent_pom = parent(pom)
+    return LookedUp(None, absent=True) if parent_pom is None else LookedUp(_pom(parent_pom.name, parent_pom.version))
 
 
 def _named_repository(pom: XmlElement, artefact: DependencyName) -> LookedUp[GitHubRepository]:
     """Return the GitHub repository the pom names for the artefact, absent where it names none."""
-    for url in pom_xml_manifest.source_urls(pom, artefact):
-        repository = github_repository(url)
-        if repository is not None and pom_xml_manifest.is_resolved(str(repository)):
+    for url in source_urls(pom, artefact):
+        if (repository := github_repository(url)) is not None and is_resolved(str(repository)):
             return LookedUp(repository)
     return LookedUp(None, absent=True)
-
-
-def _pom_url(artefact: DependencyName, version: VersionString) -> str:
-    """Return the URL of the pom Maven Central serves beside the artefact's version, named after the artifact."""
-    _group_id, artifact_id = pom_xml_manifest.coordinates(artefact)
-    return f"{_artefact_url(artefact)}/{version}/{artifact_id}-{version}.pom"
 
 
 @cache
 def _pom(artefact: DependencyName, version: VersionString) -> XmlElement | None:
     """Return the pom served beside the artefact's version, or None where it is unserved or unparsable."""
-    url = _pom_url(artefact, version)
+    _group_id, artifact_id = pom_xml.coordinates(artefact)
+    url = f"{_artefact_url(artefact)}/{version}/{artifact_id}-{version}.pom"
     response = fetch(url, _LOG)
     if response is None:
         return None
-    pom = xml.parse(response.content)
+    pom = parse(response.content)
     if pom is None:
-        _LOG.invalid_response(url, xml.FORMAT)
+        _LOG.invalid_response(url, FORMAT)
     return pom
 
 
@@ -220,8 +210,8 @@ def _artefact_url(artefact: DependencyName) -> str:
 
     Maven names an artefact `groupId:artifactId`, and serves it under the group's dots spelled as directories.
     """
-    group_id, artifact_id = pom_xml_manifest.coordinates(artefact)
-    return f"{_MAVEN_CENTRAL}/{group_id.replace('.', '/')}/{artifact_id}"
+    group_id, artifact_id = coordinates(artefact)
+    return f"https://repo1.maven.org/maven2/{group_id.replace('.', '/')}/{artifact_id}"
 
 
 def serves(artefact: DependencyName) -> bool:

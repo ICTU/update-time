@@ -1,5 +1,6 @@
 """Unit tests for the jsdelivr CDN URLs update script."""
 
+from typing import Final
 from unittest.mock import ANY, Mock, patch
 
 from mutation_time.mutation import kills
@@ -9,34 +10,25 @@ from update_time.domain.directive import Reason
 from update_time.domain.marker import Scope
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
-from update_time.references import resolve
-from update_time.sources import jsdelivr
+from update_time.references.resolve import _archival_alone
+from update_time.sources.jsdelivr import version_getter
 from update_time.updaters.update_jsdelivr import _update_jsdelivrs
 
-from tests.helpers import mock_path, mock_response
+from tests.file_mocks import mock_path
+from tests.http_mocks import mock_response, patch_get
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.domain_objects import days_ago
 from tests.update_time.fixtures import FRESH_DATE, HASH1, HASH2, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, days_ago
-from tests.update_time.sources.helpers import jsdelivr_versions, npm_registry
-from tests.update_time.updaters.helpers import no_vulnerabilities, osv, osv_vulnerability
-
-_FILENAME = "/dist/clipboard.min.js"
-
-
-def _served(*hashes: str) -> Mock:
-    """Return the flat package listing the jsDelivr API returns with ?structure=flat, serving the file's hash.
-
-    Passing no hash models a listing that doesn't mention the referenced file at all, so no hash can be resolved.
-    """
-    return mock_response({"default": _FILENAME, "files": [{"name": _FILENAME, "hash": served} for served in hashes]})
-
+from tests.update_time.sources.npm_answers import jsdelivr_versions, npm_registry
+from tests.update_time.sources.osv_answers import no_vulnerabilities, osv, osv_vulnerability
 
 # This npm publication date is a day older than the default cooldown. It counts back from now, so the clock decides
 # nothing.
-_ELIGIBLE = days_ago(COOLDOWN.default + 1).isoformat()
+_ELIGIBLE: Final[str] = days_ago(COOLDOWN.default + 1).isoformat()
 
 # The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
-_DEPRECATION_REASON = "use 3.0 instead"
-_DEPRECATED = Yank(yanked=True, reason=_DEPRECATION_REASON)
+_DEPRECATION_REASON: Final[str] = "use 3.0 instead"
+_DEPRECATED: Final[Yank] = Yank(yanked=True, reason=_DEPRECATION_REASON)
 
 # An advisory affecting the URL's version, for the tests that need OSV to report one, and what it is read as.
 _ADVISORY, _VULNERABILITY = osv_vulnerability("GHSA-1111-1111-1111", "Cross-site scripting in clipboard", "moderate")
@@ -44,36 +36,42 @@ _ADVISORY, _VULNERABILITY = osv_vulnerability("GHSA-1111-1111-1111", "Cross-site
 
 # The lines a jsDelivr reference is declared with, formatted as Ruff would format them: the URL, and below it the
 # attribute dictionary, either declaring the Subresource Integrity hash or, unpinned, declaring none.
-_URL = '"https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js",'
-_INTEGRITY = f'{{"integrity": "sha256-{HASH1}", "crossorigin": "anonymous"}},'
-_NO_INTEGRITY = '{"crossorigin": "anonymous"},'
+_URL: Final[str] = '"https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js",'
+_INTEGRITY: Final[str] = f'{{"integrity": "sha256-{HASH1}", "crossorigin": "anonymous"}},'
+_NO_INTEGRITY: Final[str] = '{"crossorigin": "anonymous"},'
 
 
 def _entry(*lines: str) -> str:
     """Return an `html_js_files` entry declaring the given lines as a tuple, as Ruff would format it."""
-    return "(\n" + "".join(f"        {line}\n" for line in lines) + "    ),"
+    return f"(\n{''.join(f'        {line}\n' for line in lines)}    ),"
 
 
 def _conf(*entries: str) -> str:
     """Return the relevant part of a Sphinx config declaring the given entries, plus an unrelated one."""
-    return "html_js_files = [\n" + "".join(f"    {declared}\n" for declared in entries) + '    "copy_button.js",\n]\n'
+    return f'html_js_files = [\n{"".join(f"    {declared}\n" for declared in entries)}    "copy_button.js",\n]\n'
 
 
-_CONF = _conf(_entry(_URL, _INTEGRITY))
+_CONF: Final[str] = _conf(_entry(_URL, _INTEGRITY))
 
 
-@no_vulnerabilities
+@no_vulnerabilities()
 @patch("pathlib.Path.rglob")
-@patch("requests.Session.get")
+@patch_get()
 class UpdateJsdelivrsTest(LoggingTestCase):
     """Unit tests for updating the version and integrity hash in the Sphinx configs found under docs/."""
 
-    def update(self, content: str, mock_glob: Mock) -> Mock:
-        """Update the jsDelivr URLs in a Sphinx config with the given content, and return its mocked path."""
-        mock_conf = mock_path(content)
-        mock_glob.return_value = [mock_conf]
-        _update_jsdelivrs()
-        return mock_conf
+    def test_new_version_and_hash_reported_at_the_url_line(self, mock_get: Mock, mock_glob: Mock):
+        """Test that the version and the integrity hash are updated on a bump, and reported at the URL's line."""
+        self.offer_versions(mock_get, "2.0.12", "2.0.11")
+        mock_conf = self.update(_CONF, mock_glob)
+        new_content = self.written(mock_conf)
+        self.assert_path_logged(mock_conf)
+        self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
+        self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
+        self.assertNotIn("2.0.11", new_content)
+        self.assertNotIn(HASH1, new_content)
+        self.assert_new_version_logged("clipboard", ANY, Location(mock_conf, 3), Logger._NO_CHANGELOG)
+        self.assert_no_warnings_logged()
 
     @staticmethod
     def offer_versions(
@@ -95,29 +93,22 @@ class UpdateJsdelivrsTest(LoggingTestCase):
             _served(served_hash),
         ]
 
+    def update(self, content: str, mock_glob: Mock) -> Mock:
+        """Update the jsDelivr URLs in a Sphinx config with the given content, and return its mocked path."""
+        mock_conf = mock_path(content)
+        mock_glob.return_value = [mock_conf]
+        _update_jsdelivrs()
+        return mock_conf
+
     @staticmethod
     def written(mock_conf: Mock) -> str:
         """Return the content the updater wrote back to the Sphinx config."""
         return mock_conf.write_text.call_args.args[0]
 
-    def test_new_version_and_hash_reported_at_the_url_line(self, mock_get: Mock, mock_glob: Mock):
-        """Test that the version and the integrity hash are updated on a bump, and reported at the URL's line."""
-        self.offer_versions(mock_get, "2.0.12", "2.0.11")
-        mock_conf = self.update(_CONF, mock_glob)
-        new_content = self.written(mock_conf)
-        self.assert_path_logged(mock_conf)
-        self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
-        self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
-        self.assertNotIn("2.0.11", new_content)
-        self.assertNotIn(HASH1, new_content)
-        self.assert_new_version_logged("clipboard", ANY, Location(mock_conf, 3), Logger._NO_CHANGELOG)
-        self.assert_no_warnings_logged()
-
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_get: Mock, mock_glob: Mock):
         """Test that a `cooldown` marker on a URL holds something back, since npm dates its versions."""
         self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
-        marked_url = f"{_URL}  # update-time: set[cooldown=30]"
-        mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
+        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: set[cooldown=30]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
 
@@ -135,8 +126,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_hash_drift_marker_is_reported_as_redundant(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `allow[hash-drift]` on a URL is reported as redundant."""
         self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
-        marked_url = f"{_URL}  # update-time: allow[hash-drift]"
-        mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
+        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: allow[hash-drift]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_redundant_directive_logged(
             Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED, "clipboard", Location(mock_conf, 3), "allow[hash-drift]"
@@ -174,8 +164,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_unresolvable_hash_is_not_a_mismatch(self, mock_get: Mock, mock_glob: Mock):
         """Test that a file jsDelivr doesn't list leaves nothing to compare, so no mismatch is reported."""
         mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": _ELIGIBLE}), _served()]
-        mock_conf = self.update(_CONF, mock_glob)
-        mock_conf.write_text.assert_not_called()
+        self.update(_CONF, mock_glob).write_text.assert_not_called()
         self.assert_no_warnings_logged()
 
     def test_url_without_an_integrity_hash_is_pinned(self, mock_get: Mock, mock_glob: Mock):
@@ -220,27 +209,25 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_bare_url_does_not_pin_the_entry_below_it(self, mock_get: Mock, mock_glob: Mock):
         """Test that a bare URL's hash is not written into the next entry's dictionary when that entry is held back."""
         self.offer_versions(mock_get, "2.0.11")
-        held_back = _entry(f"{_URL}  # update-time: ignore[update]", _NO_INTEGRITY)
-        mock_conf = self.update(_conf(_URL, held_back), mock_glob)
+        mock_conf = self.update(_conf(_URL, _entry(f"{_URL}  # update-time: ignore[update]", _NO_INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_cannot_pin_logged("clipboard", Location(mock_conf, 2))
         self.assert_ignored_logged("clipboard", Location(mock_conf, 4))
 
     def test_stale_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr package whose newest release is old is warned about, without rewriting the URL."""
-        old = STALE_DATE.isoformat()
-        self.offer_versions(mock_get, "2.0.11", published=old, served_hash=HASH1)
+        self.offer_versions(mock_get, "2.0.11", published=STALE_DATE.isoformat(), served_hash=HASH1)
         mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3))
 
     @kills.delete(
-        jsdelivr.version_getter,
+        version_getter,
         ", unserved=Unserved.VERSION",
         "a URL whose version is not PEP 440 is looked up at the npm registry and checked for staleness",
     )
     @kills.force_false(
-        resolve._archival_alone,
+        _archival_alone,
         "not get_project.declares_archival(dependency)",
         "a URL whose version is not PEP 440 is looked up at the npm registry, although npm does not archive",
     )
@@ -248,8 +235,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         """Test that a URL on a version such as `1.` is left alone, and the npm registry is not asked about it."""
         stale = npm_registry({"1.0": STALE_DATE.isoformat()})
         mock_get.side_effect = lambda url, **_options: stale if "registry.npmjs.org" in url else _served(HASH1)
-        mock_conf = self.update(_conf(_entry(_URL.replace("2.0.11", "1."), _INTEGRITY)), mock_glob)
-        mock_conf.write_text.assert_not_called()
+        self.update(_conf(_entry(_URL.replace("2.0.11", "1."), _INTEGRITY)), mock_glob).write_text.assert_not_called()
         requested = [request.args[0] for request in mock_get.call_args_list]
         self.assertNotEqual(requested, [])  # The hash check asks jsDelivr, so the assertion below examines a request.
         self.assertEqual([url for url in requested if "registry.npmjs.org" in url], [])
@@ -318,8 +304,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_stale_after_zero_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
         """Test that a `set[stale-after=0]` marker on the URL's line silences the warning, but not the update."""
-        old = STALE_DATE.isoformat()
-        self.offer_versions(mock_get, "2.0.12", "2.0.11", published=old)
+        self.offer_versions(mock_get, "2.0.12", "2.0.11", published=STALE_DATE.isoformat())
         mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: set[stale-after=0]", _INTEGRITY)), mock_glob)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))
         self.assert_no_warnings_logged()
@@ -344,3 +329,12 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_ignored_vulnerability_logged(
             "clipboard", Location(mock_conf, 3), _VULNERABILITY.advisory, "set[vulnerability-level=none]"
         )
+
+
+def _served(*hashes: str) -> Mock:
+    """Return the flat package listing the jsDelivr API returns with ?structure=flat, serving the file's hash.
+
+    Passing no hash models a listing that doesn't mention the referenced file at all, so no hash can be resolved.
+    """
+    filename = "/dist/clipboard.min.js"
+    return mock_response({"default": filename, "files": [{"name": filename, "hash": served} for served in hashes]})

@@ -3,39 +3,44 @@
 import os
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from update_time.formats import toml
+from update_time.formats.toml import load
 from update_time.io.log import FileContent, get_logger
-from update_time.lock_files import bun_lock
+from update_time.lock_files.bun_lock import locked_versions
 from update_time.manifests.package_json import PackageJson
-from update_time.package_managers.node.package_manager import (
+from update_time.primitives.command import Command
+from update_time.primitives.timestamp import SECONDS_PER_DAY
+
+from .package_manager import (
     CooldownArguments,
+    ManagerCooldown,
     PackageManager,
     catalogs_of,
     package_json_workspace_root,
 )
-from update_time.primitives.command import Command
-from update_time.primitives.timestamp import SECONDS_PER_DAY
 
 if TYPE_CHECKING:
+    from update_time.io.log import Logger
     from update_time.lock_files.locked_versions import LockedVersions
 
 
-_LOG = get_logger("package.json")
-_BUN_LOCK = "bun.lock"  # The lock bun writes as text, which Update-time reads
-_BUN_BINARY_LOCK = "bun.lockb"  # The lock bun wrote before version 1.2, and still writes where a project asks for it
+_LOG: Final[Logger] = get_logger("package.json")
+_BUN_LOCK: Final[str] = "bun.lock"  # The lock bun writes as text, which Update-time reads
+_BUN_BINARY_LOCK: Final[str] = (
+    "bun.lockb"  # The lock bun wrote before version 1.2, and still writes where a project asks for it
+)
 # The setting under `[install]` in a bunfig.toml that holds bun's cooldown.
-_BUNFIG_COOLDOWN = "minimumReleaseAge"
+_BUNFIG_COOLDOWN: Final[str] = "minimumReleaseAge"
 # Why a bunfig.toml whose `install` is not a table cannot be read for the cooldown it sets.
-_INSTALL_NOT_A_TABLE = "its install is not a table"
+_INSTALL_NOT_A_TABLE: Final[str] = "its install is not a table"
 
 
 def _bun_locked_versions(directory: Path) -> LockedVersions:
     """Return the top-level versions that the bun.lock in the directory records, or warn why it can't."""
     lock = directory / _BUN_LOCK
     try:
-        return bun_lock.locked_versions(lock)
+        return locked_versions(lock)
     except (OSError, ValueError) as error:
         _LOG.unreadable_file(lock, error, FileContent.LOCKED_VERSIONS)
         return {}
@@ -58,14 +63,13 @@ def _global_bunfig_sets_a_cooldown() -> bool:
     bun reads it in XDG_CONFIG_HOME where that holds an absolute path, and in the home directory otherwise.
     """
     xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME", ""))
-    global_directory = xdg_config_home if xdg_config_home.is_absolute() else Path.home()
-    return _bunfig_sets_a_cooldown(global_directory / ".bunfig.toml")
+    return _bunfig_sets_a_cooldown((xdg_config_home if xdg_config_home.is_absolute() else Path.home()) / ".bunfig.toml")
 
 
 def _bunfig_sets_a_cooldown(bunfig: Path) -> bool:
     """Return whether the bunfig.toml sets a cooldown, warning where it exists and cannot be read."""
     try:
-        install = toml.load(bunfig).get("install", {})
+        install = load(bunfig).get("install", {})
     except FileNotFoundError:
         return False
     except (OSError, ValueError) as error:
@@ -77,7 +81,7 @@ def _bunfig_sets_a_cooldown(bunfig: Path) -> bool:
     return _BUNFIG_COOLDOWN in install
 
 
-BUN = PackageManager(
+BUN: Final[PackageManager] = PackageManager(
     name="bun",
     # `-r` updates every workspace, from the root and from a member alike, as `npm update` does. Deliberately without
     # `--latest`, which would cross the version ranges declared in package.json.
@@ -87,8 +91,10 @@ BUN = PackageManager(
     lock_files=(_BUN_LOCK,),
     binary_lock=_BUN_BINARY_LOCK,
     workspace_file=None,
-    cooldown_setting=_bun_cooldown_setting,
-    cooldown_arguments=lambda days: CooldownArguments((f"--minimum-release-age={days * SECONDS_PER_DAY}",)),
+    cooldown=ManagerCooldown(
+        setting=_bun_cooldown_setting,
+        arguments=lambda days: CooldownArguments((f"--minimum-release-age={days * SECONDS_PER_DAY}",)),
+    ),
     locked_versions=_bun_locked_versions,
     catalogs=lambda root: catalogs_of(PackageJson.readable(root / "package.json")),
 )

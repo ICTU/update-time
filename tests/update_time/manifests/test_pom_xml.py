@@ -1,16 +1,29 @@
 """Unit tests for reading a pom.xml, with file I/O mocked."""
 
 import unittest
+from typing import Final
 
 from mutation_time.mutation import kills
 from update_time.domain.marker import Marker, Threshold
-from update_time.formats import xml
-from update_time.manifests import pom_xml
+from update_time.formats.xml import parse
+from update_time.manifests.pom_xml import (
+    _artefact_declarations,
+    _declaration,
+    _effective_artefacts,
+    _own_versions,
+    _resolvable_elements,
+    _version_as_left,
+    declarations,
+    pom_name,
+    versioned_declarations,
+)
+from update_time.manifests.pom_xml import properties as pom_properties
 
-from tests.helpers import mock_path
-from tests.update_time.helpers import GUAVA, properties_element
-from tests.update_time.manifests.helpers import (
+from tests.file_mocks import mock_path
+
+from .manifest_contents import (
     EFFECTIVE_GUAVA,
+    GUAVA,
     PARENT_POM_ID,
     SCANNED_POM_COORDINATES,
     SCANNED_POM_ID,
@@ -26,9 +39,10 @@ from tests.update_time.manifests.helpers import (
     plugin_element,
     pom_coordinates,
     pom_declaring,
+    properties_element,
 )
 
-_POM_WITH_A_PROFILE = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+_POM_WITH_A_PROFILE: Final[str] = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <properties>
     <spring.version>6.1.0</spring.version>
   </properties>
@@ -50,7 +64,7 @@ _POM_WITH_A_PROFILE = """<project xmlns="http://maven.apache.org/POM/4.0.0">
 """
 
 
-_POM_WITH_A_PROFILE_ONLY_PROPERTY = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+_POM_WITH_A_PROFILE_ONLY_PROPERTY: Final[str] = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <profiles>
     <profile>
       <properties>
@@ -70,7 +84,7 @@ _POM_WITH_A_PROFILE_ONLY_PROPERTY = """<project xmlns="http://maven.apache.org/P
 """
 
 
-_POM_NAMING_ITS_OWN_GROUP = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+_POM_NAMING_ITS_OWN_GROUP: Final[str] = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <groupId>com.acme</groupId>
   <artifactId>parent</artifactId>
   <version>1.0.0</version>
@@ -85,7 +99,7 @@ _POM_NAMING_ITS_OWN_GROUP = """<project xmlns="http://maven.apache.org/POM/4.0.0
 """
 
 
-_POM_WITH_INCOMPLETE_DEPENDENCIES = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+_POM_WITH_INCOMPLETE_DEPENDENCIES: Final[str] = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <dependencies>
     <dependency>
       <artifactId>spring-core</artifactId>
@@ -118,40 +132,40 @@ class PropertiesTest(unittest.TestCase):
 
     def test_a_pom_that_does_not_parse(self):
         """Test that a pom whose XML does not parse declares no property, rather than ending the run."""
-        self.assertEqual(pom_xml.properties(mock_path("<project><broken>")), {})
+        self.assertEqual(pom_properties(mock_path("<project><broken>")), {})
 
 
 class VersionedDeclarationsTest(unittest.TestCase):
     """Unit tests for the declarations of the dependencies and plugins a pom declares a version for."""
 
     @kills.delete(
-        pom_xml._artefact_declarations,
+        _artefact_declarations,
         " or []",
         "an unparsable pom takes the reading of its artefacts down with it",
         raises="TypeError: 'NoneType' object is not iterable",
     )
     def test_a_pom_that_does_not_parse(self):
         """Test that an unparsable pom yields an empty list of declarations, rather than ending the run."""
-        self.assertEqual(pom_xml.versioned_declarations(mock_path("<project><broken>")), [])
+        self.assertEqual(versioned_declarations(mock_path("<project><broken>")), [])
 
 
 class PomNameTest(unittest.TestCase):
     """Unit tests for the name Maven's input locations give a pom."""
 
     @kills.delete(
-        pom_xml.pom_name,
+        pom_name,
         ' or project.child("artifactId") is None',
         "a pom without an artifact of its own is named after its parent, so its parent's versions are skipped",
         case="no artifact",
     )
     @kills.delete(
-        pom_xml.pom_name,
+        pom_name,
         ' if all(parts) else ""',
         "a pom lacking both a coordinate and a parent to take it from is named anyway",
         case="no version to inherit",
     )
     @kills.replace(
-        pom_xml.pom_name,
+        pom_name,
         "_coordinate(parent_element, tag)",
         '_coordinate(parent_element, "version")',
         "a pom that leaves its group to its parent is named without one, so its versions are skipped",
@@ -166,39 +180,38 @@ class PomNameTest(unittest.TestCase):
         }
         for case, (coordinates, name) in cases.items():
             with self.subTest(case=case):
-                self.assertEqual(pom_xml.pom_name(mock_path(pom_declaring(coordinates=coordinates))), name)
+                self.assertEqual(pom_name(mock_path(pom_declaring(coordinates=coordinates))), name)
 
     def test_a_pom_that_does_not_parse(self):
         """Test that a pom whose XML does not parse goes unnamed, rather than ending the run."""
-        self.assertEqual(pom_xml.pom_name(mock_path("<project><broken>")), "")
+        self.assertEqual(pom_name(mock_path("<project><broken>")), "")
 
 
 class DeclarationsTest(unittest.TestCase):
     """Unit tests for the dependencies and plugins a pom declares."""
 
     @kills.delete(
-        pom_xml._declaration,
+        _declaration,
         "    if artifact is None:\n        return None\n",
         "an element missing a part takes the whole pom's reading down with it",
         raises="AttributeError: 'NoneType' object has no attribute 'text'",
     )
     @kills.delete(
-        pom_xml._declaration,
+        _declaration,
         " or not artifact_name",
         "an empty artifact is read as the artefact `groupId:`, which Maven Central is then asked about",
     )
     def test_a_dependency_is_read_unless_it_misses_its_group_or_artifact(self):
         """Test that a dependency missing its group or artifact is left out, and one missing its version is read."""
-        declared = pom_xml.declarations(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
-        expected = ["org.springframework:spring-web", GUAVA]
-        self.assertEqual([reference.dependency for reference in declared], expected)
+        declared = declarations(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
+        self.assertEqual([reference.dependency for reference in declared], ["org.springframework:spring-web", GUAVA])
 
     def test_a_marker_on_the_line_above_a_declaration_is_not_read(self):
         """Test that a marker on the line above a dependency's `<version>` line steers nothing."""
         marked_above = guava_element("33.0.0-jre").replace(
             "<version>", "<!-- update-time: set[stale-after=0] -->\n<version>"
         )
-        declared = pom_xml.declarations(mock_path(pom_declaring(marked_above))) or []
+        declared = declarations(mock_path(pom_declaring(marked_above))) or []
         self.assertEqual([(reference.dependency, reference.marker) for reference in declared], [(GUAVA, Marker())])
 
     def test_a_marker_is_read_off_the_line_xml_counts(self):
@@ -214,7 +227,7 @@ class DeclarationsTest(unittest.TestCase):
         stale = Marker(stale=Threshold(value=0))
         for case, contents in cases.items():
             with self.subTest(case=case):
-                declared = pom_xml.declarations(mock_path(contents)) or []
+                declared = declarations(mock_path(contents)) or []
                 self.assertEqual([(reference.dependency, reference.marker) for reference in declared], [(GUAVA, stale)])
 
     def test_the_pom_is_read_once(self):
@@ -222,39 +235,38 @@ class DeclarationsTest(unittest.TestCase):
         pom = pom_declaring(guava_element("33.0.0-jre"))
         path = mock_path(pom)
         path.read_bytes.side_effect = [pom.encode(), OSError("removed")]
-        declared = pom_xml.declarations(path) or []
+        declared = declarations(path) or []
         self.assertEqual([reference.dependency for reference in declared], [GUAVA])
 
     def test_a_pom_in_an_encoding_other_than_utf8_is_read(self):
         """Test that a pom whose XML declares another encoding than UTF-8 has its dependencies read."""
-        pom = '<?xml version="1.0" encoding="ISO-8859-1"?>\n<!-- Café -->\n' + pom_declaring(
-            guava_element("33.0.0-jre")
+        pom = (
+            f'<?xml version="1.0" encoding="ISO-8859-1"?>\n<!-- Café -->\n{pom_declaring(guava_element("33.0.0-jre"))}'
         )
         path = mock_path(pom)
         path.read_bytes.return_value = pom.encode("iso-8859-1")
         # Reading the file as UTF-8 text fails on the é, as it does for the real file.
         path.read_text.side_effect = UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid continuation byte")
-        declared = pom_xml.declarations(path) or []
+        declared = declarations(path) or []
         self.assertEqual([reference.dependency for reference in declared], [GUAVA])
 
     @kills.replace(
-        pom_xml._declaration,
+        _declaration,
         "_interpolated(artifact.text, property_elements)",
         "_element_holding(artifact, property_elements).text",
         "an artifact naming a property in part is read with its `${…}` left unresolved",
         case="part of an artifact",
     )
     @kills.replace(
-        pom_xml._declaration,
+        _declaration,
         "_interpolated(group.text, property_elements)",
         "_element_holding(group, property_elements).text",
         "a group naming a property in part is read with its `${…}` left unresolved",
         case="part of a group",
     )
-    @kills.replace(
-        pom_xml._resolvable_elements,
-        "_property_elements(project) | _own_coordinates(project)",
-        "_property_elements(project)",
+    @kills.delete(
+        _resolvable_elements,
+        " | own_coordinates",
         "a dependency on a sibling module, named through `${project.groupId}`, is read with its `${…}` left unresolved",
         case="the project's own group",
     )
@@ -276,11 +288,11 @@ class DeclarationsTest(unittest.TestCase):
         }
         for case, (pom, expected) in cases.items():
             with self.subTest(case=case):
-                declared = pom_xml.declarations(mock_path(pom)) or []
+                declared = declarations(mock_path(pom)) or []
                 self.assertEqual([reference.dependency for reference in declared], [expected])
 
     @kills.replace(
-        pom_xml._declaration,
+        _declaration,
         "_interpolated(version.text, property_elements)",
         "versioned_by.text",
         "a version naming a property in part is read with its `${…}` left unresolved",
@@ -289,35 +301,29 @@ class DeclarationsTest(unittest.TestCase):
         """Test that a version naming a pom property in part reads as that property's value, at its own element."""
         spring = dependency_element("org.springframework", "spring-core", "${spring.major}.1.0")
         pom = pom_declaring(spring, properties=properties_element({"spring.major": "6"}))
-        declared = pom_xml.declarations(mock_path(pom)) or []
+        declared = declarations(mock_path(pom)) or []
         versions = [(reference.current_version, reference.location.line_number) for reference in declared]
         self.assertEqual(versions, [("6.1.0", 9)])
 
     def test_a_dependency_resolves_a_property_its_own_profile_declares(self):
         """Test that a dependency in a profile resolves the property it names, among the several that profile holds."""
-        declared = pom_xml.declarations(mock_path(_POM_WITH_A_PROFILE_ONLY_PROPERTY)) or []
+        declared = declarations(mock_path(_POM_WITH_A_PROFILE_ONLY_PROPERTY)) or []
         versions = [(reference.current_version, reference.location.line_number) for reference in declared]
         self.assertEqual(versions, [("3.0", 6)])
 
     def test_a_property_a_profile_declares_does_not_override_the_projects_own(self):
         """Test that a dependency resolves to the project's own property, whatever value a profile gives that name."""
-        declared = pom_xml.declarations(mock_path(_POM_WITH_A_PROFILE)) or []
+        declared = declarations(mock_path(_POM_WITH_A_PROFILE)) or []
         versions = [(reference.current_version, reference.location.line_number) for reference in declared]
         self.assertEqual(versions, [("6.1.0", 3)])
-
-
-def _resolved(pom: str, effective_pom: str) -> list[tuple[str, str, int | None]]:
-    """Return the name, the resolved version, and the line of each artefact that reading the pom returns."""
-    declared = pom_xml.declarations(mock_path(pom), xml.parse(effective_pom.encode())) or []
-    return [(reference.dependency, reference.current_version, reference.location.line_number) for reference in declared]
 
 
 class ResolvedDependenciesTest(unittest.TestCase):
     """Unit tests for the coordinates and the versions Maven's effective pom gives the artefacts a pom declares."""
 
     @kills.delete(
-        pom_xml._effective_artefacts,
-        "artifact_location.pom_name != effective_pom_name or ",
+        _effective_artefacts,
+        "_input_location(artifact).pom_name != effective_pom_name or ",
         "a dependency takes the version of whatever the parent declares on the same line of its own pom",
     )
     def test_an_entry_the_parent_declares_lends_its_version_to_no_declaration(self):
@@ -336,15 +342,14 @@ class ResolvedDependenciesTest(unittest.TestCase):
         managed_guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=6)
         guava = effective_dependency_element(GUAVA, "32.1.0-jre", line=14)
         effective_pom = effective_pom_declaring(guava, managed=dependency_management_element(managed_guava))
-        expected = [(GUAVA, "33.0.0-jre", 7), (GUAVA, "32.1.0-jre", 15)]
-        self.assertEqual(_resolved(pom, effective_pom), expected)
+        self.assertEqual(_resolved(pom, effective_pom), [(GUAVA, "33.0.0-jre", 7), (GUAVA, "32.1.0-jre", 15)])
 
     def test_dependencies_declared_on_one_line_each_take_their_own_version(self):
         """Test that two dependencies on one line each take the version the effective pom gives that artefact."""
         one_line = dependency_element("commons-io", "commons-io", "${commons.version}") + dependency_element(
             "junit", "junit", "4.12"
         )
-        pom = pom_declaring(one_line.replace("\n", "").replace("  ", "") + "\n")
+        pom = pom_declaring(f"{one_line.replace('\n', '').replace('  ', '')}\n")
         # Maven's input location names the line and does not name the column, so both entries are located on line 3.
         commons_io = effective_dependency_element("commons-io:commons-io", "2.11.0", line=3)
         junit = effective_dependency_element("junit:junit", "4.12", line=3)
@@ -360,7 +365,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
         self.assertEqual(_resolved(pom, effective_pom_declaring(spark, properties=properties)), expected)
 
     @kills.delete(
-        pom_xml._effective_artefacts,
+        _effective_artefacts,
         " if version_location.pom_name == effective_pom_name else None",
         "a line of the pom lends its version to a dependency the parent versions, as their line numbers match",
     )
@@ -374,14 +379,14 @@ class ResolvedDependenciesTest(unittest.TestCase):
         self.assertEqual(_resolved(pom, effective_pom_declaring(guava, second_guava)), expected)
 
     @kills.replace(
-        pom_xml._effective_artefacts,
+        _effective_artefacts,
         "_own_versions(project, effective_property_elements)",
         "_own_versions(project, property_elements)",
         "a managed artifact naming the parent's property keeps the version Maven moved away from",
         case="a parent's artifact",
     )
     @kills.replace(
-        pom_xml._own_versions,
+        _own_versions,
         "_interpolated(artifact.text, property_elements)",
         "_element_holding(artifact, property_elements).text",
         "a managed artifact holding a parent's property inside its name keeps the version Maven moved away from",
@@ -432,11 +437,10 @@ class ResolvedDependenciesTest(unittest.TestCase):
         for case, (build, effective_build, expected) in cases.items():
             with self.subTest(case=case):
                 pom = pom_declaring(properties=properties, build=build)
-                effective_pom = effective_pom_declaring(build=effective_build)
-                self.assertEqual(_resolved(pom, effective_pom), expected)
+                self.assertEqual(_resolved(pom, effective_pom_declaring(build=effective_build)), expected)
 
     @kills.replace(
-        pom_xml._version_as_left,
+        _version_as_left,
         "_interpolated(own_element.text, property_elements)",
         "_element_holding(own_element, property_elements).text",
         "Update-time checks the version Maven moved away from, where the managed version names a property in part",
@@ -451,7 +455,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
         self.assertEqual(_resolved(pom, effective_pom), [(GUAVA, "33.7.1-jre", 10), (GUAVA, "33.7.1-jre", 15)])
 
     @kills.replace(
-        pom_xml._effective_artefacts,
+        _effective_artefacts,
         "own_versions.get(artifact_at_version_line) if",
         "{key.line: element for key, element in own_versions.items()}.get(version_location.line) if",
         "a dependency takes the version of whichever dependency its own pom manages last on the same line",
@@ -459,7 +463,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
     def test_a_version_the_pom_manages_on_a_shared_line_is_read_from_its_own_declaration(self):
         """Test that a dependency without a version takes its own managed version, not another on the same line."""
         one_line = guava_element("33.7.1-jre") + dependency_element("junit", "junit", "4.13.2")
-        managed = dependency_management_element(one_line.replace("\n", "").replace("  ", "") + "\n")
+        managed = dependency_management_element(f"{one_line.replace('\n', '').replace('  ', '')}\n")
         pom = pom_declaring(guava_element(None), managed=managed)
         # Maven locates each `<version>` on the shared line 4, and does not name a column to tell them apart.
         managed_at = (SCANNED_POM_ID, 4)
@@ -484,3 +488,9 @@ class ResolvedDependenciesTest(unittest.TestCase):
         )
         pom = pom_declaring(guava_element("${guava.version}"))
         self.assertEqual(_resolved(pom, effective_pom_declaring(guava, unlocated)), [(GUAVA, "33.0.0-jre", 6)])
+
+
+def _resolved(pom: str, effective_pom: str) -> list[tuple[str, str, int | None]]:
+    """Return the name, the resolved version, and the line of each artefact that reading the pom returns."""
+    declared = declarations(mock_path(pom), parse(effective_pom.encode())) or []
+    return [(reference.dependency, reference.current_version, reference.location.line_number) for reference in declared]

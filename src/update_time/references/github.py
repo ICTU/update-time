@@ -17,12 +17,6 @@ from update_time.markers.report import warn_if_the_bound_is_redundant, warn_if_t
 from update_time.primitives.digest import COMMIT_SHA, SHORT_COMMIT_SHA
 from update_time.primitives.lookup import DeferredLookup
 from update_time.primitives.text import replace_match
-from update_time.references.drift import adopts_drift
-from update_time.references.resolve import (
-    latest_version,
-    report_directives_the_source_cannot_apply,
-    report_project_checks,
-)
 from update_time.sources.github import (
     commit_date,
     full_sha,
@@ -35,6 +29,13 @@ from update_time.sources.github import (
     version_at_tag,
 )
 
+from .drift import adopts_drift
+from .resolve import (
+    latest_version,
+    report_directives_the_source_cannot_apply,
+    report_project_checks,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
@@ -43,6 +44,16 @@ if TYPE_CHECKING:
     from update_time.domain.vulnerability import Ecosystem
     from update_time.io.log import Logger
     from update_time.primitives.lookup import LookedUp, Lookup
+
+
+def names_a_version(reference: Reference) -> bool:
+    """Return whether the reference names a version, rather than a branch, a tag such as `stable-2024`, or a commit."""
+    return _reads_as_a_version(reference, _commit_sha(reference))
+
+
+def _reads_as_a_version(reference: Reference, commit_sha: _CommitSha) -> bool:
+    """Return whether the reference names a version: one that parses, and that is not an abbreviated commit SHA."""
+    return is_valid(reference.current_version) and commit_sha is not _CommitSha.SHORT
 
 
 class _CommitSha(Enum):
@@ -58,6 +69,20 @@ class _CommitSha(Enum):
         return self is not _CommitSha.NONE
 
 
+def _commit_sha(reference: Reference) -> _CommitSha:
+    """Return how the reference names a commit."""
+    if _names_a_full_sha(reference):
+        return _CommitSha.FULL
+    if _names_a_short_sha(reference):
+        return _CommitSha.SHORT
+    return _CommitSha.NONE
+
+
+def _names_a_full_sha(reference: Reference) -> bool:
+    """Return whether the reference names a commit by its full SHA alone, without a comment naming a version or ref."""
+    return re.fullmatch(COMMIT_SHA, reference.current_version) is not None
+
+
 def _names_a_short_sha(reference: Reference) -> bool:
     """Return whether the reference names an abbreviated commit SHA, which can parse as a version, rather than a tag."""
     ref = reference.current_version
@@ -69,41 +94,6 @@ def _names_a_short_sha(reference: Reference) -> bool:
     return sha is None or sha.startswith(ref)
 
 
-def _names_a_full_sha(reference: Reference) -> bool:
-    """Return whether the reference names a commit by its full SHA alone, without a comment naming a version or ref."""
-    return re.fullmatch(COMMIT_SHA, reference.current_version) is not None
-
-
-def _commit_sha(reference: Reference) -> _CommitSha:
-    """Return how the reference names a commit."""
-    if _names_a_full_sha(reference):
-        return _CommitSha.FULL
-    if _names_a_short_sha(reference):
-        return _CommitSha.SHORT
-    return _CommitSha.NONE
-
-
-def _reads_as_a_version(reference: Reference, commit_sha: _CommitSha) -> bool:
-    """Return whether the reference names a version: one that parses, and that is not an abbreviated commit SHA."""
-    return is_valid(reference.current_version) and commit_sha is not _CommitSha.SHORT
-
-
-def names_a_version(reference: Reference) -> bool:
-    """Return whether the reference names a version, rather than a branch, a tag such as `stable-2024`, or a commit."""
-    return _reads_as_a_version(reference, _commit_sha(reference))
-
-
-def _ref_kind(reference: Reference) -> RefKind:
-    """Return the kind of ref the reference names: a listed tag, a branch, or a ref when the tags can't be listed."""
-    match is_tag(reference.dependency, reference.current_version):
-        case None:
-            return RefKind.REF
-        case True:
-            return RefKind.TAG
-        case _:
-            return RefKind.BRANCH
-
-
 @dataclass(frozen=True)
 class PinUpdater:
     """Decide what one kind of GitHub reference is pinned to, as its marker steers, and spell the pin on its line."""
@@ -111,16 +101,6 @@ class PinUpdater:
     spell: Callable[[Reference, str, str], str]  # The reference, the commit SHA, and the comment naming it, if any
     logger: Logger
     ecosystem: Ecosystem | None = None
-
-    @property
-    def source(self) -> Source:
-        """Return the source this kind of reference resolves through."""
-        return Source(
-            project=project,
-            ecosystem=self.ecosystem,
-            new_version=get_latest_version,
-            dates_versions_of=every_dependency,
-        )
 
     @staticmethod
     def steers_the_update(reference: Reference) -> bool:
@@ -174,6 +154,20 @@ class PinUpdater:
             return replace(pin, version="")  # The full SHA names the commit, so the pin does not need a comment
         return pin
 
+    def _comment_names_no_ref(self, reference: Reference) -> bool:
+        """Return whether the comment beside a commit SHA does not name a tag or branch, which leaves the SHA bare."""
+        # A held-back reference asks GitHub nothing.
+        if not reference.current_sha or reference.marker.ignores(Scope.UPDATE):
+            return False
+        return self._ref_commit(reference).absent
+
+    def _ref_commit(self, reference: Reference) -> LookedUp[DependencyVersion]:
+        """Look up the commit to pin: a pinned branch's newest commit older than the cooldown, or the ref's commit."""
+        dependency, ref = reference.dependency, reference.current_version
+        if reference.current_sha and _ref_kind(reference) is RefKind.BRANCH:
+            return newest_commit_past_cooldown(dependency, ref, reference.cooldown_days)
+        return pinned_ref(dependency, ref)
+
     def _report_what_the_marker_decides(self, reference: Reference, *, names_a_commit: bool) -> None:
         """Report the directives that set nothing, the project checks, and a floating-pin opt-in that keeps nothing."""
         log = self.logger
@@ -182,12 +176,61 @@ class PinUpdater:
         pin_does_not_float = Reason.PIN_NOT_FLOATING if names_a_commit else None
         warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, pin_does_not_float, log)
 
-    def _comment_names_no_ref(self, reference: Reference) -> bool:
-        """Return whether the comment beside a commit SHA does not name a tag or branch, which leaves the SHA bare."""
-        # A held-back reference asks GitHub nothing.
-        if not reference.current_sha or reference.marker.ignores(Scope.UPDATE):
-            return False
-        return self._ref_commit(reference).absent
+    def _ref_pin(self, reference: Reference, commit_sha: _CommitSha) -> DependencyVersion | None:
+        """Return the ref's commit, named by a version tag or by the ref, or None to leave the reference as it is."""
+        ref = reference.current_version
+        if reference.marker.ignores(Scope.UPDATE):
+            return None
+        found = self._ref_commit(reference)
+        if (pinned := found.value) is None:
+            if found.reason:  # A branch without a commit older than the cooldown is held back without a report
+                self._report_unfetched_commit(reference, found, commit_sha)
+            return None
+        kept_floating_by = "" if commit_sha.names_a_commit else reference.marker.allow_directive(Scope.FLOATING_PIN)
+        if reference.current_sha and hash_drifted(pinned.sha, reference.current_sha):
+            return self._moved_ref_pin(reference, pinned, kept_floating_by)
+        if kept_floating_by:
+            self.logger.keeping_ref(reference, pinned, kept_floating_by, _ref_kind(reference))
+            return None
+        if reference.current_sha and pinned.version == ref:
+            return None  # Still pinned to the ref's commit
+        self.logger.pinned(reference, pinned)
+        return pinned
+
+    def _report_unfetched_commit(
+        self, reference: Reference, found: LookedUp[DependencyVersion], commit_sha: _CommitSha
+    ) -> None:
+        """Report why the ref's commit could not be fetched, or that a commit SHA's comment names a missing ref."""
+        if reference.current_sha and found.absent:
+            self.logger.comment_naming_no_ref(reference)
+        else:
+            kind = RefKind.SHORT_COMMIT_SHA if commit_sha is _CommitSha.SHORT else _ref_kind(reference)
+            self.logger.unpinned_ref(reference, found.reason, kind)
+
+    def _moved_ref_pin(
+        self, reference: Reference, moved: DependencyVersion, kept_floating_by: str
+    ) -> DependencyVersion | None:
+        """Return the commit the ref moved to, if the reference adopts it, or None to leave the reference as it is.
+
+        A branch never moves back, a tag moves to whichever commit it now points at.
+        """
+        kind = _ref_kind(reference)
+        if kind is RefKind.BRANCH and not self._branch_moved_on(reference, moved):
+            return None
+        # A ref kept floating keeps following the ref.
+        kept = DependencyVersion(reference.current_version, sha=moved.sha)
+        pin = kept if kept_floating_by else moved
+        adopted = self._drifted_pin(DriftKind(kind), reference, pin, publication=moved.publication)
+        if adopted is not None and adopted.tag_name:  # The reference comes to name a version rather than the ref
+            self.logger.pinned(reference, adopted)
+        return adopted
+
+    def _branch_moved_on(self, reference: Reference, moved: DependencyVersion) -> bool:
+        """Return whether the branch moved on from its pin to the commit, reporting why when GitHub can't tell."""
+        compared = moved_on(reference.dependency, reference.current_sha, moved.sha)
+        if compared.reason:
+            self.logger.unchecked_branch_drift(reference, moved.sha, compared.reason)
+        return bool(compared.value)
 
     def _report_redundant_directives(
         self, reference: Reference, pin: DependencyVersion | None, *, names_a_commit: bool
@@ -219,68 +262,15 @@ class PinUpdater:
         if commit_sha is _CommitSha.FULL and (hold_back := reference.marker.scope_directive(Scope.UPDATE)):
             self.logger.redundant_directive(reference, hold_back, Reason.NO_UPDATE_FOR_A_COMMIT)
 
-    def _ref_pin(self, reference: Reference, commit_sha: _CommitSha) -> DependencyVersion | None:
-        """Return the ref's commit, named by a version tag or by the ref, or None to leave the reference as it is."""
-        ref = reference.current_version
-        if reference.marker.ignores(Scope.UPDATE):
-            return None
-        found = self._ref_commit(reference)
-        if (pinned := found.value) is None:
-            if found.reason:  # A branch without a commit older than the cooldown is held back without a report
-                self._report_unfetched_commit(reference, found, commit_sha)
-            return None
-        kept_floating_by = "" if commit_sha.names_a_commit else reference.marker.allow_directive(Scope.FLOATING_PIN)
-        if reference.current_sha and hash_drifted(pinned.sha, reference.current_sha):
-            return self._moved_ref_pin(reference, pinned, kept_floating_by)
-        if kept_floating_by:
-            self.logger.keeping_ref(reference, pinned, kept_floating_by, _ref_kind(reference))
-            return None
-        if reference.current_sha and pinned.version == ref:
-            return None  # Still pinned to the ref's commit
-        self.logger.pinned(reference, pinned)
-        return pinned
-
-    def _ref_commit(self, reference: Reference) -> LookedUp[DependencyVersion]:
-        """Look up the commit to pin: a pinned branch's newest commit older than the cooldown, or the ref's commit."""
-        dependency, ref = reference.dependency, reference.current_version
-        if reference.current_sha and _ref_kind(reference) is RefKind.BRANCH:
-            return newest_commit_past_cooldown(dependency, ref, reference.cooldown_days)
-        return pinned_ref(dependency, ref)
-
-    def _moved_ref_pin(
-        self, reference: Reference, moved: DependencyVersion, kept_floating_by: str
-    ) -> DependencyVersion | None:
-        """Return the commit the ref moved to, if the reference adopts it, or None to leave the reference as it is.
-
-        A branch never moves back, a tag moves to whichever commit it now points at.
-        """
-        kind = _ref_kind(reference)
-        if kind is RefKind.BRANCH and not self._branch_moved_on(reference, moved):
-            return None
-        # A ref kept floating keeps following the ref.
-        kept = DependencyVersion(reference.current_version, sha=moved.sha)
-        pin = kept if kept_floating_by else moved
-        adopted = self._drifted_pin(DriftKind(kind), reference, pin, publication=moved.publication)
-        if adopted is not None and adopted.tag_name:  # The reference comes to name a version rather than the ref
-            self.logger.pinned(reference, adopted)
-        return adopted
-
-    def _branch_moved_on(self, reference: Reference, moved: DependencyVersion) -> bool:
-        """Return whether the branch moved on from its pin to the commit, reporting why when GitHub can't tell."""
-        compared = moved_on(reference.dependency, reference.current_sha, moved.sha)
-        if compared.reason:
-            self.logger.unchecked_branch_drift(reference, moved.sha, compared.reason)
-        return bool(compared.value)
-
-    def _report_unfetched_commit(
-        self, reference: Reference, found: LookedUp[DependencyVersion], commit_sha: _CommitSha
-    ) -> None:
-        """Report why the ref's commit could not be fetched, or that a commit SHA's comment names a missing ref."""
-        if reference.current_sha and found.absent:
-            self.logger.comment_naming_no_ref(reference)
-        else:
-            kind = RefKind.SHORT_COMMIT_SHA if commit_sha is _CommitSha.SHORT else _ref_kind(reference)
-            self.logger.unpinned_ref(reference, found.reason, kind)
+    @property
+    def source(self) -> Source:
+        """Return the source this kind of reference resolves through."""
+        return Source(
+            project=project,
+            ecosystem=self.ecosystem,
+            new_version=get_latest_version,
+            dates_versions_of=every_dependency,
+        )
 
     def _drifted_pin(
         self, kind: DriftKind, reference: Reference, pin: DependencyVersion, *, publication: Lookup[datetime]
@@ -289,5 +279,15 @@ class PinUpdater:
 
         The new commit is adopted only once it is older than the cooldown.
         """
-        adopted = adopts_drift(kind, reference, pin.sha, self.logger, publication=publication)
-        return pin if adopted else None
+        return pin if adopts_drift(kind, reference, pin.sha, self.logger, publication=publication) else None
+
+
+def _ref_kind(reference: Reference) -> RefKind:
+    """Return the kind of ref the reference names: a listed tag, a branch, or a ref when the tags can't be listed."""
+    match is_tag(reference.dependency, reference.current_version):
+        case None:
+            return RefKind.REF
+        case True:
+            return RefKind.TAG
+        case _:
+            return RefKind.BRANCH

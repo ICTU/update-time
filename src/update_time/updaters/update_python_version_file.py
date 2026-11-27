@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import Version
@@ -10,14 +10,14 @@ from packaging.version import Version
 from update_time.domain.bound import Verb, VersionBound, joint_bound
 from update_time.domain.file_type import PYTHON_VERSION_FILE
 from update_time.domain.marker import Scope
-from update_time.io.filesystem import glob_for
+from update_time.io.filesystem import glob_for, nearest_path
 from update_time.io.log import FileContent, get_logger
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_version import PYTHON, PYTHON_VERSION_REFERENCE
-from update_time.package_managers.uv import uv
+from update_time.package_managers.uv.uv import workspace_pyproject_tomls
 from update_time.references.file import update_file
 from update_time.references.match import matched_reference, reference_matches
-from update_time.sources import oci
+from update_time.sources.oci import SOURCE, get_latest_tag
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,9 +25,10 @@ if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import DependencyVersion, PinnedDependency
     from update_time.domain.reference import Reference
+    from update_time.io.log import Logger
     from update_time.primitives.line import Line
 
-_LOG = get_logger("python version file")
+_LOG: Final[Logger] = get_logger("python version file")
 
 
 def _update_python_version_files() -> None:
@@ -38,7 +39,7 @@ def _update_python_version_files() -> None:
         lines = update_file(
             version_file,
             PYTHON_VERSION_REFERENCE,
-            source=replace(oci.SOURCE, new_version=_tag_getter(bound)),
+            source=replace(SOURCE, new_version=_tag_getter(bound)),
             logger=_LOG,
             dependency=PYTHON,
         )
@@ -47,10 +48,13 @@ def _update_python_version_files() -> None:
 
 
 def _requires_pythons(directory: Path) -> list[Reference]:
-    """Return the `requires-python` of each project in the workspace of the nearest pyproject.toml: what uv checks."""
-    if (pyproject_toml := _nearest_pyproject_toml(directory)) is None:
+    """Return the `requires-python` of each project in the workspace of the nearest pyproject.toml: what uv checks.
+
+    The nearest pyproject.toml at or above the directory is the project uv runs the entry for.
+    """
+    if (pyproject_toml := nearest_path(directory, "pyproject.toml")) is None:
         return []
-    projects = uv.workspace_pyproject_tomls(pyproject_toml)
+    projects = workspace_pyproject_tomls(pyproject_toml)
     return [requires_python for project in projects if (requires_python := _requires_python(project)) is not None]
 
 
@@ -70,14 +74,6 @@ def _requires_python(pyproject_toml: Path) -> Reference | None:
         _LOG.invalid_requires_python(requires_python)
         return None
     return requires_python
-
-
-def _nearest_pyproject_toml(directory: Path) -> Path | None:
-    """Return the nearest pyproject.toml at or above the directory: the project uv runs the entry for."""
-    for ancestor in (directory, *directory.parents):
-        if (pyproject_toml := ancestor / "pyproject.toml").exists():
-            return pyproject_toml
-    return None
 
 
 def _report_requires_python(lines: list[Line], requires_python: Reference) -> None:
@@ -103,15 +99,10 @@ def _tag_getter(requires_python_bound: VersionBound) -> NewVersionGetter:
     def get_new_version(
         pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /
     ) -> DependencyVersion:
-        return oci.get_latest_tag(pinned, joint_bound(version_bound, requires_python_bound), cooldown_days)
+        return get_latest_tag(pinned, joint_bound(version_bound, requires_python_bound), cooldown_days)
 
     return get_new_version
 
 
-def main() -> None:  # pragma: no cover
-    """Update the CPython version in the repository's `.python-version` files."""
+if __name__ == "__main__":
     _update_python_version_files()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

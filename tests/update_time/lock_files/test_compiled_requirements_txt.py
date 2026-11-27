@@ -7,8 +7,9 @@ from mutation_time.mutation import kills
 from update_time.lock_files import compiled_requirements_txt
 from update_time.primitives.command import Command
 
-from tests.update_time.lock_files.helpers import requirements_compiled_by_uv
-from tests.update_time.manifests.helpers import requirements_file
+from tests.update_time.manifests.manifest_contents import requirements_file
+
+from .lock_file_contents import requirements_compiled_by_uv
 
 
 class IsCompiledTest(unittest.TestCase):
@@ -46,29 +47,29 @@ class SourceNamesTest(unittest.TestCase):
     )
     @kills.replace(
         compiled_requirements_txt,
-        r'_ANNOTATION = re.compile(r"#\s*(via\b.*|-r\s.*)")',
-        r'_ANNOTATION = re.compile(r"#\s*(via\b.*)")',
+        r'_ANNOTATION: Final[re.Pattern[str]] = re.compile(r"#\s*(via\b.*|-r\s.*)")',
+        r'_ANNOTATION: Final[re.Pattern[str]] = re.compile(r"#\s*(via\b.*)")',
         "Update-time leaves out the sources that a block of annotations lists below its `via`",
         case="a block of annotations",
     )
     @kills.replace(
         compiled_requirements_txt,
-        r'_SOURCE_ANNOTATION = re.compile(r"(?:^|\s)-r\s+([^\s,]+)")',
-        r'_SOURCE_ANNOTATION = re.compile(r"(?:^|\s)-r\s+(\S+)")',
+        r"([^\s,]+)",
+        r"(\S+)",
         "Update-time reads the comma after a source on a line of annotations as part of its name",
         case="a line of annotations",
     )
     @kills.replace(
         compiled_requirements_txt,
-        r'_SOURCE_ANNOTATION = re.compile(r"(?:^|\s)-r\s+([^\s,]+)")',
-        r'_SOURCE_ANNOTATION = re.compile(r"(?:^|\s)-r\s+([\w.-]+)")',
+        r"([^\s,]+)",
+        r"([\w.-]+)",
         "a source in another directory is read without its path, so it is not found",
         case="a source in another directory",
     )
     @kills.replace(
         compiled_requirements_txt,
-        r'_ANNOTATION = re.compile(r"#\s*(via',
-        r'_ANNOTATION = re.compile(r"#.*?(via',
+        r'_ANNOTATION: Final[re.Pattern[str]] = re.compile(r"#\s*(via',
+        r'_ANNOTATION: Final[re.Pattern[str]] = re.compile(r"#.*?(via',
         "a comment that mentions `-r` reads as an annotation, so the file it names counts as a source",
         case="a comment other than an annotation",
     )
@@ -140,8 +141,8 @@ class OutputNameTest(unittest.TestCase):
     )
     @kills.replace(
         compiled_requirements_txt,
-        r"--output-file)(?:=|\s+)",
-        r"--output-file)\s+",
+        r"(?:=|\s+)",
+        r"\s+",
         "the output pip-compile's option names after an `=` goes unread, so the file is recompiled beside its source",
         case="pip-compile's option",
     )
@@ -191,8 +192,8 @@ class CommandTest(unittest.TestCase):
 
     @kills.replace(
         compiled_requirements_txt,
-        r"#\s+((?:uv pip compile|pip-compile)(?:[ \t].*)?)$",
-        r"#\s{4}(\S.*)$",
+        r"(?:uv\ pip\ compile|pip-compile)",
+        r"\S+",
         "a header running another tool reads as a command Update-time can recompile the file with",
         case="a custom command",
     )

@@ -6,40 +6,30 @@ import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Final
 from unittest.mock import MagicMock, Mock, call, patch
 
-from tools import usages as usages_module
-from tools.usages import _ROOTS, _LanguageServerError, _Position, _python_files, _usages, main
+from tools.usages import (
+    _ROOTS,
+    _assigned_names,
+    _instance_attributes,
+    _LanguageServerError,
+    _module,
+    _named,
+    _Position,
+    _python_files,
+    _targets,
+    _usages,
+    main,
+)
 
 from mutation_time.mutation import kills
 
-from tests.helpers import mock_path, patch_pathlib_path
+from tests.file_mocks import mock_path, patch_pathlib_path
 
 # The module that defines the name the tests look up, and a module that uses it.
-_DEFINING_MODULE = Path("src/pkg/mod.py")
-_USING_MODULE = Path("src/pkg/user.py")
-
-
-def _framed(*messages: dict) -> bytes:
-    """Return the messages as the language server writes them, each behind the headers that frame it."""
-    frames = []
-    for message in messages:
-        body = json.dumps({"jsonrpc": "2.0", **message}).encode()
-        frames.append(
-            f"Content-Length: {len(body)}\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n".encode() + body
-        )
-    return b"".join(frames)
-
-
-def _unframed(stream: bytes) -> list[dict]:
-    """Return the messages a client wrote to the stream, without the headers that frame them."""
-    messages = []
-    while stream:
-        header, _, rest = stream.partition(b"\r\n\r\n")
-        length = int(header.split(b":")[1])
-        messages.append(json.loads(rest[:length]))
-        stream = rest[length:]
-    return messages
+_DEFINING_MODULE: Final[Path] = Path("src/pkg/mod.py")
+_USING_MODULE: Final[Path] = Path("src/pkg/user.py")
 
 
 class PythonFilesTest(unittest.TestCase):
@@ -74,8 +64,8 @@ class UsagesTest(unittest.TestCase):
         server_input.write.side_effect = written.append
         server = MagicMock(stdin=server_input, stdout=io.BytesIO(output))
         with patch("subprocess.Popen", Mock(return_value=MagicMock(__enter__=Mock(return_value=server)))):
-            found = _usages(_Position(_DEFINING_MODULE, 0, 4))
-        self.assertEqual(found, [_Position(_USING_MODULE, 2, 4)])
+            found = _usages(_Position(path=_DEFINING_MODULE, line=0, column=4))
+        self.assertEqual(found, [_Position(path=_USING_MODULE, line=2, column=4)])
         sent = _unframed(b"".join(written))
         asked = next(message for message in sent if message.get("method") == "textDocument/references")
         self.assertEqual(asked["params"]["position"], {"line": 0, "character": 4})
@@ -100,11 +90,49 @@ class UsagesTest(unittest.TestCase):
                 if isinstance(behaviour, OSError):
                     popen.side_effect = behaviour
                 with patch("subprocess.Popen", popen), self.assertRaisesRegex(_LanguageServerError, reason):
-                    _usages(_Position(_DEFINING_MODULE, 0, 4))
+                    _usages(_Position(path=_DEFINING_MODULE, line=0, column=4))
+
+
+def _framed(*messages: dict) -> bytes:
+    """Return the messages as the language server writes them, each behind the headers that frame it."""
+    frames = []
+    for message in messages:
+        body = json.dumps({"jsonrpc": "2.0", **message}).encode()
+        frames.append(
+            f"Content-Length: {len(body)}\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n".encode() + body
+        )
+    return b"".join(frames)
+
+
+def _unframed(stream: bytes) -> list[dict]:
+    """Return the messages a client wrote to the stream, without the headers that frame them."""
+    messages = []
+    while stream:
+        header, _, rest = stream.partition(b"\r\n\r\n")
+        length = int(header.split(b":")[1])
+        messages.append(json.loads(rest[:length]))
+        stream = rest[length:]
+    return messages
 
 
 class MainTest(unittest.TestCase):
     """Unit tests for the report the command line writes."""
+
+    def test_the_usages_of_a_function(self):
+        """Test that a function, named qualified or bare, is looked up at its definition, its usages counted."""
+        sources = {
+            _DEFINING_MODULE: "def target():\n    pass\n\ntarget()\n",
+            _USING_MODULE: "from pkg import mod\n\nmod.target()\n",
+        }
+        usages = [_Position(path=_DEFINING_MODULE, line=3, column=0), _Position(path=_USING_MODULE, line=2, column=4)]
+        for case, name in {"qualified": "pkg.mod.target", "bare": "target"}.items():
+            with self.subTest(case):
+                self.assertEqual(self.report(name, sources, usages), 0)
+                self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=0, column=4))
+                self.assertEqual(
+                    self.written.getvalue(),
+                    "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n",
+                )
 
     def report(self, name: str, sources: dict[Path, str], usages: list[_Position] | Exception) -> int:
         """Report the usages of the name over files holding the sources, the server answering or failing as given."""
@@ -120,32 +148,14 @@ class MainTest(unittest.TestCase):
         ):
             return main()
 
-    def test_the_usages_of_a_function(self):
-        """Test that a function, named qualified or bare, is looked up at its definition, its usages counted."""
-        sources = {
-            _DEFINING_MODULE: "def target():\n    pass\n\ntarget()\n",
-            _USING_MODULE: "from pkg import mod\n\nmod.target()\n",
-        }
-        usages = [_Position(_DEFINING_MODULE, 3, 0), _Position(_USING_MODULE, 2, 4)]
-        for case, name in {"qualified": "pkg.mod.target", "bare": "target"}.items():
-            with self.subTest(case):
-                self.assertEqual(self.report(name, sources, usages), 0)
-                self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 4))
-                self.assertEqual(
-                    self.written.getvalue(),
-                    "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n",
-                )
-
-    @kills.replace(
-        usages_module._targets, "return [target]", "return []", "the report says nothing defines an annotated constant"
-    )
+    @kills.replace(_targets, "return [target]", "return []", "the report says nothing defines an annotated constant")
     def test_the_usages_of_an_annotated_constant(self):
         """Test that an annotated module-level constant is looked up at its name."""
         self.assertEqual(self.report("pkg.mod.TARGET", {_DEFINING_MODULE: "TARGET: int = 1\n"}, []), 0)
-        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 0))
+        self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=0, column=0))
 
     @kills.replace(
-        usages_module._named,
+        _named,
         'yield f"{prefix}{name.id}"',
         "yield target.id",
         "the report says nothing defines a class attribute named through its class",
@@ -154,20 +164,20 @@ class MainTest(unittest.TestCase):
         """Test that a class attribute is looked up inside its class."""
         source = "class Holder:\n    TARGET = 1\n"
         self.assertEqual(self.report("pkg.mod.Holder.TARGET", {_DEFINING_MODULE: source}, []), 0)
-        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 1, 4))
+        self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=1, column=4))
 
     @kills.delete_statement(
-        usages_module._named,
+        _named,
         "yield from _instance_attributes(node, prefix, path)",
         "the report says nothing defines an attribute that `__init__` assigns",
     )
     @kills.delete(
-        usages_module._instance_attributes,
+        _instance_attributes,
         ' and target.value.id == "self"',
         "an attribute `__init__` assigns on another object is taken for one of the instance",
     )
     @kills.delete(
-        usages_module._instance_attributes,
+        _instance_attributes,
         " - len(target.attr)",
         "the language server is asked about the end of the attribute's name rather than its start",
     )
@@ -178,30 +188,30 @@ class MainTest(unittest.TestCase):
             "        local = 2\n        other.target = local\n"
         )
         self.assertEqual(self.report("pkg.mod.Holder.target", {_DEFINING_MODULE: source}, []), 0)
-        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 2, 13))
+        self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=2, column=13))
 
     def test_a_local_assignment_defines_nothing(self):
         """Test that a name a function body assigns is not a definition, so a constant of that name is unambiguous."""
         source = "TARGET = 1\n\n\ndef holder():\n    TARGET = 2\n"
         self.assertEqual(self.report("TARGET", {_DEFINING_MODULE: source}, []), 0)
-        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 0))
+        self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=0, column=0))
 
-    @kills.replace(usages_module._targets, "return [name]", "return []", "the report says nothing defines a type alias")
+    @kills.replace(_targets, "return [name]", "return []", "the report says nothing defines a type alias")
     def test_the_usages_of_a_type_alias(self):
         """Test that a type alias is looked up at its name."""
         self.assertEqual(self.report("pkg.mod.Target", {_DEFINING_MODULE: "type Target = int\n"}, []), 0)
-        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, 5))
+        self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=0, column=5))
 
     @kills.delete(
-        usages_module._assigned_names,
+        _assigned_names,
         "target.elts if isinstance(target, ast.Tuple) else ",
         "the report says nothing defines a name that an assignment to a tuple binds",
         case="FIRST",
     )
     @kills.replace(
-        usages_module._named,
-        "Position(path, name.lineno - 1, name.col_offset)",
-        "Position(path, name.lineno - 1, target.col_offset)",
+        _named,
+        "Position(path=path, line=name.lineno - 1, column=name.col_offset)",
+        "Position(path=path, line=name.lineno - 1, column=target.col_offset)",
         "each name of a tuple is looked up at the position of the first, so the report counts that name's usages",
         case="SECOND",
     )
@@ -210,10 +220,10 @@ class MainTest(unittest.TestCase):
         for name, column in (("FIRST", 0), ("SECOND", 7)):
             with self.subTest(name):
                 self.assertEqual(self.report(f"pkg.mod.{name}", {_DEFINING_MODULE: "FIRST, SECOND = 1, 2\n"}, []), 0)
-                self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 0, column))
+                self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=0, column=column))
 
     @kills.force_true(
-        usages_module._assigned_names,
+        _assigned_names,
         "isinstance(element, ast.Name)",
         "a module-level assignment to an attribute ends the report with a traceback",
         raises="AttributeError: 'Attribute' object has no attribute 'id'. Did you mean '.value.id' instead of '.id'?",
@@ -225,7 +235,7 @@ class MainTest(unittest.TestCase):
         self.requested.assert_not_called()
 
     @kills.delete_statement(
-        usages_module._module,
+        _module,
         'parts = parts[:-1] if parts[-1] == "__init__" else parts',
         "the report says nothing defines a name that the `__init__.py` of a package defines",
     )
@@ -233,7 +243,7 @@ class MainTest(unittest.TestCase):
         """Test that a function the `__init__.py` of a package defines is looked up there, named by the package."""
         package = Path("src/pkg/__init__.py")
         self.assertEqual(self.report("pkg.target", {package: "def target():\n    pass\n"}, []), 0)
-        self.requested.assert_called_once_with(_Position(package, 0, 4))
+        self.requested.assert_called_once_with(_Position(path=package, line=0, column=4))
 
     def test_a_bare_name_several_definitions_hold(self):
         """Test that a bare name several files define fails the run, naming each, without asking the server."""
@@ -263,9 +273,9 @@ class MainTest(unittest.TestCase):
             ),
             _USING_MODULE: "from pkg.mod import Holder\n\nHolder().target()\n",
         }
-        usages = [_Position(_DEFINING_MODULE, 5, 13), _Position(_USING_MODULE, 2, 9)]
+        usages = [_Position(path=_DEFINING_MODULE, line=5, column=13), _Position(path=_USING_MODULE, line=2, column=9)]
         self.assertEqual(self.report("pkg.mod.Holder.target", sources, usages), 0)
-        self.requested.assert_called_once_with(_Position(_DEFINING_MODULE, 1, 8))
+        self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=1, column=8))
         self.assertEqual(
             self.written.getvalue(),
             "src/pkg/mod.py:6: self.target()\nsrc/pkg/user.py:3: Holder().target()\nusages: 2\n",

@@ -1,11 +1,14 @@
-"""Test helpers that build the files the manifest and updater tests read."""
+"""The contents of inline script metadata, poms, and requirements files, for the tests to read."""
 
+from typing import Final
 from unittest.mock import MagicMock, Mock
 
 from update_time.manifests.pom_xml import coordinates
 
-from tests.helpers import mock_path
-from tests.update_time.helpers import GUAVA
+from tests.file_mocks import mock_path
+
+# The artefact most Maven tests declare.
+GUAVA: Final[str] = "com.google.guava:guava"
 
 
 def script(*specs: str, requires_python: str = ">=3.11", marker: str = "", toml: str = "") -> str:
@@ -63,19 +66,14 @@ def _coordinate_lines(indent: str, group: str | None, artifact: str | None, vers
     return "".join(f"{indent}<{name}>{value}</{name}>\n" for name, value in parts.items() if value is not None)
 
 
-def _coordinates_element(tag: str, indent: str, group: str | None, artifact: str, version: str | None) -> str:
-    """Return a `<tag>` element at the indent, declaring the artifact, and the group and the version where given."""
-    return f"{indent}<{tag}>\n{_coordinate_lines(indent + '  ', group, artifact, version)}{indent}</{tag}>\n"
-
-
-def dependency_element(group: str, artifact: str, version: str | None) -> str:
-    """Return a `<dependency>` element declaring the group, the artifact, and the version, where one is given."""
-    return _coordinates_element("dependency", "    ", group, artifact, version)
-
-
 def plugin_element(artifact: str, version: str | None, group: str | None = "org.apache.maven.plugins") -> str:
     """Return a `<plugin>` element declaring the artifact, and the version and the group where each is given."""
     return _coordinates_element("plugin", "      ", group, artifact, version)
+
+
+def _coordinates_element(tag: str, indent: str, group: str | None, artifact: str, version: str | None) -> str:
+    """Return a `<tag>` element at the indent, declaring the artifact, and the group and the version where given."""
+    return f"{indent}<{tag}>\n{_coordinate_lines(f'{indent}  ', group, artifact, version)}{indent}</{tag}>\n"
 
 
 def build_element(*plugins: str, managed: str = "") -> str:
@@ -85,12 +83,17 @@ def build_element(*plugins: str, managed: str = "") -> str:
 
 
 # A plugin in Maven's default plugin group.
-SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin"
+SUREFIRE: Final[str] = "org.apache.maven.plugins:maven-surefire-plugin"
 
 
 def guava_element(version: str | None) -> str:
     """Return the `<dependency>` element declaring guava."""
     return dependency_element(*coordinates(GUAVA), version)
+
+
+def dependency_element(group: str, artifact: str, version: str | None) -> str:
+    """Return a `<dependency>` element declaring the group, the artifact, and the version, where one is given."""
+    return _coordinates_element("dependency", "    ", group, artifact, version)
 
 
 def marked_at_its_version(element: str, directives: str) -> str:
@@ -113,42 +116,16 @@ def profiles_element(*dependencies: str, managed: str = "", build: str = "") -> 
     )
 
 
-def pom_declaring(
-    *dependencies: str,
-    coordinates: str = "",
-    properties: str = "",
-    managed: str = "",
-    build: str = "",
-    profiles: str = "",
-) -> str:
-    """Return a pom holding the given coordinates, properties, managed dependencies, dependencies, build, and profiles.
-
-    Without coordinates the properties come first, so the first property sits on line 3.
-    """
-    return (
-        '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
-        f"{coordinates}"
-        f"{properties}"
-        f"{managed}"
-        "  <dependencies>\n"
-        f"{''.join(dependencies)}"
-        "  </dependencies>\n"
-        f"{build}"
-        f"{profiles}"
-        "</project>\n"
-    )
-
-
 # Each input location names the scanned pom by this id. The pom is a child inheriting its parent's group.
-SCANNED_POM_ID = "org.example:child:1.0"
+SCANNED_POM_ID: Final[str] = "org.example:child:1.0"
 
 
 # An input location names the scanned pom's parent by this id, where the child inherits the element.
-PARENT_POM_ID = "org.example:parent:1.0"
+PARENT_POM_ID: Final[str] = "org.example:parent:1.0"
 
 
 # The elements of a pom that Maven names by `SCANNED_POM_ID`, on lines 2 and 3.
-SCANNED_POM_COORDINATES = pom_coordinates("child", parent=PARENT_POM_ID)
+SCANNED_POM_COORDINATES: Final[str] = pom_coordinates("child", parent=PARENT_POM_ID)
 
 
 def effective_dependency_element(
@@ -211,7 +188,7 @@ def _located_coordinates(artefact: str, version: str | None, locations: dict[str
 
 
 # A pom declaring guava alone gets this entry in its effective pom, with guava's `<artifactId>` on line 5.
-EFFECTIVE_GUAVA = effective_dependency_element(GUAVA, "33.0.0-jre", line=5)
+EFFECTIVE_GUAVA: Final[str] = effective_dependency_element(GUAVA, "33.0.0-jre", line=5)
 
 
 def effective_pom_declaring(
@@ -222,13 +199,73 @@ def effective_pom_declaring(
     Maven lists every property the parent declares, and this lists only the ones given. Update-time reads them only to
     resolve an artifact's name, so a test passes the properties its artifacts name.
     """
-    header = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n<!-- Effective POM for project \'org.example:child:jar:1.0\' -->\n'
-    )
     located = (
         f"  <groupId>org.example</groupId>  <!-- {PARENT_POM_ID}, line 2 -->\n"
         f"  <artifactId>child</artifactId>  <!-- {SCANNED_POM_ID}, line 3 -->\n"
     )
+    header = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!-- Effective POM for project \'org.example:child:jar:1.0\' -->\n'
+    )
     return header + pom_declaring(
         *dependencies, coordinates=located, properties=properties, managed=managed, build=build, profiles=profiles
     )
+
+
+def pom_declaring(
+    *dependencies: str,
+    coordinates: str = "",
+    properties: str = "",
+    managed: str = "",
+    build: str = "",
+    profiles: str = "",
+) -> str:
+    """Return a pom holding the given coordinates, properties, managed dependencies, dependencies, build, and profiles.
+
+    Without coordinates the properties come first, so the first property sits on line 3.
+    """
+    return (
+        '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+        f"{coordinates}"
+        f"{properties}"
+        f"{managed}"
+        "  <dependencies>\n"
+        f"{''.join(dependencies)}"
+        "  </dependencies>\n"
+        f"{build}"
+        f"{profiles}"
+        "</project>\n"
+    )
+
+
+def pyproject_per_line(*specs: str, marker: str) -> str:
+    """Return a minimal valid pyproject.toml declaring each of the given dependencies on a line of its own.
+
+    `marker` goes in an `# update-time:` comment on the first spec's line, so it steers that declaration and leaves
+    the ones below it alone.
+    """
+    lines = [f'    "{spec}",' for spec in specs]
+    lines[0] += f"  # update-time: {marker}"
+    dependencies = "".join(f"{line}\n" for line in lines)
+    return f"[project]\ndependencies = [\n{dependencies}]\n"
+
+
+def pyproject(*specs: str, marker: str = "") -> str:
+    """Return a minimal valid pyproject.toml pinning the given dependencies, in one dependencies array.
+
+    `marker` goes in an `# update-time:` comment on that array's line, so it steers every dependency the array
+    declares.
+    """
+    dependencies = ", ".join(f'"{spec}"' for spec in specs)
+    comment = f"  # update-time: {marker}" if marker else ""
+    return f"[project]\ndependencies = [{dependencies}]{comment}\n"
+
+
+def uv_path_source(dependency: str) -> str:
+    """Return the `[tool.uv] sources` table that has uv resolve the dependency from a path rather than from PyPI."""
+    return f'[tool.uv.sources]\n{dependency} = {{path = "../{dependency}"}}\n'
+
+
+def properties_element(values: dict[str, str]) -> str:
+    """Return a `<properties>` element declaring the given names and values."""
+    declared = "".join(f"    <{name}>{value}</{name}>\n" for name, value in values.items())
+    return f"  <properties>\n{declared}  </properties>\n"

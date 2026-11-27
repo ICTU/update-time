@@ -4,6 +4,8 @@ Images in a Dockerfile or Compose file the devcontainer.json points at (`build.d
 are left to those updaters.
 """
 
+from typing import TYPE_CHECKING, Final
+
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
@@ -11,7 +13,10 @@ from update_time.manifests.devcontainer_json import BASE_IMAGE_REFERENCE, FEATUR
 from update_time.references.file import update_file
 from update_time.sources.oci import TagGetter
 
-_LOG = get_logger("devcontainer")
+if TYPE_CHECKING:
+    from update_time.io.log import Logger
+
+_LOG: Final[Logger] = get_logger("devcontainer")
 
 
 def _update_devcontainers() -> None:
@@ -26,10 +31,5 @@ def _update_devcontainers() -> None:
         )
 
 
-def main() -> None:  # pragma: no cover
-    """Update the images and features in the repository's devcontainer.json files."""
+if __name__ == "__main__":
     _update_devcontainers()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

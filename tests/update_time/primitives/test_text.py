@@ -2,17 +2,11 @@
 
 import re
 import unittest
-from typing import cast
+from typing import Final, cast
 
 from update_time.primitives.text import _rewrite_match, prose_list, replace_match, rewrite_string
 
-
-def _search(pattern: str, text: str) -> re.Match[str]:
-    """Search for the pattern in the text and return the match (which the test's inputs always produce)."""
-    return cast("re.Match[str]", re.search(pattern, text))
-
-
-_PATTERN = r"(?P<name>\w+)@(?P<version>[\d.]+)"
+_PATTERN: Final[str] = r"(?P<name>\w+)@(?P<version>[\d.]+)"
 
 
 class ProseListTest(unittest.TestCase):
@@ -45,8 +39,12 @@ class RewriteMatchTest(unittest.TestCase):
 
     def test_leaves_the_rest_of_the_string_out(self):
         """Test that only the matched text is returned, not the string it was found in."""
-        match = _search(_PATTERN, "before pkg@2.0.11 after")
-        self.assertEqual(_rewrite_match(match, {"version": "3.0"}), "pkg@3.0")
+        self.assertEqual(_rewrite_match(_search(_PATTERN, "before pkg@2.0.11 after"), {"version": "3.0"}), "pkg@3.0")
+
+
+def _search(pattern: str, text: str) -> re.Match[str]:
+    """Search for the pattern in the text and return the match (which the test's inputs always produce)."""
+    return cast("re.Match[str]", re.search(pattern, text))
 
 
 class ReplaceMatchTest(unittest.TestCase):
@@ -54,8 +52,7 @@ class ReplaceMatchTest(unittest.TestCase):
 
     def test_replaces_the_match(self):
         """Test that the matched text is swapped out and the text around it kept."""
-        match = _search(_PATTERN, "before pkg@2.0.11 after")
-        self.assertEqual(replace_match(match, "lib@3.0"), "before lib@3.0 after")
+        self.assertEqual(replace_match(_search(_PATTERN, "before pkg@2.0.11 after"), "lib@3.0"), "before lib@3.0 after")
 
 
 class RewriteStringTest(unittest.TestCase):

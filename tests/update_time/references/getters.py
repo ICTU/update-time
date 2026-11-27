@@ -1,4 +1,4 @@
-"""Test helpers the reference tests share: the getters a decision is handed."""
+"""Getters that stand in for the sources, for the tests to hand a decision about a reference."""
 
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
@@ -15,18 +15,11 @@ def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGette
     return lambda *_args, **_kwargs: DependencyVersion(version=version, sha=sha)
 
 
-def _mock_callable(answer: object) -> Mock:
-    """Return a mock callable answering with the answer."""
-    return Mock(return_value=answer)
-
-
 def mock_new_version_getter(release: DependencyVersion) -> Mock:
-    """Return a mock new-version-getter answering with the release (see `_mock_callable`)."""
-    return _mock_callable(release)
+    """Return a mock new-version-getter answering with the release."""
+    return Mock(return_value=release)
 
 
 def mock_project_getter(project: Project = NO_PROJECT) -> Mock:
     """Return a mock project getter answering with the project, whose archival it declares where it has one."""
-    get_project = _mock_callable(project)
-    get_project.declares_archival = Mock(return_value=project.archival is not None)
-    return get_project
+    return Mock(return_value=project, declares_archival=Mock(return_value=project.archival is not None))

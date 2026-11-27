@@ -24,6 +24,7 @@ just_fmt := "just --unstable --fmt"
 pyproject_fmt := uv_run + " pyproject-fmt --no-generate-python-version-classifiers"
 python_m := uv_run + " python -m"
 ruff := uv_run + " ruff --quiet"
+simplint := uv_run + " simplint"
 troml := uv_run + " troml"
 ty := uv_run + ' ty check --no-progress --error-on-warning --color=${_color:-auto}'
 vulture := uv_run + " vulture --exclude .venv --min-confidence 0"
@@ -293,6 +294,10 @@ fixit-files *files:
 [private]
 ruff: (py-check "ruff" f"{{ ruff }} format --check {{ code }} && {{ ruff }} check {{ code }}")
 
+# Run simplint to lint the Python code.
+[private]
+simplint: (py-check "simplint" f"{{ simplint }} check {{ code }}")
+
 # Run pyproject-fmt to check the formatting of pyproject.toml files.
 [private]
 pyproject-fmt: (py-check "pyproject-fmt" f"{{ pyproject_fmt }} --check pyproject.toml")
@@ -390,7 +395,7 @@ check: fixit bandit pip-audit uv-audit zizmor unconditional-checks
 # The quality checks that run whatever changed.
 [parallel]
 [private]
-unconditional-checks: ty mypy ruff pyproject-fmt troml vulture codespell check-justfile check-readme-is-up-to-date check-architecture-is-up-to-date check-readme-structure check-readability vale yamllint
+unconditional-checks: ty mypy ruff simplint pyproject-fmt troml vulture codespell check-justfile check-readme-is-up-to-date check-architecture-is-up-to-date check-readme-structure check-readability vale yamllint
 
 # The exit status `run_if_changed` gives where it skips a command. A command it runs that exits with this status makes
 # the tool exit with 1, so the failure never reads as a skip.
@@ -482,6 +487,7 @@ fix: install-py-dependencies
     {{ ty }} --fix {{ code }}
     {{ ruff }} format {{ code }}
     {{ ruff }} check --fix {{ code }}
+    {{ simplint }} check --fix --unsafe-fixes {{ code }}
     {{ fixit }} fix {{ code }}
     # Pyproject-fmt returns exit code 1 when pyproject.toml needs formatting, ignore it when formatting:
     {{ pyproject_fmt }} --no-print-diff pyproject.toml || true

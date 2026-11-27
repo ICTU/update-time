@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from packaging.version import Version
 
@@ -19,10 +19,11 @@ from update_time.references.vulnerability import warn_about_vulnerable_dependenc
 
 if TYPE_CHECKING:
     from update_time.domain.reference import Reference
+    from update_time.io.log import Logger
     from update_time.primitives.line import Line
 
-_LOG = get_logger("github action")
-_ACTION = PinUpdater(spell_action, _LOG, ecosystem=Ecosystem.GITHUB_ACTIONS)
+_LOG: Final[Logger] = get_logger("github action")
+_ACTION: Final[PinUpdater] = PinUpdater(spell_action, _LOG, ecosystem=Ecosystem.GITHUB_ACTIONS)
 
 
 def _versioned_actions(lines: list[Line]) -> list[Reference]:
@@ -35,8 +36,7 @@ def _versioned_actions(lines: list[Line]) -> list[Reference]:
     for line, match, marker in reference_matches(lines, ACTION_REFERENCE):
         reference = matched_reference(match, line.location, marker=marker)
         if names_a_version(reference):
-            normalised = replace(reference, current_version=str(Version(reference.current_version)))
-            actions.append(normalised)
+            actions.append(replace(reference, current_version=str(Version(reference.current_version))))
     return actions
 
 
@@ -57,10 +57,5 @@ def _update_github_actions() -> None:
         warn_about_vulnerable_dependencies([_versioned_actions(lines)], _ACTION.source, _LOG)
 
 
-def main() -> None:  # pragma: no cover
-    """Update the GitHub Actions in the repository's workflows."""
+if __name__ == "__main__":
     _update_github_actions()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

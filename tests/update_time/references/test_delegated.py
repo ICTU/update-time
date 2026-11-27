@@ -10,13 +10,14 @@ from update_time.domain.reference import Reference
 from update_time.domain.source import Source
 from update_time.domain.staleness import STALE_AFTER
 from update_time.primitives.location import Location
-from update_time.references import delegated as delegated_module
-from update_time.references import vulnerability as vulnerability_module
+from update_time.references import delegated
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_projects
+from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 
+from tests.update_time.domain_objects import resolved_reference
 from tests.update_time.fixtures import STALE_DATE
-from tests.update_time.helpers import resolved_reference
-from tests.update_time.references.helpers import mock_project_getter
+
+from .getters import mock_project_getter
 
 
 class WarnAboutProjectsTest(unittest.TestCase):
@@ -44,13 +45,13 @@ class WarnAboutDelegatedChecksTest(unittest.TestCase):
     """Unit tests for the checks the delegating updaters run over the dependencies a source serves."""
 
     @kills.force_true(
-        delegated_module.warn_about_delegated_checks,
+        delegated.warn_about_delegated_checks,
         "source.project is not None",
         "a source without a project getter is asked about projects all the same",
         raises="TypeError: 'NoneType' object is not callable",
     )
     @kills.replace(
-        vulnerability_module.warn_about_vulnerable_dependencies,
+        warn_about_vulnerable_dependencies,
         "if (ecosystem := source.ecosystem) is None:\n        return",
         "ecosystem = source.ecosystem",
         "a source without an ecosystem is asked about at OSV all the same",

@@ -1,7 +1,7 @@
 """The config of a pyproject.toml or of PEP 723 inline script metadata, and the parse that checks its shape."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Final, Self, cast
 
 from update_time.domain.dependency import normalized_python_name
 from update_time.formats import toml
@@ -11,17 +11,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
+    from update_time.formats.toml import TOML
 
 
 type _Keys = tuple[str, ...]
 
 
-def _is_table(value: object) -> bool:
+def _is_table(value: TOML) -> bool:
     """Return whether the value is a table."""
     return isinstance(value, dict)
 
 
-def _is_array_of_strings(value: object) -> bool:
+def _is_array_of_strings(value: TOML) -> bool:
     """Return whether the value is an array holding strings alone."""
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
@@ -29,7 +30,7 @@ def _is_array_of_strings(value: object) -> bool:
 # The config is read from these tables and arrays of strings, each named by the keys that lead to it and paired with
 # the check its value has to pass. Each follows the table that holds it, so that table is known to be a table by the
 # time the value inside it is checked.
-_SHAPE: tuple[tuple[_Keys, Callable[[object], bool]], ...] = (
+_SHAPE: Final[tuple[tuple[_Keys, Callable[[TOML], bool]], ...]] = (
     (("project",), _is_table),
     (("project", "optional-dependencies"), _is_table),
     (("project", "dynamic"), _is_array_of_strings),
@@ -45,20 +46,7 @@ _SHAPE: tuple[tuple[_Keys, Callable[[object], bool]], ...] = (
 
 # The `[project]` fields that a project can list as `dynamic`, leaving the build backend to fill in the dependencies
 # that uv then resolves.
-_DYNAMIC_DEPENDENCY_FIELDS = ("dependencies", "optional-dependencies")
-
-
-@dataclass(frozen=True)
-class _DependencyArray:
-    """An array of dependency specs, and the keys that lead to it. An item that is not a string is not a spec."""
-
-    keys: _Keys
-    items: tuple[object, ...]
-
-    @property
-    def specs(self) -> list[str]:
-        """Return the specs in the array."""
-        return [item for item in self.items if isinstance(item, str)]
+_DYNAMIC_DEPENDENCY_FIELDS: Final[tuple[str, ...]] = ("dependencies", "optional-dependencies")
 
 
 @dataclass(frozen=True)
@@ -69,7 +57,7 @@ class UvWorkspace:
     exclude: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _PathSource:
     """A source that has uv resolve the dependency it names from a path, relative to the file declaring the source."""
 
@@ -77,7 +65,7 @@ class _PathSource:
     path: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _UvTable:
     """A `[tool.uv]` table: whether uv manages the project, the dependencies it sources, and the workspace it roots.
 
@@ -107,7 +95,7 @@ class _UvTable:
             managed=uv.get("managed") is not False,
             sources=frozenset(normalized_python_name(name) for name in sources),
             path_sources=tuple(
-                _PathSource(normalized_python_name(name), source["path"])
+                _PathSource(dependency=normalized_python_name(name), path=source["path"])
                 for name, source in listed_sources
                 if isinstance(source, dict) and isinstance(source.get("path"), str)
             ),
@@ -115,6 +103,43 @@ class _UvTable:
             if workspace is None
             else UvWorkspace(tuple(workspace.get("members", [])), tuple(workspace.get("exclude", []))),
         )
+
+
+def read(path: Path) -> PyprojectConfig | None:
+    """Return the file's config, or None when it can't be read, isn't UTF-8, isn't valid TOML, or isn't well formed."""
+    table = toml.read(path)
+    return None if table is None else from_table(table)
+
+
+def from_table(table: Mapping) -> PyprojectConfig | None:
+    """Return the config the parsed TOML declares, or None when a table or an array it reads is of another type."""
+    if not _is_well_formed(table):
+        return None
+    project = table.get("project", {})
+    return PyprojectConfig(
+        uv_dependency_arrays=_dependency_arrays(_uv_arrays(table)),
+        build_requirements=_dependency_arrays(_build_requirements(table)),
+        # A value that is not a string, such as the number 3.10, is turned into one, and is not a specifier either.
+        requires_python=None if (specifier := project.get("requires-python")) is None else str(specifier),
+        dynamic=tuple(project.get("dynamic", [])),
+        tools=frozenset(table.get("tool", {})),
+        uv=_UvTable.from_mapping(table.get("tool", {}).get("uv", {})),
+    )
+
+
+def _is_well_formed(table: Mapping) -> bool:
+    """Return whether each table and each array the config is read from holds a value of its type, where declared."""
+    if not all(is_valid(value) for keys, is_valid in _SHAPE for _, value in _declared(table, keys)):
+        return False
+    return all(isinstance(array, list) for _, array in [*_uv_arrays(table), *_build_requirements(table)])
+
+
+def _declared(table: Mapping, keys: _Keys) -> list[tuple[_Keys, TOML]]:
+    """Return the value the keys lead to, with the keys, or nothing where the table does not declare it."""
+    *parents, key = keys
+    for parent in parents:
+        table = table.get(parent, {})
+    return [(keys, table[key])] if key in table else []
 
 
 @dataclass(frozen=True)
@@ -145,42 +170,25 @@ class PyprojectConfig:
         return in_an_array or any(name in self.dynamic for name in _DYNAMIC_DEPENDENCY_FIELDS)
 
 
-def read(path: Path) -> PyprojectConfig | None:
-    """Return the file's config, or None when it can't be read, isn't UTF-8, isn't valid TOML, or isn't well formed."""
-    table = toml.read(path)
-    return None if table is None else from_table(table)
+def _dependency_arrays(declared: list[tuple[_Keys, TOML]]) -> tuple[_DependencyArray, ...]:
+    """Return the declared arrays of dependency specs, which `_is_well_formed` checks to be arrays."""
+    return tuple(_DependencyArray(keys=keys, items=tuple(cast("list[TOML]", array))) for keys, array in declared)
 
 
-def parse(toml_text: str) -> PyprojectConfig | None:
-    """Return the config the TOML declares, or None when it isn't valid TOML or isn't well formed."""
-    table = toml.parse(toml_text)
-    return None if table is None else from_table(table)
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _DependencyArray:
+    """An array of dependency specs, and the keys that lead to it. An item that is not a string is not a spec."""
+
+    keys: _Keys
+    items: tuple[TOML, ...]
+
+    @property
+    def specs(self) -> list[str]:
+        """Return the specs in the array."""
+        return [item for item in self.items if isinstance(item, str)]
 
 
-def from_table(table: Mapping) -> PyprojectConfig | None:
-    """Return the config the parsed TOML declares, or None when a table or an array it reads is of another type."""
-    if not _is_well_formed(table):
-        return None
-    project = table.get("project", {})
-    return PyprojectConfig(
-        uv_dependency_arrays=tuple(_DependencyArray(keys, tuple(array)) for keys, array in _uv_arrays(table)),
-        build_requirements=tuple(_DependencyArray(keys, tuple(array)) for keys, array in _build_requirements(table)),
-        # A value that is not a string, such as the number 3.10, is turned into one, and is not a specifier either.
-        requires_python=None if (specifier := project.get("requires-python")) is None else str(specifier),
-        dynamic=tuple(project.get("dynamic", [])),
-        tools=frozenset(table.get("tool", {})),
-        uv=_UvTable.from_mapping(table.get("tool", {}).get("uv", {})),
-    )
-
-
-def _is_well_formed(table: Mapping) -> bool:
-    """Return whether each table and each array the config is read from holds a value of its type, where declared."""
-    if not all(is_valid(value) for keys, is_valid in _SHAPE for _, value in _declared(table, keys)):
-        return False
-    return all(isinstance(array, list) for _, array in [*_uv_arrays(table), *_build_requirements(table)])
-
-
-def _uv_arrays(table: Mapping) -> list[tuple[_Keys, Any]]:
+def _uv_arrays(table: Mapping) -> list[tuple[_Keys, TOML]]:
     """Return each array of dependency specs that uv resolves, with the keys leading to it.
 
     A pyproject.toml declares them in the project's own array, in an array per extra, in an array per dependency
@@ -196,19 +204,24 @@ def _uv_arrays(table: Mapping) -> list[tuple[_Keys, Any]]:
     ]
 
 
-def _build_requirements(table: Mapping) -> list[tuple[_Keys, Any]]:
+def _declared_per_key(table: Mapping, keys: _Keys) -> list[tuple[_Keys, TOML]]:
+    """Return each value of the table the keys name, with the keys of that value.
+
+    `_SHAPE` checks that the keys name a table.
+    """
+    return [
+        ((*keys, key), value)
+        for _, values in _declared(table, keys)
+        for key, value in cast("Mapping[str, TOML]", values).items()
+    ]
+
+
+def _build_requirements(table: Mapping) -> list[tuple[_Keys, TOML]]:
     """Return the `[build-system] requires` array, with the keys leading to it, or nothing where it is not declared."""
     return _declared(table, ("build-system", "requires"))
 
 
-def _declared(table: Mapping, keys: _Keys) -> list[tuple[_Keys, Any]]:
-    """Return the value the keys lead to, with the keys, or nothing where the table does not declare it."""
-    *parents, key = keys
-    for parent in parents:
-        table = table.get(parent, {})
-    return [(keys, table[key])] if key in table else []
-
-
-def _declared_per_key(table: Mapping, keys: _Keys) -> list[tuple[_Keys, Any]]:
-    """Return each value of the table the keys name, with the keys of that value."""
-    return [((*keys, key), value) for _, values in _declared(table, keys) for key, value in values.items()]
+def parse(toml_text: str) -> PyprojectConfig | None:
+    """Return the config the TOML declares, or None when it isn't valid TOML or isn't well formed."""
+    table = toml.parse(toml_text)
+    return None if table is None else from_table(table)

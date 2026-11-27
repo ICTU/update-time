@@ -1,101 +1,35 @@
-"""Test helpers that name nothing of this project's domain, so tests of any part of it can share them."""
+"""Mocks of the files a run reads and writes: a mock path, a file system in memory, and patches of `pathlib.Path`."""
 
 import contextlib
-import logging
-import time
 from collections.abc import MutableMapping
-from logging import INFO
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 from unittest.mock import Mock, patch
 
-import requests
-
-from mutation_time.mutation import _sentinels
-
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
-    from unittest.mock import _patch, _patch_dict
+
 
 _Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
 
 
-def mock_response(json: Mapping | list | str | None = None, **kwargs: object) -> Mock:
-    """Return a mock requests Response whose .json() returns the given value.
-
-    Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
-    """
-    response = Mock(json=Mock(return_value=json))
-    response.links = {}  # requests parses the Link header into `.links`; default to none, override per test.
-    response.headers = {}  # A real response always carries a mapping of headers; default to none, override per test.
-    response.configure_mock(**kwargs)
-    return response
-
-
-def unparsable_response(**kwargs: object) -> Mock:
-    """Return a mock requests Response whose body is not JSON, with the attributes the keyword arguments set."""
-    response = mock_response()
-    response.configure_mock(**kwargs)
-    response.json.side_effect = requests.JSONDecodeError("Expecting value", "Too Many Requests", 0)
-    return response
-
-
-def patch_get(json: Mapping | list | None = None, **kwargs: object) -> _patch:
-    """Patch Session.get to return a mock requests Response whose .json() returns the given value.
-
-    Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
-    """
-    return patch("requests.Session.get", Mock(return_value=mock_response(json, **kwargs)))
-
-
-def requested_urls(mock_get: Mock) -> list[str]:
-    """Return the URLs the mock Session.get was asked for, in the order they were asked for."""
-    return [call.args[0] for call in mock_get.call_args_list]
-
-
-def patch_environ(environment_variables: dict[str, str] | None = None, *, clear: bool | None = None) -> _patch_dict:
-    """Mock os.environ with the given environment variables.
-
-    If none are given, clear the environment, unless overridden by an explicit clear=True or clear=False.
-    """
-    clear = not environment_variables if clear is None else clear
-    # Carry the sentinels through a cleared environment, so the registered mutations run as they would outside it.
-    return patch.dict("os.environ", _sentinels() | (environment_variables or {}), clear=clear)
-
-
-@contextlib.contextmanager
-def time_zone(name: str) -> Generator[None]:
-    """Set the process's time zone, and restore the machine's own zone afterwards, whatever happens in between."""
-    try:
-        with patch_environ({"TZ": name}):
-            time.tzset()
-            yield
-    finally:
-        time.tzset()
-
-
 def patch_pathlib_path(*methods: str, **methods_and_return_values: object) -> Callable[[_Decorated], _Decorated]:
-    """Patch one or more pathlib.Path methods, each to return the given value, for the test's duration.
+    """Patch pathlib.Path methods for the test's duration, as a decorator on a test method or class.
 
-    Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method);
-    it adds no mock argument. Each keyword names a pathlib.Path method and gives the value it should return, so
-    several can be patched at once, for example `@patch_pathlib_path(exists=True, read_text="file contents")`.
+    A method named alone is patched with a mock that the test receives as an argument, as `unittest.mock.patch`
+    passes one. A keyword names a method and the value it returns, and does not add an argument. So
+    `@patch_pathlib_path("rglob", exists=True)` passes the test one mock, for `rglob`.
     """
 
     def decorate(target: _Decorated) -> _Decorated:
-        decorated: Callable[..., object] = target
+        decorated = target
         for method in methods:
-            decorated = patch(f"pathlib.Path.{method}")(decorated)
+            decorated = cast("_Decorated", patch(f"pathlib.Path.{method}")(decorated))
         for method, return_value in methods_and_return_values.items():
-            decorated = patch(f"pathlib.Path.{method}", Mock(return_value=return_value))(decorated)
-        return cast("_Decorated", decorated)
+            decorated = cast("_Decorated", patch(f"pathlib.Path.{method}", Mock(return_value=return_value))(decorated))
+        return decorated
 
     return decorate
-
-
-def log_record(message: str, level: int = INFO) -> logging.LogRecord:
-    """Return a log record carrying the message, as the logging machinery hands one to a filter or a handler."""
-    return logging.LogRecord("update-time", level, "log.py", 1, message, args=None, exc_info=None)
 
 
 def mock_path(content: str, parent: Path | None = None, name: str = "f.py") -> Mock:
@@ -170,14 +104,6 @@ class FakeFiles(MutableMapping[Path, str]):
         ):
             yield
 
-    def _exists(self, path: Path) -> bool:
-        return path in self._files or path in self._directories
-
-    def _glob(self, path: Path, pattern: str, *_arguments: object, **_options: object) -> list[Path]:
-        known = [*self._files, *self._directories]
-        entries = {entry for name in known for entry in (name, *name.parents) if entry.is_relative_to(path)}
-        return sorted(entry for entry in entries if entry != path and entry.relative_to(path).full_match(pattern))
-
     def _read_text(self, path: Path, *_arguments: object, **_options: object) -> str:
         if (error := self.read_errors.get(path)) is not None:
             raise error
@@ -205,3 +131,11 @@ class FakeFiles(MutableMapping[Path, str]):
         if path not in self._files and not missing_ok:
             raise FileNotFoundError(2, "No such file or directory", str(path))
         self._files.pop(path, None)
+
+    def _exists(self, path: Path) -> bool:
+        return path in self._files or path in self._directories
+
+    def _glob(self, path: Path, pattern: str, *_arguments: object, **_options: object) -> list[Path]:
+        known = [*self._files, *self._directories]
+        entries = {entry for name in known for entry in (name, *name.parents) if entry.is_relative_to(path)}
+        return sorted(entry for entry in entries if entry != path and entry.relative_to(path).full_match(pattern))

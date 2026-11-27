@@ -17,56 +17,57 @@ import re
 import subprocess  # nosec
 import sys
 from pathlib import Path
+from typing import Final
 
 from mutation_time.mutation import CHECKS_OFF, StaleError, mutated_source
 
 # The line separating the snippet to replace from its replacement on standard input.
-_SEPARATOR = "@@"
+_SEPARATOR: Final[str] = "@@"
 
 # What separates a file from the definition inside it to change, as in
 # `src/mutation_time/mutation.py:Mutation._mutated`. The snippet then has to be unique within that definition rather
 # than across the whole file.
-_ANCHOR = ":"
+_ANCHOR: Final[str] = ":"
 
 # What unittest reports when a run broke rather than failed: a test that raised before it could assert. A stub
 # naming something the file cannot resolve breaks every test that reaches it, and exits non-zero exactly as a
 # guarding test does, so the count is read back out and reported.
-_ERRORS = re.compile(r"^FAILED \(.*\berrors=(?P<errors>\d+)", re.MULTILINE)
+_ERRORS: Final[re.Pattern[str]] = re.compile(r"^FAILED \(.*\berrors=(?P<errors>\d+)", re.MULTILINE)
 
 # How many tests a run reported running, which a stub that broke the file cuts short. A failing run replays
 # unittest's own `Ran N tests`, while a passing one is summarised by the recipe as `PASS (N tests)`, so a comparison
 # between the two has to read both spellings. A failing run reports the count of each failing test module before the
 # total, so the total is the last count.
-_TESTS_RUN = re.compile(r"(?:^Ran |PASS \()(?P<tests>\d+) tests?\b", re.MULTILINE)
+_TESTS_RUN: Final[re.Pattern[str]] = re.compile(r"(?:^Ran |PASS \()(?P<tests>\d+) tests?\b", re.MULTILINE)
 
 # A test the run reported as failing, as unittest names it: the method, where it lives, and a `subTest` case's
 # parameters where it has them. Those parameters are what tells one case of a table from another.
-_KILLED_BY = re.compile(r"^(?:FAIL|ERROR): (?P<test>.+)$", re.MULTILINE)
+_KILLED_BY: Final[re.Pattern[str]] = re.compile(r"^(?:FAIL|ERROR): (?P<test>.+)$", re.MULTILINE)
 
 # The exit code for a probe that never ran: the file could not be read, the anchor did not hold the snippet exactly
 # once, the file does not define the anchor, the snippet and its replacement open on the same indentation, or the
 # input could not be read.
-_NOT_RUN = 2
+_NOT_RUN: Final[int] = 2
 
 # The exit code for a run that was killed and reported errors: the stub may have broken the file rather than the
 # behaviour, so the kill is the run's to explain. A guard firing through an exception is an error too, which is why
 # this is neither a plain kill nor a probe that told nothing.
-_UNCERTAIN = 3
+_UNCERTAIN: Final[int] = 3
 
 # The exit code for a run that failed although its tests passed, because another gate failed, such as the coverage
 # gate of `just test`. So this says as little about the guard as a survival does.
-_UNGUARDED = 4
+_UNGUARDED: Final[int] = 4
 
 # unittest and pytest exit with this status when a test failed. A command failing with any other status passed its
 # tests and failed another gate.
-_TESTS_FAILED = 1
+_TESTS_FAILED: Final[int] = 1
 
-_DEFAULT_COMMAND = ("just", "test")
+_DEFAULT_COMMAND: Final[tuple[str, ...]] = ("just", "test")
 
 # The command runs in this environment, which has the `@kills` checks switched off. A test whose own registered mutation
 # names a line this probe rewrote would report that mutation as stale or survived, which says nothing about the
 # probe, so the kill list holds the tests that failed on this mutation and no others.
-_ENVIRONMENT = os.environ | {CHECKS_OFF: "1"}
+_ENVIRONMENT: Final[dict[str, str]] = os.environ | {CHECKS_OFF: "1"}
 
 
 def _snippets(text: str) -> tuple[str, str]:
@@ -170,5 +171,5 @@ def _tests_run(output: str) -> int | None:
     return int(counts[-1]) if counts else None
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

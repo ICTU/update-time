@@ -1,6 +1,6 @@
 """Unit tests for the jsDelivr source."""
 
-from unittest.mock import Mock, patch
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
@@ -8,30 +8,32 @@ from update_time.domain.dependency import DependencyVersion, PinnedDependency, Y
 from update_time.io.log import Logger
 from update_time.sources.jsdelivr import version_getter
 
-from tests.helpers import mock_response, unparsable_response
+from tests.http_mocks import mock_response, patch_get, unparsable_response
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.domain_objects import days_ago
 from tests.update_time.fixtures import FRESH_DATE, HASH, HASH1, HASH2, PAST_COOLDOWN_DATE
-from tests.update_time.helpers import LoggingTestCase, days_ago, message_of
-from tests.update_time.sources.helpers import jsdelivr_versions, npm_registry
+from tests.update_time.io.log_messages import message_of
+
+from .npm_answers import jsdelivr_versions, npm_registry
+
+if TYPE_CHECKING:
+    from collections.abc import Collection, Sequence
+    from unittest.mock import Mock
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
-_FILENAME = "/dist/clipboard.min.js"
-_FLAT_FILES = {"default": _FILENAME, "files": [{"name": _FILENAME, "hash": HASH}]}
-
-
-def _get_latest_version(
-    dependency: str, current_version: str, filename: str, cooldown_days: int = COOLDOWN.default
-) -> DependencyVersion:
-    """Return the version the source resolves for the file the URL references, unbounded."""
-    pinned = PinnedDependency(dependency, current_version)
-    return version_getter(filename)(pinned, NO_BOUND, cooldown_days)
+_FILENAME: Final[str] = "/dist/clipboard.min.js"
+_FLAT_FILES: Final[dict[str, Sequence[Collection[str]]]] = {
+    "default": _FILENAME,
+    "files": [{"name": _FILENAME, "hash": HASH}],
+}
 
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
-_ELIGIBLE = PAST_COOLDOWN_DATE.isoformat()
-_FRESH = FRESH_DATE.isoformat()
+_ELIGIBLE: Final[str] = PAST_COOLDOWN_DATE.isoformat()
+_FRESH: Final[str] = FRESH_DATE.isoformat()
 
 
-@patch("requests.Session.get")
+@patch_get()
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for the get latest jsdelivr version function.
 
@@ -87,8 +89,7 @@ class GetLatestVersionTest(LoggingTestCase):
                     mock_response(_FLAT_FILES),
                 ]
                 dependency = f"clipboard{cooldown_days}"  # A fresh name per case, as the npm fetches are cached.
-                latest = _get_latest_version(dependency, "1.0", _FILENAME, cooldown_days)
-                self.assertEqual(latest.version, expected)
+                self.assertEqual(_get_latest_version(dependency, "1.0", _FILENAME, cooldown_days).version, expected)
 
     def test_deprecated_version_skipped(self, mock_get: Mock):
         """Test that a newer version that is deprecated on npm is not adopted as an update."""
@@ -183,3 +184,10 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest_version.sha, "")
         message = message_of(Logger.no_integrity_hash)
         self.assert_logged(message, dependency="clipboard", version="1.1", filename=_FILENAME)
+
+
+def _get_latest_version(
+    dependency: str, current_version: str, filename: str, cooldown_days: int = COOLDOWN.default
+) -> DependencyVersion:
+    """Return the version the source resolves for the file the URL references, unbounded."""
+    return version_getter(filename)(PinnedDependency(dependency, current_version), NO_BOUND, cooldown_days)

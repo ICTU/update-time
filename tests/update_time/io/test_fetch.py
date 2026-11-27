@@ -2,6 +2,7 @@
 
 import unittest
 from http import HTTPStatus
+from typing import Final
 from unittest.mock import Mock, patch
 
 import requests
@@ -11,16 +12,18 @@ from update_time.io.fetch import _failure_reason, fetch, fetch_json, next_page_u
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.lookup import LookedUp
 
-from tests.helpers import mock_response, patch_get, unparsable_response
-from tests.update_time.helpers import LoggingTestCase, message_of
+from tests.http_mocks import mock_response, patch_get, patch_get_response, unparsable_response
+from tests.update_time.base_test_cases import LoggingTestCase
 
-_LOG = get_logger("fetch")
+from .log_messages import message_of
+
+_LOG: Final[Logger] = get_logger("fetch")
 
 
 class FetchTest(LoggingTestCase):
     """Unit tests for the fetch function."""
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_ok_response_is_returned(self, mock_get: Mock):
         """Test that an OK response is returned and the timeout is applied."""
         response = mock_response({"key": "value"}, ok=True)
@@ -36,7 +39,7 @@ class FetchTest(LoggingTestCase):
         self.assertIs(response, fetch("https://example.org", _LOG, method="head", headers={"A": "b"}))
         mock_head.assert_called_once_with("https://example.org", timeout=10, headers={"A": "b"})
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_non_ok_response_is_logged_and_dropped(self, mock_get: Mock):
         """Test that a non-OK response is logged and reported as None by default."""
         mock_get.return_value = mock_response(
@@ -47,7 +50,7 @@ class FetchTest(LoggingTestCase):
             message_of(Logger.request_failed), url="https://example.org", failure="HTTP 503 Service Unavailable"
         )
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_non_ok_response_is_returned_when_status_is_not_required(self, mock_get: Mock):
         """Test that a non-OK response is returned unlogged when the caller inspects the status itself."""
         response = mock_response({}, ok=False)
@@ -55,7 +58,7 @@ class FetchTest(LoggingTestCase):
         self.assertIs(response, fetch("https://example.org", _LOG, require_ok=False))
         self.mock_log.assert_not_called()
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_timeout_is_logged_and_dropped(self, mock_get: Mock):
         """Test that a timeout is logged and reported as None rather than raised."""
         mock_get.side_effect = requests.exceptions.Timeout
@@ -64,7 +67,7 @@ class FetchTest(LoggingTestCase):
             message_of(Logger.request_failed), url="https://example.org", failure="the request timed out"
         )
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_network_error_is_logged_and_dropped(self, mock_get: Mock):
         """Test that a connection error (or any other network error) is logged and reported as None."""
         error = requests.exceptions.ConnectionError("connection refused")
@@ -76,51 +79,60 @@ class FetchTest(LoggingTestCase):
 class FetchJsonTest(LoggingTestCase):
     """Unit tests for the fetch_json function."""
 
-    @patch_get({"key": "value"}, ok=True)
+    @patch_get_response({"key": "value"}, ok=True)
     def test_ok_response_gives_its_json_body(self):
         """Test that an OK response gives its parsed JSON body, and logs nothing."""
-        self.assertEqual(fetch_json("https://example.org", _LOG), LookedUp({"key": "value"}))
+        self.assertEqual(fetch_json("https://example.org", _LOG, body=dict[str, str]), LookedUp({"key": "value"}))
         self.mock_log.assert_not_called()
 
-    @patch("requests.Session.get")
+    @patch_get()
     def test_the_headers_are_sent_with_the_request(self, mock_get: Mock):
         """Test that the headers are sent with the request."""
         mock_get.return_value = mock_response({}, ok=True)
-        fetch_json("https://example.org", _LOG, headers={"Authorization": "Bearer token"})
+        fetch_json("https://example.org", _LOG, body=dict[str, str], headers={"Authorization": "Bearer token"})
         mock_get.assert_called_once_with("https://example.org", timeout=10, headers={"Authorization": "Bearer token"})
 
-    @patch("requests.Session.get", Mock(side_effect=requests.exceptions.Timeout))
+    @patch_get(Mock(side_effect=requests.exceptions.Timeout))
     def test_a_failed_request_gives_its_reason_and_is_logged_once(self):
         """Test that a request failing at the transport level gives the reason it failed, and logs one warning."""
-        self.assertEqual(fetch_json("https://example.org", _LOG), LookedUp(None, "the request failed"))
+        self.assertEqual(
+            fetch_json("https://example.org", _LOG, body=dict[str, str]), LookedUp(None, "the request failed")
+        )
         self.assert_logged(
             message_of(Logger.request_failed), url="https://example.org", failure="the request timed out"
         )
 
-    @patch_get(ok=False, status_code=503, url="https://example.org", reason="Service Unavailable")
+    @patch_get_response(ok=False, status_code=503, url="https://example.org", reason="Service Unavailable")
     def test_a_refused_request_gives_its_status_and_is_logged_once(self):
         """Test that a refusal with a status other than one meaning absent gives the status, and logs one warning."""
         self.assertEqual(
-            fetch_json("https://example.org", _LOG, statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)),
+            fetch_json(
+                "https://example.org", _LOG, body=dict[str, str], statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)
+            ),
             LookedUp(None, "HTTP 503"),
         )
         self.assert_logged(
             message_of(Logger.request_failed), url="https://example.org", failure="HTTP 503 Service Unavailable"
         )
 
-    @patch_get(ok=False, status_code=404)
+    @patch_get_response(ok=False, status_code=404)
     def test_a_status_meaning_absent_gives_an_absent_lookup_and_logs_nothing(self):
         """Test that a refusal with a status the caller says means absent gives an absent lookup, and logs nothing."""
         self.assertEqual(
-            fetch_json("https://example.org", _LOG, statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)),
+            fetch_json(
+                "https://example.org", _LOG, body=dict[str, str], statuses_meaning_absent=(HTTPStatus.NOT_FOUND,)
+            ),
             LookedUp(None, "HTTP 404", absent=True),
         )
         self.mock_log.assert_not_called()
 
-    @patch("requests.Session.get", Mock(return_value=unparsable_response(ok=True, url="https://example.org")))
+    @patch_get(Mock(return_value=unparsable_response(ok=True, url="https://example.org")))
     def test_a_body_that_is_not_json_gives_its_reason_and_is_logged_once(self):
         """Test that an OK response whose body is not JSON gives the reason rather than raising, and logs a warning."""
-        self.assertEqual(fetch_json("https://example.org", _LOG), LookedUp(None, "the response is not valid JSON"))
+        self.assertEqual(
+            fetch_json("https://example.org", _LOG, body=dict[str, str]),
+            LookedUp(None, "the response is not valid JSON"),
+        )
         self.assert_invalid_json_logged("https://example.org")
 
 
@@ -152,6 +164,10 @@ class FailureReasonTest(unittest.TestCase):
 class NextPageUrlTest(unittest.TestCase):
     """Unit tests for reading the next-page URL from a paginated response's Link header."""
 
+    def test_no_link_header(self):
+        """Test that a response without a Link header has no next page."""
+        self.assertIsNone(next_page_url(self._response("https://reg.example/v2/lib/tags/list?n=1000")))
+
     @staticmethod
     def _response(url: str, link: str = "") -> requests.Response:
         """Return a real requests Response with the given URL and (optional) Link header."""
@@ -160,10 +176,6 @@ class NextPageUrlTest(unittest.TestCase):
         if link:
             response.headers["Link"] = link
         return response
-
-    def test_no_link_header(self):
-        """Test that a response without a Link header has no next page."""
-        self.assertIsNone(next_page_url(self._response("https://reg.example/v2/lib/tags/list?n=1000")))
 
     def test_relative_next_link_is_resolved_against_the_response_url(self):
         """Test that a relative next link (as registries return) is resolved to an absolute URL."""

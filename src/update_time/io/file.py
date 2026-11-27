@@ -9,17 +9,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from update_time.io.log import Logger
     from update_time.primitives.line import Line
+
+    from .log import Logger
 
 
 class File(ABC):
     """A file read whole, once, which `readable` passes over where the read fails."""
-
-    @classmethod
-    @abstractmethod
-    def read(cls, path: Path) -> Self:
-        """Return the file at the path, raising an `OSError` or a `ValueError` where it cannot be read."""
 
     @classmethod
     def readable(cls, path: Path, report: Callable[[Path, OSError | ValueError], None] | None = None) -> Self | None:
@@ -30,6 +26,11 @@ class File(ABC):
             if report is not None:
                 report(path, error)
             return None
+
+    @classmethod
+    @abstractmethod
+    def read(cls, path: Path) -> Self:
+        """Return the file at the path, raising an `OSError` or a `ValueError` where it cannot be read."""
 
 
 def rewrite_file(path: Path, transform: Callable[[list[Line]], list[str]], logger: Logger) -> list[Line]:

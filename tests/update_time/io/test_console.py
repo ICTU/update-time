@@ -2,7 +2,7 @@
 
 import io
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -24,9 +24,11 @@ from update_time.io.console import (
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.command import Command
 
+from tests.update_time.domain_objects import reference
 from tests.update_time.fixtures import DIGEST, DIGEST2
-from tests.update_time.helpers import message_of, reference
-from tests.update_time.io.helpers import at, create_location, dependency
+
+from .log_fields import at, create_location, dependency
+from .log_messages import message_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,15 +37,29 @@ if TYPE_CHECKING:
 
 
 # The corners and sides Rich draws a rounded box with.
-_BOX_TOP_LEFT = "╭"
-_BOX_BOTTOM_LEFT = "╰"
-_BOX_SIDE = "│"
+_BOX_TOP_LEFT: Final[str] = "╭"
+_BOX_BOTTOM_LEFT: Final[str] = "╰"
+_BOX_SIDE: Final[str] = "│"
 
 
 class RecordRenderingTests(TestCase):
     """Unit tests for what the console shows for a record."""
 
     RELEASE_PAGE = "https://github.com/python-humanize/humanize/releases/tag/4.15.0"
+
+    @kills.force_true(
+        console_module._LogHandler._changes_markup,
+        "self.console.is_terminal",
+        "a link's URL is written into an escape nothing renders, so a file or a CI log holds the text alone",
+    )
+    def test_a_links_url_is_printed_where_nothing_can_be_clicked(self):
+        """Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log."""
+        url = "https://github.com/python-humanize/humanize/issues/42"
+        self.assertIn(url, self.rendered_changes(Changes(f"- A fix ([#42]({url}))", markdown=True, url="")))
+
+    def rendered_changes(self, changes: Changes, level: str = "INFO", *, styles: bool = False) -> str:
+        """Return what the console shows at the level when a new version of `pkg` reports the changes."""
+        return self.rendered(lambda log: self.report_new_version(log, changes), level, styles=styles)
 
     @staticmethod
     def rendered(report: Callable[[Logger], None], level: str = "INFO", *, styles: bool = False) -> str:
@@ -64,43 +80,18 @@ class RecordRenderingTests(TestCase):
     @staticmethod
     def report_new_version(log: Logger, changes: Changes = NO_CHANGES) -> None:
         """Report a new version of `pkg`, with the changes a changelog records for it."""
-        version = DependencyVersion("1.2.0", changes)
-        log.new_version(reference("pkg", create_location("requirements.txt", 3)), version)
-
-    @staticmethod
-    def report_pin(log: Logger) -> None:
-        """Report that `pkg` was pinned to a version."""
-        log.pinned_version(reference("pkg", create_location("requirements.txt", 3)), DependencyVersion("1.2.0"))
-
-    def rendered_changes(self, changes: Changes, level: str = "INFO", *, styles: bool = False) -> str:
-        """Return what the console shows at the level when a new version of `pkg` reports the changes."""
-        return self.rendered(lambda log: self.report_new_version(log, changes), level, styles=styles)
-
-    def assert_boxed(self, rendered: str, contents: list[str]) -> None:
-        """Assert that the lines below the message sit in a box, and that the box holds these lines and no others."""
-        lines = [line.strip() for line in rendered.splitlines()][1:]
-        corners = [line[:1] for line in lines[:1] + lines[-1:]]
-        self.assertEqual(corners, [_BOX_TOP_LEFT, _BOX_BOTTOM_LEFT], rendered)
-        sides = {(line[0], line[-1]) for line in lines[1:-1]}
-        self.assertEqual(sides, {(_BOX_SIDE, _BOX_SIDE)}, rendered)
-        self.assertEqual([line.strip(_BOX_SIDE).strip() for line in lines[1:-1]], contents, rendered)
-
-    @kills.force_true(
-        console_module._LogHandler._changes_markup,
-        "self.console.is_terminal",
-        "a link's URL is written into an escape nothing renders, so a file or a CI log holds the text alone",
-    )
-    def test_a_links_url_is_printed_where_nothing_can_be_clicked(self):
-        """Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log."""
-        url = "https://github.com/python-humanize/humanize/issues/42"
-        rendered = self.rendered_changes(Changes(f"- A fix ([#42]({url}))", markdown=True, url=""))
-        self.assertIn(url, rendered)
+        log.new_version(reference("pkg", create_location("requirements.txt", 3)), DependencyVersion("1.2.0", changes))
 
     def test_a_record_without_changes_gets_no_empty_block(self):
         """Test that a record carrying no changes renders as its message alone."""
         rendered = self.rendered(self.report_pin)
         self.assertIn("Pinned pkg in requirements.txt:3 to 1.2.0", rendered)
         self.assertEqual(rendered.splitlines()[1:], [])
+
+    @staticmethod
+    def report_pin(log: Logger) -> None:
+        """Report that `pkg` was pinned to a version."""
+        log.pinned_version(reference("pkg", create_location("requirements.txt", 3)), DependencyVersion("1.2.0"))
 
     @kills.delete(
         console_module.named_message,
@@ -120,8 +111,7 @@ class RecordRenderingTests(TestCase):
 
     def test_the_name_of_a_message_with_lines_below_it_ends_the_first_line(self):
         """Test that a message with changes boxed below it, or a note, carries its name on the message's own line."""
-        cases = {"changes": Changes("Fixed bug A", markdown=False, url=""), "a note": NO_CHANGES}
-        for case, changes in cases.items():
+        for case, changes in {"changes": Changes("Fixed bug A", markdown=False, url=""), "a note": NO_CHANGES}.items():
             with self.subTest(below=case):
                 first_line = self.rendered_changes(changes).splitlines()[0]
                 self.assertTrue(first_line.rstrip().endswith("requirements.txt:3: 1.2.0 (new-version)"), first_line)
@@ -161,6 +151,13 @@ class RecordRenderingTests(TestCase):
         """Test that a comment a changelog hides in its markup stays hidden, the box closing up around it."""
         changes = Changes("## 1.2.0\n\n<!-- towncrier release notes start -->\n\n- A fix\n", markdown=True, url="")
         self.assert_boxed(self.rendered_changes(changes), ["1.2.0", "", "• A fix"])
+
+    def assert_boxed(self, rendered: str, contents: list[str]) -> None:
+        """Assert that the lines below the message sit in a box, and that the box holds these lines and no others."""
+        lines = [line.strip() for line in rendered.splitlines()][1:]
+        self.assertEqual([line[:1] for line in lines[:1] + lines[-1:]], [_BOX_TOP_LEFT, _BOX_BOTTOM_LEFT], rendered)
+        self.assertEqual({(line[0], line[-1]) for line in lines[1:-1]}, {(_BOX_SIDE, _BOX_SIDE)}, rendered)
+        self.assertEqual([line.strip(_BOX_SIDE).strip() for line in lines[1:-1]], contents, rendered)
 
     @kills.replace(
         console_module._ChangelogMarkdown._without_blank_blocks,
@@ -206,7 +203,7 @@ class RecordRenderingTests(TestCase):
     )
     @kills.replace(
         console_module._RawHtml.__rich_console__,
-        "html.text(self.html)",
+        "html_to_text(self.html)",
         "self.html.strip()",
         "a raw HTML block shows its tags, which the reader has to read past",
     )
@@ -286,13 +283,12 @@ class RecordRenderingTests(TestCase):
         }
         for case, (markup, title) in cases.items():
             with self.subTest(case=case):
-                rendered = self.rendered_changes(Changes(markup, markdown=True, url=""))
-                self.assertIn(f"{_BOX_SIDE} {title}", rendered)
+                self.assertIn(f"{_BOX_SIDE} {title}", self.rendered_changes(Changes(markup, markdown=True, url="")))
 
     @kills.replace(
         console_module,
-        '_READ_AS_TEXT = ("text", "html_block")',
-        '_READ_AS_TEXT = ("text",)',
+        '_READ_AS_TEXT: Final[tuple[str, ...]] = ("text", "html_block")',
+        '_READ_AS_TEXT: Final[tuple[str, ...]] = ("text",)',
         "a shortcode in a <details> section's summary is shown as typed, beside prose that gets its emoji",
     )
     def test_a_shortcode_in_a_raw_html_block_renders_as_its_emoji(self):
@@ -330,8 +326,7 @@ class RecordRenderingTests(TestCase):
     def test_changes_that_are_not_markdown_keep_their_lines_and_a_dash_as_written(self):
         """Test that a changelog that is not Markdown is boxed too, keeping its lines and a dash as written."""
         changes = Changes("Fixed bug A\nFixed bug B\n- and a dash that is no bullet", markdown=False, url="")
-        rendered = self.rendered_changes(changes)
-        self.assert_boxed(rendered, changes.splitlines())
+        self.assert_boxed(self.rendered_changes(changes), changes.splitlines())
 
     @kills.delete(
         restructured_text.text,
@@ -367,8 +362,8 @@ class RecordRenderingTests(TestCase):
     )
     @kills.replace(
         restructured_text,
-        '_INLINE_LITERAL = re.compile(r"``(.+?)``")',
-        '_INLINE_LITERAL = re.compile(r"``(.+)``")',
+        '_INLINE_LITERAL: Final[re.Pattern[str]] = re.compile(r"``(.+?)``")',
+        '_INLINE_LITERAL: Final[re.Pattern[str]] = re.compile(r"``(.+)``")',
         "a line holding two inline literals keeps the backticks closing the first and opening the second",
     )
     def test_an_inline_literal_in_changes_that_are_not_markdown_shows_without_its_backticks(self):
@@ -410,16 +405,9 @@ class RecordRenderingTests(TestCase):
 class LogHighlighterTests(TestCase):
     """Unit tests for how the log output is highlighted."""
 
-    @staticmethod
-    def highlighted(message: str) -> tuple[str, list[tuple[str, str | Style]]]:
-        """Return the highlighted message: the text it reads as, and the styled run each of its spans covers."""
-        text = Text(message)
-        _LogHighlighter().highlight(text)
-        return text.plain, [(text.plain[span.start : span.end], span.style) for span in text.spans]
-
     def test_digest_highlighted_as_one_token(self):
         """Test that the full digest gets a single `repr.digest` span and no leftover fragment sub-spans inside it."""
-        digest = f"sha256:{'a4fde3b2' + 'c' * 56}"  # a realistic 64-hex-character digest
+        digest = f"sha256:{f'a4fde3b2{"c" * 56}'}"  # a realistic 64-hex-character digest
         text = Text(f"pinned to {digest} but the registry now serves {DIGEST2}")
         _LogHighlighter().highlight(text)
         start = text.plain.index(digest)
@@ -430,6 +418,13 @@ class LogHighlighterTests(TestCase):
         """Test that ordinary highlighting (e.g. of a version number) is preserved for messages without a digest."""
         _plain, styled = self.highlighted("New version available: 3.14")
         self.assertIn("repr.number", [style for _run, style in styled])
+
+    @staticmethod
+    def highlighted(message: str) -> tuple[str, list[tuple[str, str | Style]]]:
+        """Return the highlighted message: the text it reads as, and the styled run each of its spans covers."""
+        text = Text(message)
+        _LogHighlighter().highlight(text)
+        return text.plain, [(text.plain[span.start : span.end], span.style) for span in text.spans]
 
     def test_dependency_name_highlighted_and_markers_removed(self):
         """Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace."""

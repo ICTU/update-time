@@ -9,24 +9,22 @@ which the architecture tests enforce.
 
 import threading
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, TypedDict, Unpack
+from typing import TYPE_CHECKING, Final, TypedDict, Unpack
 from urllib.parse import urljoin
 
 import requests
 
-from update_time.formats import json
+from update_time.formats.json import FORMAT
 from update_time.primitives.lookup import LookedUp
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping
 
-    from update_time.io.log import Logger
-
-_TIMEOUT = 10  # Seconds to wait for a registry before giving up on the request.
+    from .log import Logger
 
 # A session reuses its connections. Each thread gets a session of its own, since requests does not document a session
 # as thread-safe.
-_SESSIONS = threading.local()
+_SESSIONS: Final[threading.local] = threading.local()
 
 type Response = requests.Response
 type _Fetched = Response | None
@@ -38,41 +36,21 @@ class _Request(TypedDict, total=False):
     headers: Mapping[str, str]
     params: Mapping[str, str]
     auth: tuple[str, str] | None
-    json: object
+    json: object  # simplint: ignore[imprecise-annotation] # a TypedDict does not fit a JSON type
 
 
-def _session() -> requests.Session:
-    """Return the current thread's session."""
-    if not hasattr(_SESSIONS, "session"):
-        _SESSIONS.session = requests.Session()
-    return _SESSIONS.session
-
-
-def fetch(
+def fetch_json[Body](
     url: str,
     logger: Logger,
     *,
+    body: type[Body],
     method: str = "get",
-    require_ok: bool = True,
-    on_response: Callable[[Response], None] | None = None,
+    statuses_meaning_absent: Collection[int] = (),
     **request: Unpack[_Request],
-) -> _Fetched:
-    """Make an HTTP request and return the response, or None (logged) on a network error or non-OK status.
-
-    `method` selects the session method (`get`, `head`, `post`); `request` (headers, params, auth, json) is
-    forwarded to it verbatim. Pass `require_ok=False` to receive the response regardless of status.
-    """
-    try:
-        response = getattr(_session(), method)(url, timeout=_TIMEOUT, **request)
-    except requests.exceptions.RequestException as error:
-        logger.request_failed(url, error)
-        return None
-    if on_response is not None:
-        on_response(response)
-    if require_ok and not response.ok:
-        logger.request_failed(response.url, response)
-        return None
-    return response
+) -> LookedUp[Body]:
+    """Return the JSON body of the URL's response as the body type, or why the request failed, logged unless absent."""
+    found = look_up(url, logger, method=method, statuses_meaning_absent=statuses_meaning_absent, **request)
+    return json_body(found, logger, body=body)
 
 
 def look_up(
@@ -95,28 +73,33 @@ def look_up(
     return LookedUp(response)
 
 
-def json_body(found: LookedUp[Response], logger: Logger) -> LookedUp[Any]:
-    """Return the JSON body of the response the lookup found, or why there is none, logged where it isn't JSON."""
-    if (response := found.value) is None:
-        return found
-    try:
-        return LookedUp(response.json())
-    except ValueError:  # The body isn't JSON
-        logger.invalid_response(response.url, json.FORMAT)
-        return LookedUp(None, "the response is not valid JSON")
-
-
-def fetch_json(
+def fetch(
     url: str,
     logger: Logger,
     *,
     method: str = "get",
-    statuses_meaning_absent: Collection[int] = (),
+    require_ok: bool = True,
+    on_response: Callable[[Response], None] | None = None,
     **request: Unpack[_Request],
-) -> LookedUp[Any]:
-    """Return the JSON body of the URL's response, or why the request failed, logged unless its status means absent."""
-    found = look_up(url, logger, method=method, statuses_meaning_absent=statuses_meaning_absent, **request)
-    return json_body(found, logger)
+) -> _Fetched:
+    """Make an HTTP request and return the response, or None (logged) on a network error or non-OK status.
+
+    `method` selects the session method (`get`, `head`, `post`); `request` (headers, params, auth, json) is
+    forwarded to it verbatim. Pass `require_ok=False` to receive the response regardless of status.
+    """
+    if not hasattr(_SESSIONS, "session"):
+        _SESSIONS.session = requests.Session()
+    try:
+        response = getattr(_SESSIONS.session, method)(url, timeout=10, **request)
+    except requests.exceptions.RequestException as error:
+        logger.request_failed(url, error)
+        return None
+    if on_response is not None:
+        on_response(response)
+    if require_ok and not response.ok:
+        logger.request_failed(response.url, response)
+        return None
+    return response
 
 
 def _failure_reason(response: _Fetched) -> str:
@@ -127,7 +110,23 @@ def _failure_reason(response: _Fetched) -> str:
     with suppress(ValueError):  # A body that isn't JSON has no message to include
         body = response.json()
     message = body.get("message", "") if isinstance(body, dict) else ""
-    return f"HTTP {response.status_code}" + (f", {message}" if message else "")
+    return f"HTTP {response.status_code}{f', {message}' if message else ''}"
+
+
+def json_body[Body](found: LookedUp[Response], logger: Logger, *, body: type[Body]) -> LookedUp[Body]:
+    """Return the JSON body of the response the lookup found as the body type, or why there is none.
+
+    The body type tells the type checker what the caller reads; the response is not checked against it. A body that
+    isn't JSON is logged.
+    """
+    del body
+    if (response := found.value) is None:
+        return found.failure()
+    try:
+        return LookedUp(response.json())
+    except ValueError:  # The body isn't JSON
+        logger.invalid_response(response.url, FORMAT)
+        return LookedUp(None, "the response is not valid JSON")
 
 
 def next_page_url(response: Response) -> str | None:

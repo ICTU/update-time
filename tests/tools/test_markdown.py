@@ -1,13 +1,14 @@
 """Unit tests for the Markdown facts the README tools share."""
 
 import unittest
+from typing import Final
 
 from tools import markdown
-from tools.markdown import anchor, anchors, headings, lines_without_code_blocks, without_code_blocks
+from tools.markdown import _combining_mark, anchor, anchors, headings, lines_without_code_blocks, without_code_blocks
 
 from mutation_time.mutation import kills
 
-_DOCUMENT = "# Title\n\n## ⚡ Usage\n\n### Workflow\n\n#### Detail\n"
+_DOCUMENT: Final[str] = "# Title\n\n## ⚡ Usage\n\n### Workflow\n\n#### Detail\n"
 
 
 class HeadingsTest(unittest.TestCase):
@@ -15,8 +16,7 @@ class HeadingsTest(unittest.TestCase):
 
     def test_level_and_title_in_document_order(self):
         """Test that each heading comes back with the level its hashes give it, in the order the document has them."""
-        expected = [(1, "Title"), (2, "⚡ Usage"), (3, "Workflow"), (4, "Detail")]
-        self.assertEqual(headings(_DOCUMENT), expected)
+        self.assertEqual(headings(_DOCUMENT), [(1, "Title"), (2, "⚡ Usage"), (3, "Workflow"), (4, "Detail")])
 
     def test_headings_outside_the_levels_asked_for_are_left_out(self):
         """Test that a heading above or below the levels asked for gets no entry."""
@@ -40,23 +40,23 @@ class AnchorTest(unittest.TestCase):
     """Unit tests for the anchor GitHub gives a heading."""
 
     @kills.replace(
-        markdown._combining_mark,
+        _combining_mark,
         'unicodedata.category(match[0]).startswith("M")',
         r'match[0] == "\ufe0f"',
         "only the U+FE0F after an emoji is kept, so another combining mark is dropped where GitHub keeps it",
         case="Cafe\u0301",
     )
     @kills.replace(
-        markdown._combining_mark,
+        _combining_mark,
         'unicodedata.category(match[0]).startswith("M")',
         "unicodedata.combining(match[0])",
         "only a mark with a combining class is kept, so the U+FE0F after an emoji such as ⚠️ is dropped",
         case="\u26a0\ufe0f Warnings",
     )
     @kills.replace(
-        markdown.anchor,
-        r'r"[^\w\s-]"',
-        r'r"[^\w\s.-]"',
+        markdown,
+        r"[^\w\s-]",
+        r"[^\w\s.-]",
         "a dot is kept, so the anchor of a heading quoting a file name does not match GitHub's",
         case="`pyproject.toml` dependencies",
     )

@@ -8,21 +8,21 @@ import sys
 import unittest
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from unittest.mock import Mock, patch
 
-from tools import run_if_changed
+from tools.run_if_changed import _fingerprint, _fingerprints, _paths, _recorded, _source, main
 
 from mutation_time.mutation import kills
 
-from tests.helpers import FakeFiles
+from tests.file_mocks import FakeFiles
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 
 # A module with a docstring of its own and one in its function.
-_MODULE = '''"""Answer questions."""
+_MODULE: Final[str] = '''"""Answer questions."""
 
 
 def answer() -> int:
@@ -31,76 +31,24 @@ def answer() -> int:
 '''
 
 
-def _files_listed(paths: list[Path], command_exit_status: int = 0) -> Mock:
-    """Return a stub for `subprocess.run` whose `git ls-files` lists the files, reading the list at each call.
-
-    It lists the files that match a pathspec the command ends on, as git does. Any other command exits with the given
-    status.
-    """
-
-    def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] == "git":
-            pathspecs = [argument for argument in command[2:] if not argument.startswith("-")]
-            listed = [path for path in paths if any(fnmatch(path.as_posix(), pathspec) for pathspec in pathspecs)]
-            return subprocess.CompletedProcess(command, 0, stdout="".join(f"{path}\0" for path in listed), stderr="")
-        return subprocess.CompletedProcess(command, command_exit_status)
-
-    return Mock(side_effect=run)
-
-
-def _rerun_after(edited: str) -> tuple[int, bool]:
-    """Return the exit status of a run after the module was edited, and whether that run rewrote the fingerprint."""
-    files = FakeFiles({_ANSWER: _MODULE})
-    with _patched(_files_listed([_ANSWER]), files):
-        run_if_changed.main()
-        fingerprint = files[_RECORD_FILE]
-        files[_ANSWER] = edited
-        return run_if_changed.main(), files[_RECORD_FILE] != fingerprint
-
-
-def _git_failing(failure: subprocess.CompletedProcess[str] | OSError) -> Mock:
-    """Return a stub for `subprocess.run` whose git fails as given, while any other command succeeds."""
-
-    def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] != "git":
-            return subprocess.CompletedProcess(command, 0)
-        if isinstance(failure, OSError):
-            raise failure
-        return failure
-
-    return Mock(side_effect=run)
-
-
-@contextlib.contextmanager
-def _patched(run: Mock, files: FakeFiles) -> Generator[None]:
-    """Patch the tool's `subprocess.run` with the stub, and `Path` with the files."""
-    with patch("tools.run_if_changed.subprocess.run", run), files.patched():
-        yield
-
-
 # The tests ask the tool for this exit status where it skips the command.
-_SKIPPED = 3
+_SKIPPED: Final[int] = 3
 # The tests give the tool this command to run.
-_COMMAND = ("just", "test")
+_COMMAND: Final[tuple[str, ...]] = ("just", "test")
 # Every test gives the tool these inputs and this record, unless it names its own.
-_SHARED_OPTIONS = ("--inputs", "*.py", "--record", "py-code")
+_SHARED_OPTIONS: Final[tuple[str, ...]] = ("--inputs", "*.py", "--record", "py-code")
 # The file that keeps the fingerprints of that record.
-_RECORD_FILE = Path("build/py-code-fingerprints.json")
+_RECORD_FILE: Final[Path] = Path("build/py-code-fingerprints.json")
 # The Python files most tests change.
-_ANSWER = Path("src/answer.py")
-_OTHER = Path("src/other.py")
+_ANSWER: Final[Path] = Path("src/answer.py")
+_OTHER: Final[Path] = Path("src/other.py")
 # The input other than Python that tests change.
-_UV_LOCK = Path("uv.lock")
+_UV_LOCK: Final[Path] = Path("uv.lock")
 
 
 def _argv(*options: str) -> list[str]:
     """Return the command line that runs the tool with the options given, which win over the tests' inputs."""
     return ["run_if_changed.py", "--skipped-status", str(_SKIPPED), *_SHARED_OPTIONS, *options, "--", *_COMMAND]
-
-
-def _commands_run(run: Mock) -> list[tuple[str, ...]]:
-    """Return the commands the stub for `subprocess.run` was asked to run, git's own commands left out."""
-    return [tuple(call.args[0]) for call in run.call_args_list if call.args[0][0] != "git"]
 
 
 @patch.object(sys, "argv", _argv())
@@ -111,7 +59,7 @@ class MainTest(unittest.TestCase):
         """Test that, where no fingerprint exists, the tool runs the command and fingerprints the code per file."""
         files = FakeFiles({_ANSWER: _MODULE})
         with _patched(_files_listed([_ANSWER]), files):
-            self.assertEqual(run_if_changed.main(), 0)
+            self.assertEqual(main(), 0)
         self.assertEqual(list(json.loads(files[_RECORD_FILE])), [str(_ANSWER)])
 
     def test_a_change_to_an_input_runs_the_command_and_a_change_elsewhere_skips_it(self):
@@ -120,11 +68,11 @@ class MainTest(unittest.TestCase):
         files = FakeFiles({_ANSWER: _MODULE, Path("tools/answer.py"): _MODULE})
         run = _files_listed([_ANSWER, Path("tools/answer.py")])
         with patch.object(sys, "argv", argv), _patched(run, files):
-            run_if_changed.main()
+            main()
             files[_ANSWER] = _MODULE.replace("42", "43")
-            self.assertEqual(run_if_changed.main(), _SKIPPED)
+            self.assertEqual(main(), _SKIPPED)
             files[Path("tools/answer.py")] = _MODULE.replace("42", "43")
-            self.assertEqual(run_if_changed.main(), 0)
+            self.assertEqual(main(), 0)
         self.assertEqual(_commands_run(run), [_COMMAND, _COMMAND])
 
     def test_an_input_other_than_python_counts_as_changed_by_any_edit(self):
@@ -137,20 +85,20 @@ class MainTest(unittest.TestCase):
                 patch.object(sys, "argv", argv),
                 _patched(_files_listed([_UV_LOCK]), files),
             ):
-                run_if_changed.main()
-                self.assertEqual(run_if_changed.main(), _SKIPPED)
+                main()
+                self.assertEqual(main(), _SKIPPED)
                 files[_UV_LOCK] = f"{lock}# A comment.\n"
-                self.assertEqual(run_if_changed.main(), 0)
+                self.assertEqual(main(), 0)
 
     def test_an_input_git_ignores_counts_where_named_by_its_path(self):
         """Test that deleting a file git ignores, which the inputs name by its path, runs the command."""
         files = FakeFiles({_UV_LOCK: "version = 1\n", Path(".venv/pyvenv.cfg"): "home = /usr/bin\n"})
         run = _files_listed([_UV_LOCK])  # Git leaves the ignored environment out of its listing.
         with patch.object(sys, "argv", _argv("--inputs", str(_UV_LOCK), ".venv/pyvenv.cfg")), _patched(run, files):
-            run_if_changed.main()
-            self.assertEqual(run_if_changed.main(), _SKIPPED)
+            main()
+            self.assertEqual(main(), _SKIPPED)
             del files[Path(".venv/pyvenv.cfg")]
-            self.assertEqual(run_if_changed.main(), 0)
+            self.assertEqual(main(), 0)
 
     def test_each_record_keeps_its_own_fingerprint(self):
         """Test that a command passing under one record leaves the command of another record to run."""
@@ -158,9 +106,9 @@ class MainTest(unittest.TestCase):
         run = _files_listed([_ANSWER])
         with _patched(run, files):
             with patch.object(sys, "argv", _argv("--record", "lint")):
-                self.assertEqual(run_if_changed.main(), 0)
+                self.assertEqual(main(), 0)
             with patch.object(sys, "argv", _argv("--record", "audit")):
-                self.assertEqual(run_if_changed.main(), 0)
+                self.assertEqual(main(), 0)
         self.assertEqual(_commands_run(run), [_COMMAND, _COMMAND])
         self.assertEqual(
             sorted(files),
@@ -175,10 +123,10 @@ class MainTest(unittest.TestCase):
             patch.object(sys, "argv", _argv("--inputs", str(_UV_LOCK), "--pass-changed", "src/*.py")),
             _patched(run, files),
         ):
-            run_if_changed.main()
+            main()
             files[_OTHER] = _MODULE.replace("42", "43")
-            self.assertEqual(run_if_changed.main(), 0)
-            self.assertEqual(run_if_changed.main(), _SKIPPED)
+            self.assertEqual(main(), 0)
+            self.assertEqual(main(), _SKIPPED)
         self.assertEqual(_commands_run(run), [(*_COMMAND, str(_ANSWER), str(_OTHER)), (*_COMMAND, str(_OTHER))])
 
     def test_with_whole_files_an_edit_to_a_comment_alone_runs_the_command(self):
@@ -188,9 +136,9 @@ class MainTest(unittest.TestCase):
             patch.object(sys, "argv", _argv("--whole-files")),
             _patched(_files_listed([_ANSWER]), files),
         ):
-            run_if_changed.main()
+            main()
             files[_ANSWER] = _MODULE.replace("return 42", "return 42  # nosec")
-            self.assertEqual(run_if_changed.main(), 0)
+            self.assertEqual(main(), 0)
 
     def test_a_file_to_pass_deleted_alone_is_recorded_without_running_the_command(self):
         """Test that deleting one of the files `--pass-changed` names, and nothing else, skips the command."""
@@ -201,9 +149,9 @@ class MainTest(unittest.TestCase):
             patch.object(sys, "argv", _argv("--inputs", str(_UV_LOCK), "--pass-changed", "src/*.py")),
             _patched(run, files),
         ):
-            run_if_changed.main()
+            main()
             del files[_OTHER]
-            self.assertEqual(run_if_changed.main(), _SKIPPED)
+            self.assertEqual(main(), _SKIPPED)
         self.assertEqual(len(_commands_run(run)), 1)
         self.assertEqual(list(json.loads(files[_RECORD_FILE])), [str(_ANSWER)])
 
@@ -212,41 +160,40 @@ class MainTest(unittest.TestCase):
 
         That holds for an input `--pass-changed` names as well.
         """
-        for case, path, content in (
-            ("an input edited", _UV_LOCK, "version = 2\n"),
-            ("an input deleted", _UV_LOCK, None),
-            ("a file to pass that is an input as well, edited", _ANSWER, _MODULE.replace("42", "43")),
-        ):
+        changes: dict[str, Callable[[FakeFiles], object]] = {
+            "an input edited": lambda files: files.update({_UV_LOCK: "version = 2\n"}),
+            "an input deleted": lambda files: files.pop(_UV_LOCK),
+            "a file to pass that is an input as well, edited": lambda files: files.update(
+                {_ANSWER: _MODULE.replace("42", "43")}
+            ),
+        }
+        for case, change in changes.items():
             files = FakeFiles({_UV_LOCK: "version = 1\n", _ANSWER: _MODULE, _OTHER: _MODULE})
             run = _files_listed([_UV_LOCK, _ANSWER, _OTHER])
             argv = _argv("--inputs", str(_UV_LOCK), str(_ANSWER), "--pass-changed", "src/*.py")
             with self.subTest(case), patch.object(sys, "argv", argv), _patched(run, files):
-                run_if_changed.main()
-                if content is None:
-                    del files[path]
-                else:
-                    files[path] = content
-                self.assertEqual(run_if_changed.main(), 0)
+                main()
+                change(files)
+                self.assertEqual(main(), 0)
                 self.assertEqual(_commands_run(run)[1:], [(*_COMMAND, str(_ANSWER), str(_OTHER))])
 
     def test_code_equal_to_the_fingerprint_is_skipped(self):
         """Test that a second run over unchanged code exits with the skip status and does not run the command."""
-        files = FakeFiles({_ANSWER: _MODULE})
         run = _files_listed([_ANSWER])
-        with _patched(run, files):
-            run_if_changed.main()
+        with _patched(run, FakeFiles({_ANSWER: _MODULE})):
+            main()
             run.reset_mock()
-            self.assertEqual(run_if_changed.main(), _SKIPPED)
+            self.assertEqual(main(), _SKIPPED)
         self.assertEqual(_commands_run(run), [])
 
     @kills.delete(
-        run_if_changed.main,
+        main,
         "not status and ",
         "a failing run leaves its fingerprint, so the next run skips the command although it still fails",
         case="another status",
     )
     @kills.replace(
-        run_if_changed.main,
+        main,
         "return 1 if status == arguments.skipped_status else status",
         "return status",
         "a command exiting with the skip status reads as skipped, so its failure passes unseen",
@@ -258,25 +205,25 @@ class MainTest(unittest.TestCase):
             files = FakeFiles({_ANSWER: _MODULE})
             run = _files_listed([_ANSWER], command_exit_status=command_exit_status)
             with self.subTest(case), _patched(run, files):
-                self.assertEqual(run_if_changed.main(), exit_status)
+                self.assertEqual(main(), exit_status)
                 self.assertEqual(_commands_run(run), [_COMMAND])
                 self.assertNotIn(_RECORD_FILE, files)
 
     @kills.delete_statement(
-        run_if_changed._fingerprint,
+        _fingerprint,
         "node.body = node.body[1:] or [ast.Pass()]",
         "an edit to a docstring alone reads as a change to the code, so the tests run all the same",
         case="its docstrings",
     )
     @kills.append(
-        run_if_changed._fingerprint,
+        _fingerprint,
         "ast.dump(tree",
         ", include_attributes=True",
         "code that moves to another line reads as changed, so a comment above it runs the tests all the same",
         case="a comment",
     )
     @kills.replace(
-        run_if_changed._fingerprint,
+        _fingerprint,
         '"pragma" in token.string]',
         '"never" in token.string]',
         "a coverage pragma removed alone reads as unchanged, so the coverage gate never sees the line it exposed",
@@ -299,7 +246,7 @@ class MainTest(unittest.TestCase):
             self.assertEqual(_rerun_after(_MODULE.replace("-> int:", "-> int:  # pragma: no cover")), (0, True))
 
     @kills.replace(
-        run_if_changed._source,
+        _source,
         "except FileNotFoundError:",
         "except ValueError:",
         "a file removed but not yet committed ends the run with a traceback, which reads as unchanged code",
@@ -311,12 +258,12 @@ class MainTest(unittest.TestCase):
         # Git keeps listing a tracked file removed from the working tree until the removal is committed, so the
         # listing keeps it.
         with _patched(_files_listed([_ANSWER, _OTHER]), files):
-            run_if_changed.main()
+            main()
             del files[_OTHER]
-            self.assertEqual(run_if_changed.main(), 0)
+            self.assertEqual(main(), 0)
 
     @kills.replace(
-        run_if_changed._fingerprints,
+        _fingerprints,
         "except SyntaxError as error:",
         "except ValueError as error:",
         "a file that does not parse ends the run with a traceback rather than running the tests",
@@ -329,12 +276,12 @@ class MainTest(unittest.TestCase):
             _patched(_files_listed([_ANSWER]), files),
             contextlib.redirect_stderr(io.StringIO()) as stderr,
         ):
-            self.assertEqual(run_if_changed.main(), 0)
+            self.assertEqual(main(), 0)
         self.assertIn(str(_ANSWER), stderr.getvalue())
         self.assertNotIn(_RECORD_FILE, files)
 
     @kills.replace(
-        run_if_changed._recorded,
+        _recorded,
         "except json.JSONDecodeError as error:",
         "except KeyError as error:",
         "a fingerprint left half written ends every run with a traceback until someone removes it",
@@ -348,17 +295,17 @@ class MainTest(unittest.TestCase):
             _patched(_files_listed([_ANSWER]), files),
             contextlib.redirect_stderr(io.StringIO()) as stderr,
         ):
-            self.assertEqual(run_if_changed.main(), 0)
+            self.assertEqual(main(), 0)
         self.assertIn(str(_RECORD_FILE), stderr.getvalue())
 
     @kills.force_false(
-        run_if_changed._paths,
+        _paths,
         "result.returncode",
         "a git that exits with an error lists nothing, which reads as an unchanged tree",
         case="git exits with an error",
     )
     @kills.replace(
-        run_if_changed._paths,
+        _paths,
         "except OSError as error:",
         "except ValueError as error:",
         "a missing git ends the run with a traceback rather than running the tests",
@@ -385,5 +332,57 @@ class MainTest(unittest.TestCase):
                 _patched(_git_failing(failure), FakeFiles({})),
                 contextlib.redirect_stderr(io.StringIO()) as stderr,
             ):
-                self.assertEqual(run_if_changed.main(), 0)
+                self.assertEqual(main(), 0)
                 self.assertIn(reason, stderr.getvalue())
+
+
+@contextlib.contextmanager
+def _patched(run: Mock, files: FakeFiles) -> Generator[None]:
+    """Patch the tool's `subprocess.run` with the stub, and `Path` with the files."""
+    with patch("tools.run_if_changed.subprocess.run", run), files.patched():
+        yield
+
+
+def _files_listed(paths: list[Path], command_exit_status: int = 0) -> Mock:
+    """Return a stub for `subprocess.run` whose `git ls-files` lists the files, reading the list at each call.
+
+    It lists the files that match a pathspec the command ends on, as git does. Any other command exits with the given
+    status.
+    """
+
+    def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[0] == "git":
+            pathspecs = [argument for argument in command[2:] if not argument.startswith("-")]
+            listed = [path for path in paths if any(fnmatch(path.as_posix(), pathspec) for pathspec in pathspecs)]
+            return subprocess.CompletedProcess(command, 0, stdout="".join(f"{path}\0" for path in listed), stderr="")
+        return subprocess.CompletedProcess(command, command_exit_status)
+
+    return Mock(side_effect=run)
+
+
+def _commands_run(run: Mock) -> list[tuple[str, ...]]:
+    """Return the commands the stub for `subprocess.run` was asked to run, git's own commands left out."""
+    return [tuple(call.args[0]) for call in run.call_args_list if call.args[0][0] != "git"]
+
+
+def _rerun_after(edited: str) -> tuple[int, bool]:
+    """Return the exit status of a run after the module was edited, and whether that run rewrote the fingerprint."""
+    files = FakeFiles({_ANSWER: _MODULE})
+    with _patched(_files_listed([_ANSWER]), files):
+        main()
+        fingerprint = files[_RECORD_FILE]
+        files[_ANSWER] = edited
+        return main(), files[_RECORD_FILE] != fingerprint
+
+
+def _git_failing(failure: subprocess.CompletedProcess[str] | OSError) -> Mock:
+    """Return a stub for `subprocess.run` whose git fails as given, while any other command succeeds."""
+
+    def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[0] != "git":
+            return subprocess.CompletedProcess(command, 0)
+        if isinstance(failure, OSError):
+            raise failure
+        return failure
+
+    return Mock(side_effect=run)

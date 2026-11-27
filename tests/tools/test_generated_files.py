@@ -13,6 +13,13 @@ class WriteOrCheckTest(unittest.TestCase):
 
     CONTENT = "the generated content"
 
+    def test_files_are_written(self):
+        """Test that each generated file is written when the generator is not checking."""
+        path = self.generated_file("what it held before")
+        with patch.object(sys, "argv", ["generator"]):
+            write_or_check({path: self.CONTENT}, Path("/"), "just generate")
+        path.write_text.assert_called_once_with(self.CONTENT)
+
     def generated_file(self, on_disk: str | None) -> Mock:
         """Return a mock generated file that holds the given content, or that raises when read if there is none."""
         exists = on_disk is not None
@@ -21,23 +28,16 @@ class WriteOrCheckTest(unittest.TestCase):
         path.relative_to.return_value = "GENERATED.md"
         return path
 
-    def check(self, path: Mock) -> None:
-        """Run the check over the one file."""
-        with patch.object(sys, "argv", ["generator", "--check"]):
-            write_or_check({path: self.CONTENT}, Path("/"), "just generate")
-
-    def test_files_are_written(self):
-        """Test that each generated file is written when the generator is not checking."""
-        path = self.generated_file("what it held before")
-        with patch.object(sys, "argv", ["generator"]):
-            write_or_check({path: self.CONTENT}, Path("/"), "just generate")
-        path.write_text.assert_called_once_with(self.CONTENT)
-
     def test_current_file_passes_the_check(self):
         """Test that a file already holding the generated content is not reported, and is not written either."""
         path = self.generated_file(self.CONTENT)
         self.check(path)
         path.write_text.assert_not_called()
+
+    def check(self, path: Mock) -> None:
+        """Run the check over the one file."""
+        with patch.object(sys, "argv", ["generator", "--check"]):
+            write_or_check({path: self.CONTENT}, Path("/"), "just generate")
 
     def test_stale_file_is_named(self):
         """Test that a file whose content has drifted exits the run, naming it and how to regenerate it."""

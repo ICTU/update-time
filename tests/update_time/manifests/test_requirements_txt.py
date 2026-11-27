@@ -12,15 +12,15 @@ class RequirementPatternTest(unittest.TestCase):
 
     @kills.replace(
         requirements_txt,
-        r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"',
-        r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*[A-Za-z0-9][A-Za-z0-9._+-]*{_VERSION_ENDS}"',
+        r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"',
+        r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*[A-Za-z0-9][A-Za-z0-9._+-]*{_VERSION_ENDS}"',
         "the lookahead's copy of the pin refuses an epoch, so a pin on one matches both patterns and is read twice",
         case="humanize==1!2.0",
     )
     @kills.replace(
         requirements_txt,
-        r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}',
-        r'_EXACT_PIN = rf"^\s*{_NAME}',
+        r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}',
+        r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}',
         "the lookahead's copy of the pin leaves out the extras, so a pin with extras matches both patterns and is "
         "read twice",
         case="humanize[fast] == 4.15.0",
@@ -35,8 +35,8 @@ class RequirementPatternTest(unittest.TestCase):
     )
     @kills.replace(
         requirements_txt,
-        r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==',
-        r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*===?',
+        r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}\s*==',
+        r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}\s*===?',
         "the lookahead's copy of the pin reads `===` as an exact pin, so an arbitrary equality matches neither pattern",
         case="humanize===nightly",
     )
@@ -90,5 +90,4 @@ class RequirementPatternTest(unittest.TestCase):
         ):
             with self.subTest(line=line):
                 pinned = re.search(requirements_txt.EXACT_PIN_REFERENCE, line) is not None
-                pins_nothing = re.search(requirements_txt.LOOSE_REQUIREMENT_REFERENCE, line) is not None
-                self.assertNotEqual(pinned, pins_nothing)
+                self.assertNotEqual(pinned, (re.search(requirements_txt.LOOSE_REQUIREMENT_REFERENCE, line) is not None))

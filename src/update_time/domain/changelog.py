@@ -1,140 +1,39 @@
 """The changes a changelog records for one version."""
 
 import re
+from typing import Final
 
-from update_time.formats import html, markdown, restructured_text
+from update_time.formats.html import is_anchor
+from update_time.formats.markdown import heading, is_fence
+from update_time.formats.markdown import without_link_targets as without_markdown_link_targets
+from update_time.formats.restructured_text import heading_underline, is_label
+from update_time.formats.restructured_text import without_link_targets as without_restructured_text_link_targets
 
 # The version a changelog names at the head of a section.
-_VERSION = re.compile(r"\d+(?:\.\d+)+")
+_VERSION: Final[re.Pattern[str]] = re.compile(r"\d+(?:\.\d+)+")
 # What a version may not follow, so the tail of a longer version does not read as a version of its own.
-_VERSION_START = r"(?<![\d.])"
+_VERSION_START: Final[str] = r"(?<![\d.])"
 # The number of lines a version's changes are cut at where no later version ends them.
-_MAX_LENGTH = 30
+_MAX_LENGTH: Final[int] = 30
 
 
-def _heading_level(lines: list[str], index: int) -> str:
-    """Return the run of characters marking the line at the index as a heading, or nothing when it marks none.
-
-    Markdown marks a heading with a run of `#` before the title, reStructuredText by underlining the title with a
-    run of one punctuation character. Either run says which level the heading is at, so two headings marked with
-    the same run head sections at the same level.
-    """
-    line = lines[index]
-    if (marked := markdown.heading(line)) is not None:
-        return "#" * marked[0]
-    return restructured_text.heading_underline(line, lines[index + 1] if index + 1 < len(lines) else "")
-
-
-def _names_version(line: str, version: str) -> bool:
-    """Return whether the line names the version rather than a longer version spelling it.
-
-    `2.9.0.post0` spells `2.9.0` at its start and `11.0` spells `1.0` at its end, and neither of them names the
-    shorter version. A version headed `v1.0` is still named, so a letter before it is allowed where a digit is not.
-    A link's target does not name a version, so `[1.0.1](compare/v1.0.0...v1.0.1)` names `1.0.1` alone, and so
-    does its reStructuredText spelling.
-    """
-    text = restructured_text.without_link_targets(markdown.without_link_targets(line))
-    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\.?\w)", text) is not None
-
-
-def _underlines_the_line_above(lines: list[str], index: int) -> bool:
-    """Return whether the run of characters at the index underlines the line above it, heading that line.
-
-    reStructuredText underlines a heading with a run of one character, backticks and tildes included, which a
-    Markdown code fence is spelled with too. A run under a line it heads is an underline rather than a fence.
-    """
-    return index > 0 and _heading_level(lines, index - 1) == lines[index][:1]
-
-
-def _fenced_indexes(lines: list[str]) -> frozenset[int]:
-    """Return the indexes of the lines a fenced code block holds, its fences included.
-
-    A fenced code block holds code rather than markup, so a line inside one neither names a version nor heads a
-    section. Inside a block, a run of fence characters closes it, since code holds no headings to underline.
-    """
-    fenced = set()
-    in_fence = False
-    for index, line in enumerate(lines):
-        if markdown.is_fence(line) and (in_fence or not _underlines_the_line_above(lines, index)):
-            in_fence = not in_fence
-            fenced.add(index)
-        elif in_fence:
-            fenced.add(index)
-    return frozenset(fenced)
-
-
-def _find_version_index(lines: list[str], version: str) -> int | None:
-    """Return the index of the heading naming the version, or else of the first line naming it, or None when absent.
-
-    A heading naming the version wins over any other line that names it, so that a prose mention inside another
-    version's section (for example "shipped in 0.10.0") doesn't anchor parsing in the wrong place.
-    """
-    fallback = None
-    fenced = _fenced_indexes(lines)
-    for index, line in enumerate(lines):
-        if index not in fenced and _names_version(line, version):
-            if _heading_level(lines, index):
-                return index
-            if fallback is None:
-                fallback = index
-    return fallback
-
-
-def _ends_section(heading_level: str, section_level: str) -> bool:
-    """Return whether a heading's level alone ends a section headed at the other level.
-
-    A section whose version is named in prose sits under no heading, so any heading ends it. A Markdown heading
-    closes the sections under it, so a shallower one ends the section as an equal one does. reStructuredText
-    takes a level from the order its adornments appear in rather than from the character it underlines with, so
-    there an equal level is the only level that ends a section.
-    """
-    if not section_level:
-        return bool(heading_level)
-    return heading_level == section_level or (heading_level.startswith("#") and len(heading_level) < len(section_level))
-
-
-def _heads_another_version(line: str, prefix: str, version: str) -> bool:
-    """Return whether the line names another version after the prefix the version's own line carries.
-
-    A changelog without heading markup repeats the text before the version, if any, on each version's line, so a
-    line repeating that text and naming another version after it heads the next version's section.
-    """
-    if not line.startswith(prefix):
-        return False
-    other_version = _VERSION.match(line, len(prefix))
-    return other_version is not None and other_version.group() != version
-
-
-def _heads_a_longer_version(heading_level: str, line: str, version: str) -> bool:
-    """Return whether the line is a heading naming a longer version than the version.
-
-    A changelog can head a longer version inside a version's own section, `1.11.1` inside `1.11`'s.
-    """
-    return bool(heading_level) and re.search(rf"{_VERSION_START}{re.escape(version)}\.\d", line) is not None
-
-
-def _version_line_prefix(lines: list[str], index: int, version: str) -> str | None:
-    """Return the text before the version on the line at the index, or None when that line is a heading."""
-    line = lines[index]
-    return None if _heading_level(lines, index) else line[: line.index(version)]
-
-
-def _next_version_index(lines: list[str], start: int, version: str) -> int | None:
-    """Return the index of the line heading the next version's section, or None when no line heads one."""
-    level = _heading_level(lines, start)
-    prefix = _version_line_prefix(lines, start, version)
-    fenced = _fenced_indexes(lines)
-    for index, line in enumerate(lines[start + 1 :], start + 1):
-        if index in fenced or _names_version(line, version):
-            continue
-        heading_level = _heading_level(lines, index)
-        if (
-            _ends_section(heading_level, level)
-            or _heads_a_longer_version(heading_level, line, version)
-            or (prefix is not None and _heads_another_version(line, prefix, version))
-        ):
-            return index
-    return None
+def get_version_changes_from_changelog(text: str, version: str) -> str:
+    """Return the changes for the version from the changelog, or nothing when the changelog lists none for it."""
+    all_lines = text.splitlines()
+    version, start = _find_anchor(all_lines, version)
+    if start is None:
+        return ""
+    end = _next_version_index(all_lines, start, version)
+    entries_start = start + _heading_length(all_lines, start)
+    entries = all_lines[entries_start:end]
+    while entries and _separates_sections(entries[-1]):  # Drop the blank lines and the anchors ending them.
+        entries = entries[:-1]
+    if not entries:
+        return ""
+    lines = all_lines[start:entries_start] + entries
+    if len(lines) > _MAX_LENGTH and end is None:
+        lines = [*lines[:_MAX_LENGTH], "..."]
+    return "\n".join(lines)
 
 
 def _find_anchor(lines: list[str], version: str) -> tuple[str, int | None]:
@@ -155,37 +54,138 @@ def _find_anchor(lines: list[str], version: str) -> tuple[str, int | None]:
     return version, start
 
 
+def _find_version_index(lines: list[str], version: str) -> int | None:
+    """Return the index of the heading naming the version, or else of the first line naming it, or None when absent.
+
+    A heading naming the version wins over any other line that names it, so that a prose mention inside another
+    version's section (for example "shipped in 0.10.0") doesn't anchor parsing in the wrong place.
+    """
+    fenced = _fenced_indexes(lines)
+    fallback = None
+    for index, line in enumerate(lines):
+        if index not in fenced and _names_version(line, version):
+            if _heading_level(lines, index):
+                return index
+            if fallback is None:
+                fallback = index
+    return fallback
+
+
+def _fenced_indexes(lines: list[str]) -> frozenset[int]:
+    """Return the indexes of the lines a fenced code block holds, its fences included.
+
+    A fenced code block holds code rather than markup, so a line inside one neither names a version nor heads a
+    section. Inside a block, a run of fence characters closes it, since code holds no headings to underline.
+    """
+    fenced = set()
+    in_fence = False
+    for index, line in enumerate(lines):
+        if is_fence(line) and (in_fence or not _underlines_the_line_above(lines, index)):
+            in_fence = not in_fence
+            fenced.add(index)
+        elif in_fence:
+            fenced.add(index)
+    return frozenset(fenced)
+
+
+def _underlines_the_line_above(lines: list[str], index: int) -> bool:
+    """Return whether the run of characters at the index underlines the line above it, heading that line.
+
+    reStructuredText underlines a heading with a run of one character, backticks and tildes included, which a
+    Markdown code fence is spelled with too. A run under a line it heads is an underline rather than a fence.
+    """
+    return index > 0 and _heading_level(lines, index - 1) == lines[index][:1]
+
+
+def _names_version(line: str, version: str) -> bool:
+    """Return whether the line names the version rather than a longer version spelling it.
+
+    `2.9.0.post0` spells `2.9.0` at its start and `11.0` spells `1.0` at its end, and neither of them names the
+    shorter version. A version headed `v1.0` is still named, so a letter before it is allowed where a digit is not.
+    A link's target does not name a version, so `[1.0.1](compare/v1.0.0...v1.0.1)` names `1.0.1` alone, and so
+    does its reStructuredText spelling.
+    """
+    text = without_restructured_text_link_targets(without_markdown_link_targets(line))
+    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\.?\w)", text) is not None
+
+
+def _heading_level(lines: list[str], index: int) -> str:
+    """Return the run of characters marking the line at the index as a heading, or nothing when it marks none.
+
+    Markdown marks a heading with a run of `#` before the title, reStructuredText by underlining the title with a
+    run of one punctuation character. Either run says which level the heading is at, so two headings marked with
+    the same run head sections at the same level.
+    """
+    line = lines[index]
+    if (marked := heading(line)) is not None:
+        return "#" * marked[0]
+    return heading_underline(line, lines[index + 1] if index + 1 < len(lines) else "")
+
+
+def _next_version_index(lines: list[str], start: int, version: str) -> int | None:
+    """Return the index of the line heading the next version's section, or None when no line heads one."""
+    level = _heading_level(lines, start)
+    prefix = _version_line_prefix(lines, start, version)
+    fenced = _fenced_indexes(lines)
+    for index, line in enumerate(lines[start + 1 :], start + 1):
+        if index in fenced or _names_version(line, version):
+            continue
+        heading_level = _heading_level(lines, index)
+        if (
+            _ends_section(heading_level, level)
+            or _heads_a_longer_version(heading_level, line, version)
+            or (prefix is not None and _heads_another_version(line, prefix, version))
+        ):
+            return index
+    return None
+
+
+def _version_line_prefix(lines: list[str], index: int, version: str) -> str | None:
+    """Return the text before the version on the line at the index, or None when that line is a heading."""
+    line = lines[index]
+    return None if _heading_level(lines, index) else line[: line.index(version)]
+
+
+def _ends_section(heading_level: str, section_level: str) -> bool:
+    """Return whether a heading's level alone ends a section headed at the other level.
+
+    A section whose version is named in prose sits under no heading, so any heading ends it. A Markdown heading
+    closes the sections under it, so a shallower one ends the section as an equal one does. reStructuredText
+    takes a level from the order its adornments appear in rather than from the character it underlines with, so
+    there an equal level is the only level that ends a section.
+    """
+    if not section_level:
+        return bool(heading_level)
+    return heading_level == section_level or (heading_level.startswith("#") and len(heading_level) < len(section_level))
+
+
+def _heads_a_longer_version(heading_level: str, line: str, version: str) -> bool:
+    """Return whether the line is a heading naming a longer version than the version.
+
+    A changelog can head a longer version inside a version's own section, `1.11.1` inside `1.11`'s.
+    """
+    return bool(heading_level) and re.search(rf"{_VERSION_START}{re.escape(version)}\.\d", line) is not None
+
+
+def _heads_another_version(line: str, prefix: str, version: str) -> bool:
+    """Return whether the line names another version after the prefix the version's own line carries.
+
+    A changelog without heading markup repeats the text before the version, if any, on each version's line, so a
+    line repeating that text and naming another version after it heads the next version's section.
+    """
+    if not line.startswith(prefix):
+        return False
+    other_version = _VERSION.match(line, len(prefix))
+    return other_version is not None and other_version.group() != version
+
+
 def _heading_length(lines: list[str], index: int) -> int:
     """Return the number of lines the heading at the index spans, an underline included, or 0 when none starts there."""
     if not _heading_level(lines, index):
         return 0
-    return 1 if markdown.heading(lines[index]) else 2
+    return 1 if heading(lines[index]) else 2
 
 
 def _separates_sections(line: str) -> bool:
     """Return whether the line sits between a version's changes and the next section: blank, or the section's anchor."""
-    return not line.strip() or restructured_text.is_label(line) or html.is_anchor(line)
-
-
-def _without_trailing_separators(lines: list[str]) -> list[str]:
-    """Return the lines without the blank lines and the anchors that end them."""
-    while lines and _separates_sections(lines[-1]):
-        lines = lines[:-1]
-    return lines
-
-
-def get_version_changes_from_changelog(text: str, version: str) -> str:
-    """Return the changes for the version from the changelog, or nothing when the changelog lists none for it."""
-    all_lines = text.splitlines()
-    version, start = _find_anchor(all_lines, version)
-    if start is None:
-        return ""
-    end = _next_version_index(all_lines, start, version)
-    entries_start = start + _heading_length(all_lines, start)
-    entries = _without_trailing_separators(all_lines[entries_start:end])
-    if not entries:
-        return ""
-    lines = all_lines[start:entries_start] + entries
-    if len(lines) > _MAX_LENGTH and end is None:
-        lines = [*lines[:_MAX_LENGTH], "..."]
-    return "\n".join(lines)
+    return not line.strip() or is_label(line) or is_anchor(line)

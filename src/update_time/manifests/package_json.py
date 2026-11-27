@@ -3,95 +3,54 @@
 import json
 import re
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.marker import Marker
 from update_time.domain.reference import Reference
-from update_time.formats import json as json_format
+from update_time.formats.json import JSON, JsonFile, entry_offset
 from update_time.io.file import File
-from update_time.manifests.npm_declaration import CatalogEntry, Catalogs, catalog_name, declaration, is_registry_spec
 from update_time.markers.parser import parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.text import column, line_number
+
+from .npm_declaration import CatalogEntry, Catalogs, catalog_name, declaration, is_registry_spec
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from update_time.domain.dependency import DependencyName
-    from update_time.manifests.npm_declaration import Declaration
+
+    from .npm_declaration import Declaration
 
 # The dependency sections whose entries Update-time checks.
-DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
+DEPENDENCY_SECTIONS: Final[tuple[str, ...]] = ("dependencies", "devDependencies", "optionalDependencies")
 
 # A path of keys from the top of a package.json to an object in it, such as a dependency section.
 type _KeyPath = tuple[str, ...]
 
 # The paths of the dependency sections.
-_DEPENDENCY_SECTION_PATHS: tuple[_KeyPath, ...] = tuple((section,) for section in DEPENDENCY_SECTIONS)
-
-# The object of a package.json that holds its catalogs where it holds a catalog at all. bun reads the top level
-# instead where this object holds neither.
-_WORKSPACES: _KeyPath = ("workspaces",)
+_DEPENDENCY_SECTION_PATHS: Final[tuple[_KeyPath, ...]] = tuple((section,) for section in DEPENDENCY_SECTIONS)
 
 # The key of the unnamed catalog, and the key that holds the named catalogs.
 _CATALOG, _NAMED_CATALOGS = "catalog", "catalogs"
 
 # The dependency sections npm, pnpm, yarn, and bun install from. A peer dependency states a range its consumer has to
 # satisfy, so Update-time does not check it, but the package managers install it all the same.
-_INSTALLED_SECTIONS = (*DEPENDENCY_SECTIONS, "peerDependencies")
+_INSTALLED_SECTIONS: Final[tuple[str, ...]] = (*DEPENDENCY_SECTIONS, "peerDependencies")
 
 # The field a package.json names its markers in. JSON has no comments, so a marker cannot sit beside the reference
 # it steers, and npm keeps a field it does not know, so the file can carry one.
-_MARKER_FIELD = "update-time"
+_MARKER_FIELD: Final[str] = "update-time"
 
 # The section a package.json declares the Node engine in, and the name it declares it under. Its marker is named
 # the same way, in the file's `update-time` field.
-_ENGINES = "engines"
-NODE_ENGINE = "node"
-NODE_ENGINE_REFERENCE = re.compile(rf'"(?P<dependency>{NODE_ENGINE})": "(?P<version>[\d\.]+)"')
-
-
-def _marker(contents: dict, section: _KeyPath, name: DependencyName) -> Marker:
-    """Return the marker the `update-time` field names for the reference, or an empty one where it names none.
-
-    The field mirrors the file's own sections, so `{"update-time": {"engines": {"node": "ignore"}}}` steers the
-    Node engine, and a reference is named the way the file itself names it. The value is the directive list a
-    comment carries behind its `# update-time:` prefix. Where the file leaves a level out, the reference gets an
-    empty marker. Whatever a file holds reaches here, so each step down is checked: a level that is not an object,
-    and a value that is not a directive list, are both a shape the language cannot read, which becomes an invalid
-    item rather than ending the run. The marker is spelled as the JSON of the whole field.
-    """
-    references = _section_markers(contents, section)
-    directives = references.get(name, "") if references is not None else None
-    if not isinstance(directives, str):
-        return Marker(invalid_item=".".join((_MARKER_FIELD, *section, name)), spelling=_field_spelling(contents))
-    marker = parse_directives(directives)
-    return replace(marker, spelling=_field_spelling(contents)) if marker.raw else marker
-
-
-def _section_markers(contents: dict, section: _KeyPath) -> dict | None:
-    """Return what the `update-time` field holds for the section, or None where a level on its path is not an object."""
-    return _object_at(contents, (_MARKER_FIELD, *section))
-
-
-def _object_at(contents: dict, keys: tuple[str, ...]) -> dict | None:
-    """Return the object the keys lead to, or None where a level on their path is not an object.
-
-    Where the contents leave a level out, the level reads as an empty object.
-    """
-    level: object = contents
-    for key in keys:
-        level = level.get(key, {}) if isinstance(level, dict) else None
-    return level if isinstance(level, dict) else None
-
-
-def _field_spelling(contents: dict) -> str:
-    """Return the `update-time` field as JSON, which spells each marker the field names."""
-    return json.dumps(contents[_MARKER_FIELD], ensure_ascii=False)
+_ENGINES: Final[str] = "engines"
+NODE_ENGINE: Final[str] = "node"
+NODE_ENGINE_REFERENCE: Final[re.Pattern[str]] = re.compile(rf'"(?P<dependency>{NODE_ENGINE})": "(?P<version>[\d\.]+)"')
 
 
 @dataclass(frozen=True)
-class PackageJson(json_format.JsonFile, File):
+class PackageJson(JsonFile, File):
     """A package.json: its dependency entries, its Node engine, and the markers its `update-time` field names."""
 
     def node_engine(self) -> Reference:
@@ -102,6 +61,20 @@ class PackageJson(json_format.JsonFile, File):
         engine's marker.
         """
         return self._entry_reference((_ENGINES,), NODE_ENGINE)
+
+    def _entry_reference(self, section: _KeyPath, name: DependencyName) -> Reference:
+        """Return the reference to the entry declaring the name, steered by the marker the `update-time` field names."""
+        return Reference(name, "", self._entry_location(*section, name), marker=_marker(self.contents, section, name))
+
+    def _entry_location(self, *keys: str) -> Location:
+        """Return the location of the entry that the keys name, down to the column.
+
+        Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
+        """
+        offset = entry_offset(self.text, *keys)
+        if offset is None:
+            return Location(self.path)
+        return Location(self.path, line_number(self.text, offset), column(self.text, offset))
 
     def declares_a_node_engine(self) -> bool:
         """Return whether the package.json declares a Node engine."""
@@ -141,6 +114,35 @@ class PackageJson(json_format.JsonFile, File):
             for name, spec in self._entries(section).items():
                 location = self._entry_location(*section, name)
                 yield declaration(name, spec, location, _marker(self.contents, section, name))
+
+    def _entries(self, section: _KeyPath) -> dict:
+        """Return the entries of the section, or an empty object where a level of its path is not an object."""
+        return _object_at(self.contents, section) or {}
+
+    def _declaring_sections(self) -> Iterator[_KeyPath]:
+        """Yield the path of each section whose entries are declarations: the dependency sections and the catalogs."""
+        yield from _DEPENDENCY_SECTION_PATHS
+        yield from (section for _catalog, section in self._catalogs())
+
+    def _catalogs(self) -> Iterator[tuple[str, _KeyPath]]:
+        """Yield the name of each catalog, empty for the unnamed one, and the path of its section.
+
+        A named catalog is yielded where the file or its `update-time` field names it.
+        """
+        holder = self._catalog_holder()
+        yield "", (*holder, _CATALOG)
+        named_catalogs = (*holder, _NAMED_CATALOGS)
+        declared = _object_at(self.contents, named_catalogs) or {}
+        marked = _section_markers(self.contents, named_catalogs) or {}
+        yield from ((catalog_name(name), (*named_catalogs, name)) for name in declared | marked)
+
+    def _catalog_holder(self) -> _KeyPath:
+        """Return the path of the object holding the catalogs: `workspaces` where it holds one, else the top level."""
+        # The object of a package.json that holds its catalogs where it holds a catalog at all. bun reads the top level
+        # instead where this object holds neither.
+        workspace_keys: _KeyPath = ("workspaces",)
+        workspaces = _object_at(self.contents, workspace_keys) or {}
+        return workspace_keys if _CATALOG in workspaces or _NAMED_CATALOGS in workspaces else ()
 
     def undeclared_references(self) -> Iterator[Reference]:
         """Yield a reference to each name the `update-time` field gives under a section that does not declare it.
@@ -199,42 +201,39 @@ class PackageJson(json_format.JsonFile, File):
             }
         )
 
-    def _declaring_sections(self) -> Iterator[_KeyPath]:
-        """Yield the path of each section whose entries are declarations: the dependency sections and the catalogs."""
-        yield from _DEPENDENCY_SECTION_PATHS
-        yield from (section for _catalog, section in self._catalogs())
 
-    def _catalogs(self) -> Iterator[tuple[str, _KeyPath]]:
-        """Yield the name of each catalog, empty for the unnamed one, and the path of its section.
+def _marker(contents: dict, section: _KeyPath, name: DependencyName) -> Marker:
+    """Return the marker the `update-time` field names for the reference, or an empty one where it names none.
 
-        A named catalog is yielded where the file or its `update-time` field names it.
-        """
-        holder = self._catalog_holder()
-        yield "", (*holder, _CATALOG)
-        named_catalogs = (*holder, _NAMED_CATALOGS)
-        declared = _object_at(self.contents, named_catalogs) or {}
-        marked = _section_markers(self.contents, named_catalogs) or {}
-        yield from ((catalog_name(name), (*named_catalogs, name)) for name in declared | marked)
+    The field mirrors the file's sections, so `{"update-time": {"engines": {"node": "ignore"}}}` steers the Node
+    engine. Each value is a directive list, as a comment writes it after `# update-time:`. Where the field leaves
+    a level out, the marker is empty. Where a level or a value has the wrong shape, the marker holds an invalid item.
+    The marker is spelled as the JSON of the whole field.
+    """
+    references = _section_markers(contents, section)
+    directives = references.get(name, "") if references is not None else None
+    if not isinstance(directives, str):
+        return Marker(invalid_item=".".join((_MARKER_FIELD, *section, name)), spelling=_field_spelling(contents))
+    marker = parse_directives(directives)
+    return replace(marker, spelling=_field_spelling(contents)) if marker.raw else marker
 
-    def _catalog_holder(self) -> _KeyPath:
-        """Return the path of the object holding the catalogs: `workspaces` where it holds one, else the top level."""
-        workspaces = _object_at(self.contents, _WORKSPACES) or {}
-        return _WORKSPACES if _CATALOG in workspaces or _NAMED_CATALOGS in workspaces else ()
 
-    def _entries(self, section: _KeyPath) -> dict:
-        """Return the entries of the section, or an empty object where a level of its path is not an object."""
-        return _object_at(self.contents, section) or {}
+def _field_spelling(contents: dict) -> str:
+    """Return the `update-time` field as JSON, which spells each marker the field names."""
+    return json.dumps(contents[_MARKER_FIELD], ensure_ascii=False)
 
-    def _entry_reference(self, section: _KeyPath, name: DependencyName) -> Reference:
-        """Return the reference to the entry declaring the name, steered by the marker the `update-time` field names."""
-        return Reference(name, "", self._entry_location(*section, name), marker=_marker(self.contents, section, name))
 
-    def _entry_location(self, *keys: str) -> Location:
-        """Return the location of the entry that the keys name, down to the column.
+def _object_at(contents: dict, keys: tuple[str, ...]) -> dict | None:
+    """Return the object the keys lead to, or None where a level on their path is not an object.
 
-        Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
-        """
-        offset = json_format.entry_offset(self.text, *keys)
-        if offset is None:
-            return Location(self.path)
-        return Location(self.path, line_number(self.text, offset), column(self.text, offset))
+    Where the contents leave a level out, the level reads as an empty object.
+    """
+    level: JSON = contents
+    for key in keys:
+        level = level.get(key, {}) if isinstance(level, dict) else None
+    return level if isinstance(level, dict) else None
+
+
+def _section_markers(contents: dict, section: _KeyPath) -> dict | None:
+    """Return what the `update-time` field holds for the section, or None where a level on its path is not an object."""
+    return _object_at(contents, (_MARKER_FIELD, *section))

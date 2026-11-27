@@ -1,6 +1,8 @@
 """Unit tests for reporting a reference's marker, and for the warnings about its directives that decide nothing."""
 
 import unittest
+from types import MappingProxyType
+from typing import Final
 from unittest.mock import Mock, call
 
 from mutation_time.mutation import kills
@@ -11,20 +13,28 @@ from update_time.domain.reference import Reference
 from update_time.markers.parser import parse_directives
 from update_time.markers.report import report_marker, warn_if_the_bound_is_redundant, warn_if_the_opt_in_is_redundant
 
-from tests.update_time.helpers import bound
+from tests.update_time.domain_objects import bound
 
 # The marker of each case, whether its manager steers the update, and the reports besides the reference they name.
-_CASES = {
-    "no marker": ("", True, ()),
-    "asks for the default": (
-        "ignore[hash-drift]",
-        True,
-        (("redundant_directive", "ignore[hash-drift]", Reason.ASKS_FOR_THE_DEFAULT), ("recognised_marker",)),
-    ),
-    "invalid item": ("ignore[stlae]", True, (("invalid_bracket_item", "stlae"), ("recognised_marker",))),
-    "held back where the marker steers the update": ("ignore[update]", True, (("recognised_marker",), ("ignored",))),
-    "held back where the marker steers nothing": ("ignore[update]", False, (("recognised_marker",),)),
-}
+_CASES: Final[MappingProxyType[str, tuple[str, bool, tuple[tuple[str, ...] | tuple[str, str, Reason], ...]]]] = (
+    MappingProxyType(
+        {
+            "no marker": ("", True, ()),
+            "asks for the default": (
+                "ignore[hash-drift]",
+                True,
+                (("redundant_directive", "ignore[hash-drift]", Reason.ASKS_FOR_THE_DEFAULT), ("recognised_marker",)),
+            ),
+            "invalid item": ("ignore[stlae]", True, (("invalid_bracket_item", "stlae"), ("recognised_marker",))),
+            "held back where the marker steers the update": (
+                "ignore[update]",
+                True,
+                (("recognised_marker",), ("ignored",)),
+            ),
+            "held back where the marker steers nothing": ("ignore[update]", False, (("recognised_marker",),)),
+        }
+    )
+)
 
 
 class ReportMarkerTest(unittest.TestCase):
@@ -77,13 +87,6 @@ class ReportMarkerTest(unittest.TestCase):
 class WarnIfTheBoundIsRedundantTest(unittest.TestCase):
     """Unit tests for warning about a bound that decides nothing at the reference's version."""
 
-    def warn(self, item: str, verb: Verb) -> tuple[Reference, Mock]:
-        """Warn about the bound on a reference at version 3.12, and return the reference and the logger."""
-        log = Mock()
-        reference = Reference("python", "3.12", Mock(), marker=Marker(version_bound=bound(verb, item)))
-        warn_if_the_bound_is_redundant(reference, log)
-        return reference, log
-
     @kills.delete_statement(
         warn_if_the_bound_is_redundant,
         "log.redundant_bound(reference, redundancy)",
@@ -93,6 +96,13 @@ class WarnIfTheBoundIsRedundantTest(unittest.TestCase):
         """Test that a bound that blocks every update at the reference's version is warned about."""
         reference, log = self.warn("patch-update", Verb.IGNORE)
         log.redundant_bound.assert_called_once_with(reference, BoundRedundancy.BLOCKS_ALL)
+
+    def warn(self, item: str, verb: Verb) -> tuple[Reference, Mock]:
+        """Warn about the bound on a reference at version 3.12, and return the reference and the logger."""
+        log = Mock()
+        reference = Reference("python", "3.12", Mock(), marker=Marker(version_bound=bound(verb, item)))
+        warn_if_the_bound_is_redundant(reference, log)
+        return reference, log
 
     @kills.replace(
         warn_if_the_bound_is_redundant,
@@ -109,13 +119,6 @@ class WarnIfTheBoundIsRedundantTest(unittest.TestCase):
 class WarnIfTheOptInIsRedundantTest(unittest.TestCase):
     """Unit tests for warning about an opt-in that decides nothing for the reference."""
 
-    def warn(self, reason: Reason | None) -> tuple[Reference, Mock]:
-        """Warn about an `allow[floating-pin]` for the reason given, and return the reference and the logger."""
-        log = Mock()
-        reference = Reference("python", "3.12", Mock(), marker=parse_directives("allow[floating-pin]"))
-        warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, reason, log)
-        return reference, log
-
     @kills.delete_statement(
         warn_if_the_opt_in_is_redundant,
         "log.redundant_directive(reference, marker.allow_directive(scope), redundancy)",
@@ -125,6 +128,13 @@ class WarnIfTheOptInIsRedundantTest(unittest.TestCase):
         """Test that an opt-in on a reference whose pin does not float is warned about, saying why."""
         reference, log = self.warn(Reason.PIN_NOT_FLOATING)
         log.redundant_directive.assert_called_once_with(reference, "allow[floating-pin]", Reason.PIN_NOT_FLOATING)
+
+    def warn(self, reason: Reason | None) -> tuple[Reference, Mock]:
+        """Warn about an `allow[floating-pin]` for the reason given, and return the reference and the logger."""
+        log = Mock()
+        reference = Reference("python", "3.12", Mock(), marker=parse_directives("allow[floating-pin]"))
+        warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, reason, log)
+        return reference, log
 
     @kills.replace(
         warn_if_the_opt_in_is_redundant,

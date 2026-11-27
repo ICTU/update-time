@@ -4,45 +4,45 @@ import unittest
 from unittest.mock import Mock
 
 from mutation_time.mutation import kills
-from update_time.io import network as network_module
-from update_time.io.network import report_network_settings
+from update_time.io import network
+from update_time.io.network import _redacted_url, report_network_settings
 
-from tests.helpers import patch_environ
+from tests.environment import patch_environ
 
 
 class ReportNetworkSettingsTest(unittest.TestCase):
     """Unit tests for logging the network settings."""
 
     @kills.replace(
-        network_module._redacted_url,
+        _redacted_url,
         '":".join(_REDACTED for part',
         '":".join(part for part',
         "a proxy's user and password are written to the log",
         case="user and password",
     )
     @kills.replace(
-        network_module._redacted_url,
+        _redacted_url,
         "if part is not None",
         "if parts.password is not None",
         "a proxy's user without a password is written to the log",
         case="user only",
     )
     @kills.replace(
-        network_module._redacted_url,
+        _redacted_url,
         'return f"{parts.scheme}://',
         'return f"http://',
         "a SOCKS proxy is logged as an HTTP one",
         case="another scheme",
     )
     @kills.replace(
-        network_module._redacted_url,
+        _redacted_url,
         'urlsplit(url if "://" in url else f"http://{url}")',
         "urlsplit(url)",
         "a proxy written without a scheme is logged with its host as the scheme",
         case="no scheme",
     )
     @kills.replace(
-        network_module._redacted_url,
+        _redacted_url,
         'address = parts.netloc.rpartition("@")[2]',
         'address = f"{parts.hostname}:{parts.port}"',
         "a proxy whose port is not a number ends the run",
@@ -50,7 +50,7 @@ class ReportNetworkSettingsTest(unittest.TestCase):
         case="port that is not a number",
     )
     @kills.replace(
-        network_module._redacted_url,
+        _redacted_url,
         "return _UNREADABLE",
         "return url",
         "a proxy URL that does not split is logged as it is, its password included",
@@ -76,13 +76,13 @@ class ReportNetworkSettingsTest(unittest.TestCase):
                 logger.network_settings.assert_called_once_with({"https": logged}, "", "")
 
     @kills.delete(
-        network_module.report_network_settings,
+        network.report_network_settings,
         ' os.environ.get("CURL_CA_BUNDLE") or',
         "a CA bundle CURL_CA_BUNDLE names is logged as the default one, though requests uses it",
         case="curl only",
     )
     @kills.replace(
-        network_module.report_network_settings,
+        network.report_network_settings,
         'os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")',
         'os.environ.get("CURL_CA_BUNDLE") or os.environ.get("REQUESTS_CA_BUNDLE")',
         "the CA bundle CURL_CA_BUNDLE names is logged, though requests uses the one REQUESTS_CA_BUNDLE names",

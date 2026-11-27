@@ -1,11 +1,7 @@
 """Code for the tests of the mutation decorator to mutate, so that they never break code written for another purpose."""
 
 from functools import cache, cached_property
-
-
-def is_even(number: int) -> bool:
-    """Return whether the number is even."""
-    return number % 2 == 0
+from typing import Final, override
 
 
 def is_positive_even(count: int) -> bool:
@@ -15,6 +11,11 @@ def is_positive_even(count: int) -> bool:
         return count > 0
 
     return positive() and is_even(count)
+
+
+def is_even(number: int) -> bool:
+    """Return whether the number is even."""
+    return number % 2 == 0
 
 
 def is_multiple_of_three(value: int) -> bool:
@@ -35,23 +36,23 @@ class Doubler:
     or a module.
     """
 
-    def doubled(self, value: int) -> int:
-        """Return the value doubled."""
-        return value * 2
-
-    def quadrupled(self, value: int) -> int:
-        """Return the value quadrupled."""
-        return value * 2 * 2
-
     @property
     def one_doubled(self) -> int:
         """Return one doubled."""
         return self.doubled(1)
 
+    def doubled(self, value: int) -> int:
+        """Return the value doubled."""
+        return value * 2
+
     @cached_property
     def three_doubled(self) -> int:
         """Return three doubled."""
         return self.doubled(3)
+
+    def quadrupled(self, value: int) -> int:
+        """Return the value quadrupled."""
+        return value * 2 * 2
 
     @classmethod
     def two_doubled(cls) -> int:
@@ -93,22 +94,29 @@ class Greeter:
 class DelegatingDoubler(Doubler):
     """A doubler whose method calls the one it overrides, so that method's code needs the class defining it."""
 
+    @override
     def doubled(self, value: int) -> int:
         """Return the value doubled by the doubler this one extends."""
-        return super().doubled(value)
+        return super().doubled(value * 1)
 
 
 def is_multiple_of_five(value: int) -> bool:
-    """Return whether the value is a multiple of five, quoting the `_FIVE = 5` below so that a docstring repeats it."""
-    return not value % _FIVE
+    """Return whether the value is a multiple of five, quoting the `FIVE: Final[int] = 5` below to repeat it."""
+    return not value % FIVE
 
 
 # What a multiple of five divides by, a module-level constant for a mutation to change.
-_FIVE = 5
+FIVE: Final[int] = 5
 # What a multiple of ten divides by, derived from the constant above when the module is executed.
-_TEN = _FIVE * 2
+_TEN: Final[int] = FIVE * 2
 
 
 def is_multiple_of_ten(value: int) -> bool:
     """Return whether the value is a multiple of ten."""
     return not value % _TEN
+
+
+@cache
+def first[Item](items: tuple[Item, ...]) -> Item:
+    """Return the first of the items, remembering each answer, in a function whose name a type parameter follows."""
+    return items[0]

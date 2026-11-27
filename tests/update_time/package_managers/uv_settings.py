@@ -1,23 +1,25 @@
-"""Helpers for the package manager tests."""
+"""What `uv --show-settings` answers about an `exclude-newer`, and how Update-time marks the one it manages."""
 
 from subprocess import CalledProcessError  # nosec
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, override
 from unittest.mock import Mock, patch
 
-from tests.update_time.helpers import ExecutablesOnPathTestCase
+from tests.update_time.base_test_cases import ExecutablesOnPathTestCase
 
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
 
+    from tests.process_mocks import RunAnswer
+
 # The comment Update-time writes beside the exclude-newer it manages in a pyproject.toml.
-MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to set exclude-newer yourself"
+MANAGED_BY_COMMENT: Final[str] = "managed by Update-time — remove this comment to set exclude-newer yourself"
 
 # How `uv --show-settings` prints an `exclude-newer` that is set, and one that is not.
-CONFIGURED_EXCLUDE_NEWER = "Some(Absolute(2024-06-01T22:00:00Z))"
-UNSET_EXCLUDE_NEWER = "None"
+CONFIGURED_EXCLUDE_NEWER: Final[str] = "Some(Absolute(2024-06-01T22:00:00Z))"
+UNSET_EXCLUDE_NEWER: Final[str] = "None"
 
 # Answers to `uv --show-settings` that do not say whether uv's settings hold an `exclude-newer`.
-UNREADABLE_SETTINGS = {
+UNREADABLE_SETTINGS: Final[dict[str, RunAnswer]] = {
     "a format without the exclude-newer": Mock(stdout="ResolverSettings {}\n", stderr=""),
     "a uv that fails": CalledProcessError(2, "uv", "", "error: unexpected argument '--show-settings'"),
 }
@@ -26,18 +28,19 @@ UNREADABLE_SETTINGS = {
 class UvSettingsTestCase(ExecutablesOnPathTestCase):
     """A test case whose stubbed processes answer `uv --show-settings`, without an `exclude-newer` unless set."""
 
+    @override
     def setUp(self) -> None:
         """Stub out subprocess.run, so a test does not start a process."""
         super().setUp()
         self.configured_exclude_newer = UNSET_EXCLUDE_NEWER
-        self.settings_answer: object = None
+        self.settings_answer: RunAnswer | None = None
         self.mock_run = self.enterContext(patch("subprocess.run", side_effect=self.run_tool))
 
-    def run_tool(self, _command: Command, /, **_options: object) -> object:
+    def run_tool(self, _command: Command, /, **_options: object) -> Mock:
         """Answer the command as `uv --show-settings` does."""
         return self.uv_settings(self.configured_exclude_newer)
 
-    def uv_settings(self, exclude_newer: str) -> object:
+    def uv_settings(self, exclude_newer: str) -> Mock:
         """Return what `uv --show-settings` answers: the answer the test sets, or else the `exclude-newer`."""
         if isinstance(self.settings_answer, BaseException):
             raise self.settings_answer

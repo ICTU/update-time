@@ -3,7 +3,7 @@
 from datetime import timedelta
 from http import HTTPStatus
 from logging import ERROR, WARNING
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 from unittest.mock import ANY, Mock, patch
 
 import requests
@@ -15,86 +15,80 @@ from update_time.domain.dependency import Changes, DependencyVersion, PinnedDepe
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Scope
 from update_time.domain.reference import DriftedPin, DriftKind, RefKind
-from update_time.io.log import Logger, _LogMessage
-from update_time.manifests import github_workflow as github_workflow_manifest
+from update_time.io.log import Logger, _LogMessage  # simplint: ignore[private-import-path] # annotates with it
+from update_time.manifests import github_workflow
 from update_time.primitives.location import Location
-from update_time.references import github as references_github
-from update_time.sources import github as sources_github
+from update_time.references.github import PinUpdater
+from update_time.sources import github
 from update_time.updaters.update_github_action import _update_github_actions
 
-from tests.helpers import mock_path, unparsable_response
-from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
-from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
-from tests.update_time.fixtures import COMMIT_SHA3 as PAST_COOLDOWN_SHA
+from tests.file_mocks import mock_path
+from tests.http_mocks import patch_get_response, unparsable_response
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.domain_objects import bound
 from tests.update_time.fixtures import (
+    COMMIT_SHA1,
+    COMMIT_SHA2,
+    COMMIT_SHA3,
     FRESH_DATE,
     KILLS_GITHUB_UNCACHED,
     PAST_COOLDOWN_DATE,
     STALE_DATE,
 )
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    bound,
-    message_of,
-    staleness_disabled,
-)
-from tests.update_time.sources.helpers import (
+from tests.update_time.io.log_messages import message_of
+from tests.update_time.run_settings import staleness_disabled
+from tests.update_time.sources.github_answers import (
     GITHUB_RATE_LIMITED_REASON,
+    GitHubProjectMixin,
+    full_commit_sha,
+    github_commit_listing_queries,
     github_commits_json,
+    github_fresh_line,
     github_not_found,
     github_rate_limited,
+    github_refs_whose_commits_were_listed,
     github_release_json,
     github_requests,
     github_tag_json,
-    osv_action_entry,
-    osv_action_package,
+    github_unknown_ref,
+    github_version,
     patch_github,
     releases_url,
     repository_url,
 )
-from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
-from tests.update_time.updaters.helpers import (
+from tests.update_time.sources.osv_answers import (
     OSV_BATCH_URL,
-    GitHubProjectMixin,
-    full_commit_sha,
-    github_commit_listing_queries,
-    github_fresh_line,
-    github_refs_whose_commits_were_listed,
-    github_unknown_ref,
-    github_version,
-    no_other_version_at_the_tag,
     no_vulnerabilities,
     osv,
+    osv_action_entry,
+    osv_action_package,
 )
+
+from .fixtures import ADVISORY, VULNERABILITY
 
 if TYPE_CHECKING:
     from contextlib import ContextDecorator
 
+    from update_time.formats.json import JSON
+
 # The directives the tests write in a marker, and expect named as what opted a reference in.
-_ALLOW_HASH_DRIFT = "allow[hash-drift]"
-_ALLOW_FLOATING_PIN = "allow[floating-pin]"
+_ALLOW_HASH_DRIFT: Final[str] = "allow[hash-drift]"
+_ALLOW_FLOATING_PIN: Final[str] = "allow[floating-pin]"
 # As many tags as GitHub lists on its first page, naming neither a version nor a ref a test pins.
-_FULL_PAGE_OF_TAGS = [github_tag_json(f"build-{index:03}", PAST_COOLDOWN_SHA) for index in range(100)]
+_FULL_PAGE_OF_TAGS: Final[list[dict[str, JSON]]] = [
+    github_tag_json(f"build-{index:03}", COMMIT_SHA3) for index in range(100)
+]
 
 
-def _action_advisory(repository: str, *events: dict[str, str]) -> dict[str, object]:
+def _action_advisory(repository: str, *events: dict[str, str]) -> dict[str, JSON]:
     """Return an advisory naming the versions of the repository's actions that the range of the events covers."""
     return ADVISORY | {"affected": [osv_action_entry(repository, *events)]}
 
 
 # An advisory naming the versions of tj-actions/changed-files from 45.0.0 up to 46.0.1.
-_CHANGED_FILES_ADVISORY = _action_advisory("tj-actions/changed-files", {"introduced": "45.0.0"}, {"fixed": "46.0.1"})
-
-
-def _drifted(
-    workflow_yml: Mock,
-    dependency: str = "actions/checkout",
-    version: str = "main",
-    new_sha: str = NEW_SHA,
-    kind: DriftKind = DriftKind.BRANCH,
-) -> DriftedPin:
-    """Return the drift of the workflow's first reference, pinned to the old commit, onto the new one by default."""
-    return DriftedPin(dependency, version, Location(workflow_yml, 1), OLD_SHA, kind=kind, new_sha=new_sha)
+_CHANGED_FILES_ADVISORY: Final[dict[str, JSON]] = _action_advisory(
+    "tj-actions/changed-files", {"introduced": "45.0.0"}, {"fixed": "46.0.1"}
+)
 
 
 def _patch_github_with_a_fresh_release() -> ContextDecorator:
@@ -105,47 +99,29 @@ def _patch_github_with_a_fresh_release() -> ContextDecorator:
             github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE),
         ],
         tags=[],
-        commit=github_commits_json(NEW_SHA),
+        commit=github_commits_json(COMMIT_SHA2),
     )
 
 
-def _commits_url(ref: str, dependency: str = "actions/checkout") -> str:
-    """Return the URL the GitHub API serves the commit the ref names at."""
-    return f"https://api.github.com/repos/{dependency}/commits/{ref}"
-
-
-@no_vulnerabilities
+@no_vulnerabilities()
 @patch("update_time.references.github.get_latest_version", autospec=True)
-@no_other_version_at_the_tag
+# GitHub does not list any tags, so a reference keeps the version its tag names.
+@patch_get_response([])
 @patch("pathlib.Path.glob")
 class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
     """Unit tests for the GitHub Actions updater, with the GitHub source's getters patched."""
 
-    @staticmethod
-    def drifted(workflow_yml: Mock) -> DriftedPin:
-        """Return the drifted pin the moved `action/action` version tag these tests use produces."""
-        return _drifted(workflow_yml, "action/action", "1.0", kind=DriftKind.TAG)
-
-    @staticmethod
-    def assert_resolved(
-        mock_get_latest_version: Mock, version: str = "v4", version_bound: VersionBound = NO_BOUND
-    ) -> None:
-        """Assert the source was asked once about `actions/checkout` at the version, under the bound the marker sets."""
-        mock_get_latest_version.assert_called_once_with(
-            PinnedDependency("actions/checkout", version), version_bound, COOLDOWN.default
-        )
-
     def test_multiple_files(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that actions are updated in every file the walk finds, not just in the first."""
         mock_get_latest_version.return_value = github_version("1.1")
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
-        composite_action_yaml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0\n")
+        composite_action_yaml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0\n")
         walk = [workflow_yml, composite_action_yaml]
         with patch("update_time.updaters.update_github_action.glob_for", return_value=walk):
             _update_github_actions()
         mock_glob.assert_not_called()
-        workflow_yml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
-        composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
+        workflow_yml.write_text.assert_called_with(f"uses: action/action@{COMMIT_SHA2} # v1.1\n")
+        composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{COMMIT_SHA2} # v1.1\n")
         self.assert_path_logged(composite_action_yaml)
         self.assert_last_new_version_logged(
             "action/action", "1.1", Location(composite_action_yaml, 1), Logger._SUPPRESSING_CHANGELOG
@@ -163,20 +139,20 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_vulnerable_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an action is warned about when an advisory names the version the run updates it to."""
+        mock_get_latest_version.return_value = github_version("45.0.0")
+        workflow_yml = mock_path(f"uses: tj-actions/changed-files@{COMMIT_SHA1} # v44.0.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        with osv(_CHANGED_FILES_ADVISORY):
+            _update_github_actions()
+        workflow_yml.write_text.assert_called_once_with(f"uses: tj-actions/changed-files@{COMMIT_SHA2} # v45.0.0\n")
+        self.assert_changed_files_warned_about(workflow_yml)
+
     def assert_changed_files_warned_about(self, workflow_yml: Mock) -> None:
         """Assert that the workflow's tj-actions/changed-files was warned about at 45.0.0, which the advisory names."""
         location = Location(workflow_yml, 1)
         self.assert_vulnerable_dependency_logged("tj-actions/changed-files", "45.0.0", VULNERABILITY, location)
-
-    def test_vulnerable_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that an action is warned about when an advisory names the version the run updates it to."""
-        mock_get_latest_version.return_value = github_version("45.0.0")
-        workflow_yml = mock_path(f"uses: tj-actions/changed-files@{OLD_SHA} # v44.0.0\n")
-        mock_glob.side_effect = [[workflow_yml], []]
-        with osv(_CHANGED_FILES_ADVISORY):
-            _update_github_actions()
-        workflow_yml.write_text.assert_called_once_with(f"uses: tj-actions/changed-files@{NEW_SHA} # v45.0.0\n")
-        self.assert_changed_files_warned_about(workflow_yml)
 
     def test_held_back_action_is_checked_at_the_version_its_tag_names(
         self, mock_glob: Mock, mock_get_latest_version: Mock
@@ -194,8 +170,8 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
         self, mock_glob: Mock, mock_get_latest_version: Mock
     ):
         """Test that an action in a subdirectory is looked up by its repository, and warned about as written."""
-        mock_get_latest_version.return_value = DependencyVersion(version="3.28.0", sha=OLD_SHA)
-        workflow_yml = mock_path(f"uses: github/codeql-action/init@{OLD_SHA} # v3.28.0\n")
+        mock_get_latest_version.return_value = DependencyVersion(version="3.28.0", sha=COMMIT_SHA1)
+        workflow_yml = mock_path(f"uses: github/codeql-action/init@{COMMIT_SHA1} # v3.28.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         with osv(_action_advisory("github/codeql-action", {"introduced": "0"})) as mock_post:
             _update_github_actions()
@@ -206,8 +182,8 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
 
     def test_pinned_action_up_to_date(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an already pinned action that is up to date is left unchanged."""
-        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA)
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=COMMIT_SHA1)
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_not_called()
@@ -217,34 +193,37 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
 
     def test_moved_tag_warned_not_repinned(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a pinned action whose tag now points at another commit is warned about, not silently re-pinned."""
-        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=COMMIT_SHA2)
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_not_called()
         self.assert_drift_logged(self.drifted(workflow_yml))
         self.assert_no_new_version_logged()
 
-    @patch_github(commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
+    @staticmethod
+    def drifted(workflow_yml: Mock) -> DriftedPin:
+        """Return the drifted pin the moved `action/action` version tag these tests use produces."""
+        return _drifted(workflow_yml, "action/action", "1.0", kind=DriftKind.TAG)
+
+    @patch_github(commit=github_commits_json(COMMIT_SHA2, date=PAST_COOLDOWN_DATE))
     def test_allow_hash_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `allow[hash-drift]` marker re-pins a moved tag to its new commit, dated by that commit's SHA."""
         mock_get_latest_version.return_value = github_version("1.0")
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0{marker}\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0{marker}\n")
-        self.assertEqual(github_requests("commits"), [_commits_url(NEW_SHA, "action/action")])
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{COMMIT_SHA2} # v1.0{marker}\n")
+        self.assertEqual(github_requests("commits"), [_commits_url(COMMIT_SHA2, "action/action")])
         self.assert_adopted_drift_logged(self.drifted(workflow_yml), _ALLOW_HASH_DRIFT)
         self.assert_no_warnings_logged()
 
     def test_stale_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an action whose newest release is old is warned about, even when it is up to date."""
-        newest = Release("1.2", STALE_DATE)
-        project = Project(newest=newest)
-        self.get_project.return_value = project
-        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA)
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        self.get_project.return_value = Project(newest=Release("1.2", STALE_DATE))
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=COMMIT_SHA1)
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_not_called()
@@ -257,11 +236,20 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
         workflow_yml = mock_path("uses: actions/checkout@v4\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
-        workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
+        workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{COMMIT_SHA2} # v4.1.1\n")
         self.assert_resolved(mock_get_latest_version)
         self.assert_path_logged(workflow_yml)
         self.assert_new_version_logged("actions/checkout", "4.1.1", Location(workflow_yml, 1), changes=changes)
         self.assert_no_warnings_logged()
+
+    @staticmethod
+    def assert_resolved(
+        mock_get_latest_version: Mock, version: str = "v4", version_bound: VersionBound = NO_BOUND
+    ) -> None:
+        """Assert the source was asked once about `actions/checkout` at the version, under the bound the marker sets."""
+        mock_get_latest_version.assert_called_once_with(
+            PinnedDependency("actions/checkout", version), version_bound, COOLDOWN.default
+        )
 
     def test_pin_unpinned_action_already_at_latest(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an unpinned action already at the latest release is still pinned to that release's commit SHA."""
@@ -269,10 +257,10 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
         workflow_yml = mock_path("uses: actions/checkout@v4.1.1\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
-        workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
+        workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{COMMIT_SHA2} # v4.1.1\n")
         self.assert_resolved(mock_get_latest_version, "v4.1.1")
         self.assert_path_logged(workflow_yml)
-        self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
+        self.assert_pinned_logged("actions/checkout", "4.1.1", COMMIT_SHA2, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()
 
     def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -282,7 +270,7 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_called_with(
-            f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
+            f"uses: actions/checkout@{COMMIT_SHA2} # v4.2.0  # update-time: allow[update<5]\n"
         )
         self.assert_resolved(mock_get_latest_version, "v4", bound(Verb.ALLOW, "update<5"))
         self.assert_new_version_logged("actions/checkout", "4.2.0", Location(workflow_yml, 1))
@@ -295,7 +283,7 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_called_with(
-            f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: ignore[major-update]\n"
+            f"uses: actions/checkout@{COMMIT_SHA2} # v4.2.0  # update-time: ignore[major-update]\n"
         )
         self.assert_resolved(mock_get_latest_version, "v4", bound(Verb.IGNORE, "major-update"))
         self.assert_new_version_logged("actions/checkout", "4.2.0", Location(workflow_yml, 1))
@@ -303,7 +291,7 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
 
     def test_inline_ignore_marker_leaves_action_untouched(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an inline `# update-time: ignore[update]` comment leaves the action untouched."""
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0  # update-time: ignore[update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         mock_get_latest_version.return_value = github_version("1.1")
         _update_github_actions()
@@ -314,7 +302,7 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
 
     def test_preceding_ignore_marker_leaves_action_untouched(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a standalone `# update-time: ignore[update]` comment holds back the action on the line below it."""
-        workflow_yml = mock_path(f"# update-time: ignore[update]\nuses: action/action@{OLD_SHA} # v1.0\n")
+        workflow_yml = mock_path(f"# update-time: ignore[update]\nuses: action/action@{COMMIT_SHA1} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         mock_get_latest_version.return_value = github_version("1.1")
         _update_github_actions()
@@ -325,10 +313,9 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
 
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[update]` leaves the action's pin unchanged but still warns when it is stale."""
-        newest = Release("1.2", STALE_DATE)
-        self.get_project.return_value = Project(newest=newest)
-        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA)
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
+        self.get_project.return_value = Project(newest=Release("1.2", STALE_DATE))
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=COMMIT_SHA2)
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0  # update-time: ignore[update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_not_called()  # the pin is held back
@@ -338,9 +325,9 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
 
     def test_hash_drift_marker_on_a_held_back_version_tag_is_reported(self, mock_glob: Mock, mock_latest: Mock):
         """Test that a version tag whose update is held back keeps its drifted pin, its `allow[hash-drift]` reported."""
-        mock_latest.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
+        mock_latest.return_value = DependencyVersion(version="1.0", sha=COMMIT_SHA2)
         marker = "ignore[update] allow[hash-drift]"
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: {marker}\n")
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0  # update-time: {marker}\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_not_called()
@@ -350,17 +337,15 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
 
     def test_stale_after_zero_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `set[stale-after=0]` repins the action but skips the staleness check even for an old release."""
-        newest = Release("1.2", STALE_DATE)
-        self.get_project.return_value = Project(newest=newest)
+        self.get_project.return_value = Project(newest=Release("1.2", STALE_DATE))
         mock_latest.return_value = github_version("1.1")
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: set[stale-after=0]\n")
+        workflow_yml = mock_path(f"uses: action/action@{COMMIT_SHA1} # v1.0  # update-time: set[stale-after=0]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         _update_github_actions()
         workflow_yml.write_text.assert_called_once_with(
-            f"uses: action/action@{NEW_SHA} # v1.1  # update-time: set[stale-after=0]\n"
+            f"uses: action/action@{COMMIT_SHA2} # v1.1  # update-time: set[stale-after=0]\n"
         )
-        location = Location(workflow_yml, 1)
-        self.assert_new_version_logged("action/action", "1.1", location)
+        self.assert_new_version_logged("action/action", "1.1", Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # staleness skipped despite the old release
 
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -386,10 +371,36 @@ class UpdateGitHubActionsTest(GitHubProjectMixin, LoggingTestCase):
         self.assert_no_warnings_logged()
 
 
-@no_vulnerabilities
+def _drifted(
+    workflow_yml: Mock,
+    dependency: str = "actions/checkout",
+    version: str = "main",
+    new_sha: str = COMMIT_SHA2,
+    kind: DriftKind = DriftKind.BRANCH,
+) -> DriftedPin:
+    """Return the drift of the workflow's first reference, pinned to the old commit, onto the new one by default."""
+    return DriftedPin(dependency, version, Location(workflow_yml, 1), COMMIT_SHA1, kind=kind, new_sha=new_sha)
+
+
+def _commits_url(ref: str, dependency: str = "actions/checkout") -> str:
+    """Return the URL the GitHub API serves the commit the ref names at."""
+    return f"https://api.github.com/repos/{dependency}/commits/{ref}"
+
+
+@no_vulnerabilities()
 @patch("pathlib.Path.glob")
 class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     """Unit tests for the GitHub Actions updater, resolving versions through the GitHub source itself."""
+
+    @patch_github(
+        releases=[github_release_json("v1.0", published_at=STALE_DATE)],
+        tags=[],
+        commit=github_commits_json(COMMIT_SHA2),
+    )
+    def test_stale_branch_reference_warned(self, mock_glob: Mock):
+        """Test that an action referenced by a branch is warned about when its repository's newest release is old."""
+        workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
+        self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
 
     @staticmethod
     def scanned_workflow(mock_glob: Mock, workflow: str) -> Mock:
@@ -400,15 +411,9 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         return workflow_yml
 
     @patch_github(
-        releases=[github_release_json("v1.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
-    )
-    def test_stale_branch_reference_warned(self, mock_glob: Mock):
-        """Test that an action referenced by a branch is warned about when its repository's newest release is old."""
-        workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
-        self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
-
-    @patch_github(
-        releases=[github_release_json("v1.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
+        releases=[github_release_json("v1.0", published_at=STALE_DATE)],
+        tags=[],
+        commit=github_commits_json(COMMIT_SHA2),
     )
     def test_stale_after_zero_on_a_branch_reference_silences_the_warning(self, mock_glob: Mock):
         """Test that `set[stale-after=0]` on a branch reference silences the warning its old repository would get."""
@@ -418,7 +423,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(
         releases=[github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE)],
         tags=[],
-        commit=github_commits_json(NEW_SHA),
+        commit=github_commits_json(COMMIT_SHA2),
     )
     def test_a_branch_reference_is_warned_about_at_its_own_threshold(self, mock_glob: Mock):
         """Test that `set[stale-after=90]` on a branch reference warns at 90 days, where the default 365 would not."""
@@ -428,7 +433,9 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @KILLS_GITHUB_UNCACHED
     @patch_github(
-        releases=[github_release_json("v1.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
+        releases=[github_release_json("v1.0", published_at=STALE_DATE)],
+        tags=[],
+        commit=github_commits_json(COMMIT_SHA2),
     )
     def test_two_references_to_one_branch_ask_for_its_releases_and_commit_once(self, mock_glob: Mock):
         """Test that two references to one branch ask for its repository's releases and its commit once each."""
@@ -441,13 +448,13 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             "actions/checkout", "1.0", Location(workflow_ymls[0], 1), Location(workflow_ymls[1], 1)
         )
 
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_a_branch_reference_whose_repository_has_released_nothing(self, mock_glob: Mock):
         """Test that a branch reference is not warned about when its repository has published no release to date."""
         self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
         self.assert_no_warnings_logged()
 
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_a_version_whose_repository_tags_no_release_is_left_as_it_is(self, mock_glob: Mock):
         """Test that a version reference is left as it is, saying so at debug, where its repository tags nothing."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v1\n")
@@ -457,68 +464,71 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         )
 
     @kills.delete(
-        references_github.PinUpdater._report_redundant_directives,
+        PinUpdater._report_redundant_directives,
         "names_a_commit and ",
         "a cooldown on a branch is reported as redundant, although it holds the branch's drift back",
     )
-    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_cooldown_marker_on_a_branch_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `cooldown` marker on a branch that this run pins is not reported."""
         marker = "  # update-time: set[cooldown=30]"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{COMMIT_SHA2} # main{marker}\n")
         self.assert_no_warnings_logged()
 
-    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_vulnerability_level_none_marker_silences_the_warning(self, mock_glob: Mock):
         """Test that `set[vulnerability-level=none]` on an action silences its warning, and the action still updates."""
         marker = "  # update-time: set[vulnerability-level=none]"
         with osv(_action_advisory("action/action", {"introduced": "0"})):
-            workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
+            workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{COMMIT_SHA1} # v1.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{COMMIT_SHA2} # v1.1{marker}\n")
         location = Location(workflow_yml, 1)
         self.assert_ignored_vulnerability_logged(
             "action/action", location, VULNERABILITY.advisory, "set[vulnerability-level=none]"
         )
         self.assert_no_warnings_logged()
 
-    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA), archived=True)
+    @patch_github(
+        releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(COMMIT_SHA2), archived=True
+    )
     def test_archived_repository_warned(self, mock_glob: Mock):
         """Test that an action whose repository GitHub declares archived is warned about, and still updated."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{OLD_SHA} # v1.0\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{COMMIT_SHA1} # v1.0\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{COMMIT_SHA2} # v1.1\n")
         self.assert_archived_repository_logged("action/action", Location(workflow_yml, 1))
 
     @kills.delete(
-        github_workflow_manifest,
+        github_workflow,
         r"[\w\d\.-]+/",
         "a reference naming no repository is read as one, ending the run over that single line",
         raises="ValueError: not enough values to unpack (expected at least 2, got 1)",
     )
-    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_a_reference_naming_no_repository_is_passed_over(self, mock_glob: Mock):
         """Test that a `uses:` naming no owner and repository is left alone rather than ending the run."""
-        workflow_yml = self.scanned_workflow(mock_glob, "uses: myaction@v1\n")
-        workflow_yml.write_text.assert_not_called()
+        self.scanned_workflow(mock_glob, "uses: myaction@v1\n").write_text.assert_not_called()
         cast("Mock", requests.Session.get).assert_not_called()  # A reference naming no repository asks GitHub nothing.
         self.assert_no_warnings_logged()
 
-    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_a_scope_the_source_cannot_apply_is_reported_on_a_reference_naming_no_version(self, mock_glob: Mock):
         """Test that a scope GitHub can never apply is reported for a branch reference, which resolves no update."""
         marker = "  # update-time: ignore[yanked]"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{COMMIT_SHA2} # main{marker}\n")
         self.assert_redundant_directive_logged(
             Reason.NO_YANK_CONCEPT, "action/action", Location(workflow_yml, 1), "ignore[yanked]"
         )
 
-    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA), archived=True)
+    @patch_github(
+        releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(COMMIT_SHA2), archived=True
+    )
     def test_ignore_archived_marker_silences_the_warning(self, mock_glob: Mock):
         """Test that `ignore[archived]` on an action silences the warning its archived repository would get."""
         marker = "  # update-time: ignore[archived]"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{COMMIT_SHA1} # v1.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{COMMIT_SHA2} # v1.1{marker}\n")
         self.assert_ignored_warning_logged(
             Scope.ARCHIVED, "action/action", Location(workflow_yml, 1), "ignore[archived]"
         )
@@ -526,74 +536,74 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @patch_github(
         releases=[github_release_json("v1.0", published_at=FRESH_DATE)],
-        tags=[github_tag_json("v1.0", OLD_SHA)],
-        commit=github_commits_json(NEW_SHA),
+        tags=[github_tag_json("v1.0", COMMIT_SHA1)],
+        commit=github_commits_json(COMMIT_SHA2),
     )
     def test_pin_branch_reference(self, mock_glob: Mock):
         """Test that a branch reference is pinned to its commit as the branch, the version tags pointing elsewhere."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main\n")
-        self.assert_pinned_logged("actions/checkout", "main", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # main\n")
+        self.assert_pinned_logged("actions/checkout", "main", COMMIT_SHA2, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()
 
     @patch_github(
         releases=[github_release_json("v4.3.0", published_at=PAST_COOLDOWN_DATE)],
         tags=[
-            github_tag_json("v4.4.0", OLD_SHA),
-            github_tag_json("v4.3", NEW_SHA),
-            github_tag_json("v4.3.0", NEW_SHA),
-            github_tag_json("v4", NEW_SHA),
+            github_tag_json("v4.4.0", COMMIT_SHA1),
+            github_tag_json("v4.3", COMMIT_SHA2),
+            github_tag_json("v4.3.0", COMMIT_SHA2),
+            github_tag_json("v4", COMMIT_SHA2),
         ],
-        commit=github_commits_json(NEW_SHA),
+        commit=github_commits_json(COMMIT_SHA2),
     )
     def test_pin_branch_reference_as_the_version_tag_at_its_commit(self, mock_glob: Mock):
         """Test that a branch reference is pinned as the highest version tag pointing at the branch's commit."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v4.3.0\n")
-        self.assert_pinned_logged("actions/checkout", "4.3.0", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v4.3.0\n")
+        self.assert_pinned_logged("actions/checkout", "4.3.0", COMMIT_SHA2, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()
 
     def test_pin_branch_reference_as_the_branch_when_a_pre_release_tags_its_commit(self, mock_glob: Mock):
         """Test that a branch reference is pinned as the branch when only a pre-release tags the branch's commit."""
         cases = {
-            "owner/pre-release-version": ([], [github_tag_json("v5.0.0-rc.1", NEW_SHA)]),
+            "owner/pre-release-version": ([], [github_tag_json("v5.0.0-rc.1", COMMIT_SHA2)]),
             "owner/pre-release-flagged": (
                 [github_release_json("v5.0.0", prerelease=True, published_at=PAST_COOLDOWN_DATE)],
-                [github_tag_json("v5.0.0", NEW_SHA)],
+                [github_tag_json("v5.0.0", COMMIT_SHA2)],
             ),
         }
-        commit = github_commits_json(NEW_SHA)
+        commit = github_commits_json(COMMIT_SHA2)
         for dependency, (releases, tags) in cases.items():
             with self.subTest(dependency), patch_github(releases=releases, tags=tags, commit=commit):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@main\n")
-                workflow_yml.write_text.assert_called_once_with(f"uses: {dependency}@{NEW_SHA} # main\n")
+                workflow_yml.write_text.assert_called_once_with(f"uses: {dependency}@{COMMIT_SHA2} # main\n")
 
     @patch_github(
         releases=[github_release_json("v4.3.0", published_at=FRESH_DATE)],
-        tags=[github_tag_json("v4.3.0", NEW_SHA)],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
+        tags=[github_tag_json("v4.3.0", COMMIT_SHA2)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
     )
     def test_pin_branch_reference_inside_the_cooldown(self, mock_glob: Mock):
         """Test that a branch reference is pinned although its commit and the tag there are inside the cooldown."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v4.3.0\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v4.3.0\n")
 
     @_patch_github_with_a_fresh_release()
     def test_version_inside_the_cooldown_is_logged_as_held_back(self, mock_glob: Mock):
         """Test that the newest version inside the cooldown is logged as held back, while the reference is pinned."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: action/action@v1.0\n")
         location = Location(workflow_yml, 1)
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
-        self.assert_pinned_logged("action/action", "1.0", NEW_SHA, location)
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{COMMIT_SHA2} # v1.0\n")
+        self.assert_pinned_logged("action/action", "1.0", COMMIT_SHA2, location)
         self.assert_held_back_by_cooldown_logged("action/action", "1.1", location)
 
     @kills.delete(
-        references_github.PinUpdater._report_unfetched_commit,
+        PinUpdater._report_unfetched_commit,
         "reference.current_sha and ",
         "a reference to a branch that is not in the repository is left as it is without an error",
     )
     @kills.delete(
-        sources_github._get_commit, "_NO_COMMIT_BY_THAT_NAME,", "an unknown branch is warned about as a refused request"
+        github._get_commit, "_NO_COMMIT_BY_THAT_NAME,", "an unknown branch is warned about as a refused request"
     )
     @patch_github(releases=[], tags=[], commit=github_unknown_ref("pinned"))
     def test_branch_whose_commit_cannot_be_fetched_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
@@ -604,46 +614,46 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         self.assert_unpinned_ref_logged("actions/checkout", "pinned", Location(workflow_yml, 1), reason)
         self.assert_no_warnings_logged()
 
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA, date=FRESH_DATE + timedelta(days=1)))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE + timedelta(days=1)))
     def test_branch_under_a_zero_day_cooldown_moves_to_its_head_whatever_its_date(self, mock_glob: Mock):
         """Test that a branch under a zero-day cooldown lists its head alone, and moves to it however it is dated."""
         marker = "  # update-time: allow[hash-drift] set[cooldown=0]"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # main{marker}\n")
         self.assertEqual(github_commit_listing_queries(), [{"sha": ["main"], "per_page": ["1"]}])
 
     @kills.delete(
-        sources_github.newest_commit_past_cooldown,
+        github.newest_commit_past_cooldown,
         ", page.reason",
         "a branch whose commit listing is not JSON is left as it is without saying why",
         case="page that is not JSON",
     )
     @kills.uncache(
-        sources_github._github_json,
+        github._github_json,
         "a GitHub answer that is not JSON is warned about once for every caller that reads it",
         case="page that is not JSON",
     )
     @kills.delete(
-        sources_github.newest_commit_past_cooldown,
+        github.newest_commit_past_cooldown,
         ", _BEYOND_THE_COMMITS_EXAMINED",
         "a branch whose line runs past the pages examined is left as it is without saying why",
         case="line beyond the pages examined",
     )
     def test_pinned_branch_whose_commits_cannot_be_listed_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
         """Test that a pinned branch whose commits cannot be listed is left as it is, the reason logged as an error."""
-        commit = github_commits_json(NEW_SHA, date=FRESH_DATE)
-        past = github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE, parents=[OLD_SHA])
+        commit = github_commits_json(COMMIT_SHA2, date=FRESH_DATE)
+        past = github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE, parents=[COMMIT_SHA1])
         beyond = "the branch's newest commit older than the cooldown is not among the 500 newest commits examined"
         not_json = message_of(Logger.invalid_response)
         # Each case names the listing, the reason the branch stays put, the number of pages the run requests, and
         # the warnings the listing gives.
         cases: dict[str, tuple[list | Mock, str, int, list[_LogMessage]]] = {
             "page that is not JSON": (unparsable_response(ok=True), "the response is not valid JSON", 1, [not_json]),
-            "line beyond the pages examined": ([*github_fresh_line(500, PAST_COOLDOWN_SHA), past], beyond, 5, []),
+            "line beyond the pages examined": ([*github_fresh_line(500, COMMIT_SHA3), past], beyond, 5, []),
         }
         for case, (listed_commits, reason, pages, warnings) in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit, listed_commits=listed_commits):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main\n")
                 workflow_yml.write_text.assert_not_called()
                 self.assert_unpinned_ref_logged("actions/checkout", "main", Location(workflow_yml, 1), reason)
                 self.assertEqual([record.args[0] for record in self.records(WARNING)], warnings)
@@ -658,14 +668,14 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         self.assert_unpinned_ref_logged("actions/checkout", "stable-2024", location, reason, ref=RefKind.REF)
 
     @kills.replace(
-        sources_github._looked_up_tag,
+        github._looked_up_tag,
         "return False",
         "return True",
         "a branch in a repository with a full page of tags is followed as a tag",
         case="a full page of tags",
     )
     @kills.force_false(
-        sources_github.is_tag,
+        github.is_tag,
         "len(tags) < _PER_PAGE",
         "a branch in a repository whose tags fit on one page is looked up as a tag as well",
         case="no tags",
@@ -677,8 +687,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             "no tags": ([], []),
             "a full page of tags": (_FULL_PAGE_OF_TAGS, [lookup]),
         }.items():
-            with self.subTest(case), patch_github(releases=[], tags=tags, commit=github_commits_json(OLD_SHA)):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
+            with self.subTest(case), patch_github(releases=[], tags=tags, commit=github_commits_json(COMMIT_SHA1)):
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main\n")
                 workflow_yml.write_text.assert_not_called()
                 self.assertEqual(github_refs_whose_commits_were_listed(), ["main"])
                 self.assertEqual(len(github_requests("commits")), 1)
@@ -688,30 +698,30 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     def test_moved_branch_warned_about_its_newest_commit_past_the_cooldown(self, mock_glob: Mock):
         """Test that a moved branch is warned about the newest commit older than the cooldown on its own line."""
-        commit = github_commits_json(NEW_SHA, date=FRESH_DATE)
-        past = github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE, parents=[OLD_SHA])
+        commit = github_commits_json(COMMIT_SHA2, date=FRESH_DATE)
+        past = github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE, parents=[COMMIT_SHA1])
         listings = {
             "head older than the cooldown": [past],
-            "a page of fresh commits above it": [*github_fresh_line(100, PAST_COOLDOWN_SHA), past],
+            "a page of fresh commits above it": [*github_fresh_line(100, COMMIT_SHA3), past],
         }
         for listing, listed_commits in listings.items():
             with (
                 self.subTest(listing),
                 patch_github(releases=[], tags=[], commit=commit, listed_commits=listed_commits),
             ):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main\n")
                 workflow_yml.write_text.assert_not_called()
-                self.assert_drift_logged(_drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA))
+                self.assert_drift_logged(_drifted(workflow_yml, new_sha=COMMIT_SHA3))
 
     @kills.delete(
-        sources_github._newest_on_the_line,
+        github._newest_on_the_line,
         " if parents else None",
         "a branch whose whole history is fresh ends the run rather than being held back",
         raises="IndexError: list index out of range",
         case="every commit fresh",
     )
     @kills.replace(
-        sources_github._newest_on_the_line,
+        github._newest_on_the_line,
         "parents[0]",
         "parents[-1]",
         "a branch is followed into a branch it merged, and moves onto a merged commit older than the cooldown",
@@ -719,10 +729,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     )
     def test_branch_moved_only_inside_the_cooldown_is_left_alone(self, mock_glob: Mock):
         """Test that a pinned branch whose own line moved only inside the cooldown is left alone, whatever it merged."""
-        commit = github_commits_json(NEW_SHA, date=FRESH_DATE)
-        pin = github_commits_json(OLD_SHA, date=STALE_DATE)
-        merge = github_commits_json(NEW_SHA, date=FRESH_DATE, parents=[OLD_SHA, PAST_COOLDOWN_SHA])
-        merged = github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE, parents=[OLD_SHA])
+        commit = github_commits_json(COMMIT_SHA2, date=FRESH_DATE)
+        pin = github_commits_json(COMMIT_SHA1, date=STALE_DATE)
+        merge = github_commits_json(COMMIT_SHA2, date=FRESH_DATE, parents=[COMMIT_SHA1, COMMIT_SHA3])
+        merged = github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE, parents=[COMMIT_SHA1])
         listings = {
             "merged branch older than the cooldown": [merge, merged, pin],
             "every commit fresh": [commit],  # The head is the first commit of a fresh history
@@ -733,7 +743,9 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 self.subTest(listing),
                 patch_github(releases=[], tags=[], commit=commit, listed_commits=listed_commits),
             ):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
+                workflow_yml = self.scanned_workflow(
+                    mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n"
+                )
                 workflow_yml.write_text.assert_not_called()
                 self.assertEqual(github_refs_whose_commits_were_listed(), ["main"])
                 self.assert_no_warnings_logged()
@@ -741,8 +753,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     def test_branch_whose_newest_commit_past_the_cooldown_is_older_than_its_pin_is_left_alone(self, mock_glob: Mock):
         """Test that a pinned branch never moves back to a commit older than its pin, and is not warned about."""
-        commit = github_commits_json(NEW_SHA, date=FRESH_DATE)
-        listed_commits = [github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)]
+        commit = github_commits_json(COMMIT_SHA2, date=FRESH_DATE)
+        listed_commits = [github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)]
         for case, marker in {
             "not opted into drift": "",
             "opted into drift": f"  # update-time: {_ALLOW_HASH_DRIFT}",
@@ -757,122 +769,126 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                     comparison_status="behind",
                 ),
             ):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
+                workflow_yml = self.scanned_workflow(
+                    mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n"
+                )
                 workflow_yml.write_text.assert_not_called()
                 self.assert_no_warnings_logged()
                 self.assert_no_info_logged()
-                compare = f"https://api.github.com/repos/actions/checkout/compare/{OLD_SHA}...{PAST_COOLDOWN_SHA}"
+                compare = f"https://api.github.com/repos/actions/checkout/compare/{COMMIT_SHA1}...{COMMIT_SHA3}"
                 self.assertEqual(github_requests("compare"), [f"{compare}?per_page=1"])
 
     @kills.delete_statement(
-        references_github.PinUpdater._branch_moved_on,
+        PinUpdater._branch_moved_on,
         "self.logger.unchecked_branch_drift(reference, moved.sha, compared.reason)",
         "a branch whose drift could not be checked is left as it is without an error",
     )
     @patch_github(
         releases=[],
         tags=[],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
-        listed_commits=[github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
+        listed_commits=[github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)],
         comparison_status=github_rate_limited(),
     )
     def test_branch_whose_move_cannot_be_compared_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
         """Test that a pinned branch is left as it is when GitHub can't compare its pin with the commit it moved to."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main\n")
         workflow_yml.write_text.assert_not_called()
         self.assert_error_logged(
             message_of(Logger.unchecked_branch_drift),
             dependency="actions/checkout",
             name="main",
             location=Location(workflow_yml, 1),
-            new_sha=PAST_COOLDOWN_SHA,
+            new_sha=COMMIT_SHA3,
             reason=GITHUB_RATE_LIMITED_REASON,
         )
         self.assert_could_not_fetch_logged(status=HTTPStatus.FORBIDDEN)
 
     @kills.delete(
-        sources_github,
+        github,
         ', "diverged"',
         "a branch force-pushed past its pin is held there silently, its drift unreported",
     )
     @patch_github(
         releases=[],
         tags=[],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
-        listed_commits=[github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
+        listed_commits=[github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)],
         comparison_status="diverged",
     )
     def test_branch_force_pushed_past_its_pin_is_warned_about(self, mock_glob: Mock):
         """Test that a branch whose newest commit older than the cooldown diverged from the pin is warned about."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main\n")
         workflow_yml.write_text.assert_not_called()
-        self.assert_drift_logged(_drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA))
+        self.assert_drift_logged(_drifted(workflow_yml, new_sha=COMMIT_SHA3))
 
     @patch_github(
         releases=[],
         tags=[],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
-        listed_commits=[github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
+        listed_commits=[github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)],
         comparison_status="diverged",
     )
     def test_branch_force_pushed_past_its_pin_is_adopted_when_opted_into_drift(self, mock_glob: Mock):
         """Test that a branch opted into drift adopts its newest commit older than the cooldown, diverged or not."""
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{PAST_COOLDOWN_SHA} # main{marker}\n")
-        drifted = _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA)
-        self.assert_adopted_drift_logged(drifted, _ALLOW_HASH_DRIFT)
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA3} # main{marker}\n")
+        self.assert_adopted_drift_logged(_drifted(workflow_yml, new_sha=COMMIT_SHA3), _ALLOW_HASH_DRIFT)
 
     def test_moved_tag_naming_no_version_warned_as_tag_drift_or_else_as_ref_drift(self, mock_glob: Mock):
         """Test that a moved tag is warned about as tag drift, or as ref drift when GitHub refuses to say it is a tag.
 
         The warning names the commit the tag points at, never an earlier commit older than the cooldown.
         """
-        moved = github_tag_json("stable-2024", NEW_SHA)
-        cases: dict[str, tuple[list | None, Mock | Exception | None, DriftKind]] = {  # Tags, tag lookup, and drift
-            "listed tag": ([moved], None, DriftKind.TAG),
-            "tag past the first page": ([*_FULL_PAGE_OF_TAGS, moved], None, DriftKind.TAG),
-            "tag lookup refused": ([*_FULL_PAGE_OF_TAGS, moved], github_rate_limited(), DriftKind.REF),
+        moved = github_tag_json("stable-2024", COMMIT_SHA2)
+        # Tags, tag lookup, drift, and the number of warnings, since a refused tag lookup is a warning of its own:
+        cases: dict[str, tuple[list | None, Mock | Exception | None, DriftKind, int]] = {
+            "listed tag": ([moved], None, DriftKind.TAG, 1),
+            "tag past the first page": ([*_FULL_PAGE_OF_TAGS, moved], None, DriftKind.TAG, 1),
+            "tag lookup refused": ([*_FULL_PAGE_OF_TAGS, moved], github_rate_limited(), DriftKind.REF, 2),
             "tag lookup failed": (
                 [*_FULL_PAGE_OF_TAGS, moved],
                 requests.exceptions.ConnectionError("connection refused"),
                 DriftKind.REF,
+                2,
             ),
-            "unlisted tags": (None, None, DriftKind.REF),
+            "unlisted tags": (None, None, DriftKind.REF, 2),
         }
-        commit = github_commits_json(NEW_SHA)
-        listed_commits = [github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)]
-        for case, (tags, tag_ref, kind) in cases.items():
+        commit = github_commits_json(COMMIT_SHA2)
+        listed_commits = [github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)]
+        for case, (tags, tag_ref, kind, warnings) in cases.items():
             with (
                 self.subTest(case),
                 patch_github(releases=[], tags=tags, commit=commit, listed_commits=listed_commits, tag_ref=tag_ref),
             ):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # stable-2024\n")
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # stable-2024\n")
                 workflow_yml.write_text.assert_not_called()
                 drifted = _drifted(workflow_yml, version="stable-2024", kind=kind)
-                refused = kind is DriftKind.REF
-                self.assert_drift_logged(drifted, among_others=refused)  # Beside the refused request
-                self.assertEqual(len(self.records(WARNING)), 2 if refused else 1)  # The refusal is a warning of its own
+                self.assert_drift_logged(drifted, among_others=kind is DriftKind.REF)  # Beside the refused request
+                self.assertEqual(len(self.records(WARNING)), warnings)
                 self.assertEqual(github_refs_whose_commits_were_listed(), [])
 
-    @patch_github(releases=[], tags=[github_tag_json("stable-2024", NEW_SHA)], commit=github_commits_json(NEW_SHA))
+    @patch_github(
+        releases=[], tags=[github_tag_json("stable-2024", COMMIT_SHA2)], commit=github_commits_json(COMMIT_SHA2)
+    )
     def test_pin_tag_naming_no_version_as_the_tag(self, mock_glob: Mock):
         """Test that a reference to a tag such as `stable-2024` is pinned to its commit, the comment naming the tag."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@stable-2024\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # stable-2024\n")
-        self.assert_pinned_logged("actions/checkout", "stable-2024", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # stable-2024\n")
+        self.assert_pinned_logged("actions/checkout", "stable-2024", COMMIT_SHA2, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()
 
     def test_tag_kept_floating_is_reported_as_a_tag_or_else_as_a_ref(self, mock_glob: Mock):
         """Test that a tag kept floating is reported as a tag, or as a ref when the tags cannot be listed."""
         marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
         cases = {
-            "listed tag": ([github_tag_json("stable-2024", NEW_SHA)], RefKind.TAG),
+            "listed tag": ([github_tag_json("stable-2024", COMMIT_SHA2)], RefKind.TAG),
             "unlisted tags": (None, RefKind.REF),
         }
-        release, directive = DependencyVersion("stable-2024", sha=NEW_SHA), _ALLOW_FLOATING_PIN
+        release, directive = DependencyVersion("stable-2024", sha=COMMIT_SHA2), _ALLOW_FLOATING_PIN
         for case, (tags, kind) in cases.items():
-            with self.subTest(case), patch_github(releases=[], tags=tags, commit=github_commits_json(NEW_SHA)):
+            with self.subTest(case), patch_github(releases=[], tags=tags, commit=github_commits_json(COMMIT_SHA2)):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@stable-2024{marker}\n")
                 workflow_yml.write_text.assert_not_called()
                 location = Location(workflow_yml, 1)
@@ -880,7 +896,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @patch_github(
         releases=[],
-        tags=[github_tag_json("stable-2024", NEW_SHA)],
+        tags=[github_tag_json("stable-2024", COMMIT_SHA2)],
         commit=github_rate_limited(),
     )
     def test_tag_whose_commit_cannot_be_fetched_is_reported_as_a_tag(self, mock_glob: Mock):
@@ -900,12 +916,12 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @patch_github(
         releases=[github_release_json("20240101", PAST_COOLDOWN_DATE)],
-        tags=[github_tag_json("20240101", NEW_SHA)],
+        tags=[github_tag_json("20240101", COMMIT_SHA2)],
         commit=github_rate_limited(),
     )
     def test_pinned_version_spelled_in_hex_digits_is_not_asked_about_as_a_commit(self, mock_glob: Mock):
         """Test that a version such as `20240101`, pinned to its commit, is left alone without a commit request."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{NEW_SHA} # 20240101\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA2} # 20240101\n")
         workflow_yml.write_text.assert_not_called()
         self.assertEqual(github_requests("commits"), [])
         self.assert_no_warnings_logged()
@@ -913,37 +929,40 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     def test_allow_hash_drift_marker_adopts_moved_ref(self, mock_glob: Mock):
         """Test that an `allow[hash-drift]` marker re-pins a moved branch or tag to its new commit, fetched once."""
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
-        commit = github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE)
+        commit = github_commits_json(COMMIT_SHA2, date=PAST_COOLDOWN_DATE)
         cases = {
             "main": ([], DriftKind.BRANCH),
-            "stable-2024": ([github_tag_json("stable-2024", NEW_SHA)], DriftKind.TAG),
+            "stable-2024": ([github_tag_json("stable-2024", COMMIT_SHA2)], DriftKind.TAG),
         }
         for ref, (tags, kind) in cases.items():
             with self.subTest(ref), patch_github(releases=[], tags=tags, commit=commit):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # {ref}{marker}\n")
-                workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # {ref}{marker}\n")
+                workflow_yml = self.scanned_workflow(
+                    mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # {ref}{marker}\n"
+                )
+                workflow_yml.write_text.assert_called_once_with(
+                    f"uses: actions/checkout@{COMMIT_SHA2} # {ref}{marker}\n"
+                )
                 self.assertEqual(len(github_requests("commits")), 1)
-                drifted = _drifted(workflow_yml, version=ref, kind=kind)
-                self.assert_adopted_drift_logged(drifted, _ALLOW_HASH_DRIFT)
+                self.assert_adopted_drift_logged(_drifted(workflow_yml, version=ref, kind=kind), _ALLOW_HASH_DRIFT)
                 self.assert_no_warnings_logged()
 
-    @patch_github(releases=[], tags=None, commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
+    @patch_github(releases=[], tags=None, commit=github_commits_json(COMMIT_SHA2, date=PAST_COOLDOWN_DATE))
     def test_allow_hash_drift_marker_adopts_moved_ref_as_ref_drift_when_tags_cannot_be_listed(self, mock_glob: Mock):
         """Test that a moved ref opted into hash drift, its tags unlisted, is reported as adopted ref drift."""
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # stable-2024{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # stable-2024{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # stable-2024{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # stable-2024{marker}\n")
         drifted = _drifted(workflow_yml, version="stable-2024", kind=DriftKind.REF)
         self.assert_adopted_drift_logged(drifted, _ALLOW_HASH_DRIFT)
 
     @patch_github(
-        releases=[github_release_json("v1.0", published_at=FRESH_DATE)], tags=[github_tag_json("v1.0", NEW_SHA)]
+        releases=[github_release_json("v1.0", published_at=FRESH_DATE)], tags=[github_tag_json("v1.0", COMMIT_SHA2)]
     )
     def test_pin_version_tag_inside_the_cooldown(self, mock_glob: Mock):
         """Test that a reference to a version tag inside the cooldown is pinned to the commit the tag points at."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v1.0\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v1.0\n")
-        self.assert_pinned_logged("actions/checkout", "1.0", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v1.0\n")
+        self.assert_pinned_logged("actions/checkout", "1.0", COMMIT_SHA2, Location(workflow_yml, 1))
 
     @patch_github(
         releases=[
@@ -951,55 +970,59 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE),
         ],
         tags=[],
-        commit=github_commits_json(NEW_SHA),
+        commit=github_commits_json(COMMIT_SHA2),
     )
     def test_released_version_whose_tag_is_unlisted_keeps_its_version(self, mock_glob: Mock):
         """Test that a released version whose tag the listing misses is pinned as itself, not as a newer release."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v1.0\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v1.0\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v1.0\n")
 
-    @patch_github(releases=[], tags=[github_tag_json("v1.0", NEW_SHA)], commit=github_rate_limited())
+    @patch_github(releases=[], tags=[github_tag_json("v1.0", COMMIT_SHA2)], commit=github_rate_limited())
     def test_pin_version_tag_whose_commit_cannot_be_dated(self, mock_glob: Mock):
         """Test that a reference to a tag without a release is pinned to its commit, though that commit is undated."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v1.0\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v1.0\n")
-        self.assert_pinned_logged("actions/checkout", "1.0", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v1.0\n")
+        self.assert_pinned_logged("actions/checkout", "1.0", COMMIT_SHA2, Location(workflow_yml, 1))
 
     @patch_github(
         releases=[],
-        tags=[github_tag_json("v1.1", NEW_SHA), github_tag_json("v1.0", OLD_SHA)],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
+        tags=[github_tag_json("v1.1", COMMIT_SHA2), github_tag_json("v1.0", COMMIT_SHA1)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
     )
     def test_version_tag_the_reference_keeps_is_pinned_without_dating_its_commit(self, mock_glob: Mock):
         """Test that a tag without a release, kept since the newer one is fresh, is pinned without dating its commit."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v1.0\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{OLD_SHA} # v1.0\n")
-        self.assertEqual(github_requests("commits"), [_commits_url(NEW_SHA)])
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA1} # v1.0\n")
+        self.assertEqual(github_requests("commits"), [_commits_url(COMMIT_SHA2)])
 
     @patch_github(
         releases=[
             github_release_json("v4.3.0", published_at=FRESH_DATE),
             github_release_json("v4.0.0", published_at=PAST_COOLDOWN_DATE),
         ],
-        tags=[github_tag_json("v4.0.0", OLD_SHA), github_tag_json("v4", NEW_SHA), github_tag_json("v4.3.0", NEW_SHA)],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
+        tags=[
+            github_tag_json("v4.0.0", COMMIT_SHA1),
+            github_tag_json("v4", COMMIT_SHA2),
+            github_tag_json("v4.3.0", COMMIT_SHA2),
+        ],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
     )
     def test_pin_moving_version_tag_to_its_commit_named_by_the_version_there(self, mock_glob: Mock):
         """Test that `@v4` is pinned to the commit `v4` points at, named by the highest version tag there."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v4\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v4.3.0\n")
-        self.assert_pinned_logged("actions/checkout", "4.3.0", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v4.3.0\n")
+        self.assert_pinned_logged("actions/checkout", "4.3.0", COMMIT_SHA2, Location(workflow_yml, 1))
 
     @patch_github(
         releases=[github_release_json("v4.0.0", published_at=PAST_COOLDOWN_DATE)],
-        tags=[github_tag_json("v4.0.0", OLD_SHA), github_tag_json("v4", NEW_SHA)],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
+        tags=[github_tag_json("v4.0.0", COMMIT_SHA1), github_tag_json("v4", COMMIT_SHA2)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
     )
     def test_pin_moving_version_tag_as_itself_when_no_other_version_tag_is_at_its_commit(self, mock_glob: Mock):
         """Test that `@v4` is pinned to the commit `v4` points at as `v4`, not to `v4.0.0` on another commit."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v4\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v4\n")
-        self.assert_pinned_logged("actions/checkout", "4", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v4\n")
+        self.assert_pinned_logged("actions/checkout", "4", COMMIT_SHA2, Location(workflow_yml, 1))
 
     def test_pin_comment_names_the_tag_as_the_repository_spells_it(self, mock_glob: Mock):
         """Test that the pin's comment names the tag as the repository spells it, whatever the reference's spelling."""
@@ -1007,43 +1030,43 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         for dependency, (current, tag) in cases.items():
             releases, tags = (
                 [github_release_json(tag, published_at=PAST_COOLDOWN_DATE)],
-                [github_tag_json(tag, NEW_SHA)],
+                [github_tag_json(tag, COMMIT_SHA2)],
             )
             with self.subTest(dependency), patch_github(releases=releases, tags=tags):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@{current}\n")
-                workflow_yml.write_text.assert_called_once_with(f"uses: {dependency}@{NEW_SHA} # {tag}\n")
+                workflow_yml.write_text.assert_called_once_with(f"uses: {dependency}@{COMMIT_SHA2} # {tag}\n")
 
     @patch_github(
-        releases=[github_release_json("v1.0", published_at=FRESH_DATE)], tags=[github_tag_json("v1.0", NEW_SHA)]
+        releases=[github_release_json("v1.0", published_at=FRESH_DATE)], tags=[github_tag_json("v1.0", COMMIT_SHA2)]
     )
     def test_moved_tag_inside_the_cooldown_is_warned_about(self, mock_glob: Mock):
         """Test that a tag moved inside the cooldown is warned about when the reference does not opt into hash drift."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v1.0\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # v1.0\n")
         workflow_yml.write_text.assert_not_called()
         self.assert_drift_logged(_drifted(workflow_yml, version="1.0", kind=DriftKind.TAG))
 
     def test_moved_tag_inside_the_cooldown_is_held_back_silently(self, mock_glob: Mock):
         """Test that a tag opted into hash drift is left as it is, unreported, while the commit it moved to is fresh."""
         cases = {"owner/released": [github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE)], "owner/tagged": []}
-        tags, commit = [github_tag_json("v1.0", NEW_SHA)], github_commits_json(NEW_SHA, date=FRESH_DATE)
+        tags, commit = [github_tag_json("v1.0", COMMIT_SHA2)], github_commits_json(COMMIT_SHA2, date=FRESH_DATE)
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         for dependency, releases in cases.items():
             with self.subTest(dependency), patch_github(releases=releases, tags=tags, commit=commit):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@{OLD_SHA} # v1.0{marker}\n")
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@{COMMIT_SHA1} # v1.0{marker}\n")
                 workflow_yml.write_text.assert_not_called()
-                self.assertEqual(github_requests("commits"), [_commits_url(NEW_SHA, dependency)])
+                self.assertEqual(github_requests("commits"), [_commits_url(COMMIT_SHA2, dependency)])
                 self.assert_no_warnings_logged()
                 self.assert_no_info_logged()
 
     @patch_github(
         releases=[github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE)],
-        tags=[github_tag_json("v1.0", NEW_SHA)],
+        tags=[github_tag_json("v1.0", COMMIT_SHA2)],
         commit=github_rate_limited(),
     )
     def test_moved_tag_whose_commit_cannot_be_dated_is_held_back_with_the_reason(self, mock_glob: Mock):
         """Test that a tag opted into hash drift is left as it is when its new commit cannot be dated, naming why."""
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v1.0{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # v1.0{marker}\n")
         workflow_yml.write_text.assert_not_called()
         drifted = _drifted(workflow_yml, version="1.0", kind=DriftKind.TAG)
         self.assert_undated_drift_logged(drifted, GITHUB_RATE_LIMITED_REASON)
@@ -1051,107 +1074,103 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @patch_github(
         releases=[github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE)],
-        tags=[github_tag_json("v1.0", NEW_SHA)],
+        tags=[github_tag_json("v1.0", COMMIT_SHA2)],
         commit=github_rate_limited(),
     )
     def test_moved_tag_under_a_zero_day_cooldown_is_adopted_without_dating_its_commit(self, mock_glob: Mock):
         """Test that a tag opted into hash drift with a zero-day cooldown is re-pinned, its new commit left undated."""
         marker = "  # update-time: allow[hash-drift] set[cooldown=0]"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v1.0{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v1.0{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # v1.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v1.0{marker}\n")
         self.assertEqual(github_requests("commits"), [])
-        drifted = _drifted(workflow_yml, version="1.0", kind=DriftKind.TAG)
-        self.assert_adopted_drift_logged(drifted, _ALLOW_HASH_DRIFT)
+        self.assert_adopted_drift_logged(_drifted(workflow_yml, version="1.0", kind=DriftKind.TAG), _ALLOW_HASH_DRIFT)
 
     @patch_github(
         releases=[],
-        tags=[github_tag_json("v4.4.0", PAST_COOLDOWN_SHA)],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
-        listed_commits=[github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)],
+        tags=[github_tag_json("v4.4.0", COMMIT_SHA3)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
+        listed_commits=[github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)],
     )
     def test_moved_branch_at_a_version_tag_is_pinned_as_that_version(self, mock_glob: Mock):
         """Test that a branch opted into drift adopts its newest commit older than the cooldown as the version there."""
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(
-            f"uses: actions/checkout@{PAST_COOLDOWN_SHA} # v4.4.0{marker}\n"
-        )
-        drifted, location = _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA), Location(workflow_yml, 1)
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA3} # v4.4.0{marker}\n")
+        drifted, location = _drifted(workflow_yml, new_sha=COMMIT_SHA3), Location(workflow_yml, 1)
         self.assert_adopted_drift_logged(drifted, _ALLOW_HASH_DRIFT, among_others=True)
-        self.assert_pinned_logged("actions/checkout", "4.4.0", PAST_COOLDOWN_SHA, location, among_others=True)
+        self.assert_pinned_logged("actions/checkout", "4.4.0", COMMIT_SHA3, location, among_others=True)
         self.assert_no_warnings_logged()
 
     @patch_github(
         releases=[],
-        tags=[github_tag_json("v4.4.0", PAST_COOLDOWN_SHA)],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
-        listed_commits=[github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)],
+        tags=[github_tag_json("v4.4.0", COMMIT_SHA3)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
+        listed_commits=[github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)],
     )
     def test_moved_branch_kept_floating_is_re_pinned_as_the_branch(self, mock_glob: Mock):
         """Test that a branch kept floating is re-pinned to its newest commit older than the cooldown as the branch."""
         marker = "  # update-time: allow[hash-drift] allow[floating-pin]"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{PAST_COOLDOWN_SHA} # main{marker}\n")
-        drifted = _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA)
-        self.assert_adopted_drift_logged(drifted, _ALLOW_HASH_DRIFT)
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA3} # main{marker}\n")
+        self.assert_adopted_drift_logged(_drifted(workflow_yml, new_sha=COMMIT_SHA3), _ALLOW_HASH_DRIFT)
         self.assert_no_warnings_logged()
 
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_moved_branch_kept_floating_warned_not_repinned(self, mock_glob: Mock):
         """Test that a branch kept floating, though not opted into hash drift, is warned about when it moved."""
         marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n")
         workflow_yml.write_text.assert_not_called()
-        drifted = _drifted(workflow_yml)
-        self.assert_drift_logged(drifted)
+        self.assert_drift_logged(_drifted(workflow_yml))
 
-    @patch_github(releases=[], tags=[github_tag_json("v4.3.1", OLD_SHA)], commit=github_commits_json(OLD_SHA))
+    @patch_github(releases=[], tags=[github_tag_json("v4.3.1", COMMIT_SHA1)], commit=github_commits_json(COMMIT_SHA1))
     def test_pinned_branch_at_a_commit_now_tagged_is_pinned_as_that_version(self, mock_glob: Mock):
         """Test that a branch pinned to the commit it still points at is pinned as the version tag now there."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{OLD_SHA} # v4.3.1\n")
-        self.assert_pinned_logged("actions/checkout", "4.3.1", OLD_SHA, Location(workflow_yml, 1))
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA1} # v4.3.1\n")
+        self.assert_pinned_logged("actions/checkout", "4.3.1", COMMIT_SHA1, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()
 
     def test_unmoved_branch_kept_floating_is_left_alone_and_reported_as_kept(self, mock_glob: Mock):
         """Test that a pinned branch kept floating, still at its commit, is reported with what it resolves to."""
         marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
-        cases = {"owner/untagged": ([], "main"), "owner/tagged": ([github_tag_json("v4.3.1", OLD_SHA)], "4.3.1")}
+        cases = {"owner/untagged": ([], "main"), "owner/tagged": ([github_tag_json("v4.3.1", COMMIT_SHA1)], "4.3.1")}
         for dependency, (tags, resolved) in cases.items():
-            with self.subTest(dependency), patch_github(releases=[], tags=tags, commit=github_commits_json(OLD_SHA)):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@{OLD_SHA} # main{marker}\n")
+            with (
+                self.subTest(dependency),
+                patch_github(releases=[], tags=tags, commit=github_commits_json(COMMIT_SHA1)),
+            ):
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@{COMMIT_SHA1} # main{marker}\n")
                 workflow_yml.write_text.assert_not_called()
-                release = DependencyVersion(resolved, sha=OLD_SHA)
-                location = Location(workflow_yml, 1)
-                self.assert_kept_ref_logged(dependency, "main", release, location, _ALLOW_FLOATING_PIN)
+                release = DependencyVersion(resolved, sha=COMMIT_SHA1)
+                self.assert_kept_ref_logged(dependency, "main", release, Location(workflow_yml, 1), _ALLOW_FLOATING_PIN)
                 self.assert_no_warnings_logged()
 
     def test_pin_branch_by_its_whole_name(self, mock_glob: Mock):
         """Test that a branch is looked up and pinned by its whole name, a leading `v` or a slash included."""
         for branch in ("v3-node20", "release/v1"):
-            with self.subTest(branch), patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA)):
+            with self.subTest(branch), patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2)):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{branch}\n")
-                workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # {branch}\n")
-                commits = _commits_url(branch)
-                self.assertEqual(github_requests("commits"), [commits])
+                workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # {branch}\n")
+                self.assertEqual(github_requests("commits"), [_commits_url(branch)])
 
     def test_pinned_branch_is_read_by_its_whole_name(self, mock_glob: Mock):
         """Test that a pinned branch is looked up by its whole name, a leading `v` or a slash included."""
         for branch in ("v3-node20", "release/v1"):
-            with self.subTest(branch), patch_github(releases=[], tags=[], commit=github_commits_json(OLD_SHA)):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # {branch}\n")
+            with self.subTest(branch), patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA1)):
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # {branch}\n")
                 workflow_yml.write_text.assert_not_called()
                 self.assertEqual(github_refs_whose_commits_were_listed(), [branch])
 
     @kills.replace(
-        github_workflow_manifest,
+        github_workflow,
         r"(?!{_REF_CHARACTER})",
         r"(?={_ALONE})",
         "a version comment followed by more text leaves the commit SHA bare, as a branch comment does",
         case="words",
     )
     @kills.replace(
-        github_workflow_manifest,
+        github_workflow,
         r"(?!{_REF_CHARACTER})",
         r"(?=\s|$)",
         "a version comment followed by punctuation leaves the commit SHA bare, with nothing logged",
@@ -1161,15 +1180,17 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         """Test that a comment naming a version and then more text is read as that version, the text kept."""
         releases = [github_release_json("v4.2.0", published_at=PAST_COOLDOWN_DATE)]
         for case, text in {"words": " pinned by hand", "punctuation": ", see notes"}.items():
-            with self.subTest(case), patch_github(releases=releases, tags=[github_tag_json("v4.2.0", NEW_SHA)]):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v4{text}\n")
-                workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v4.2.0{text}\n")
+            with self.subTest(case), patch_github(releases=releases, tags=[github_tag_json("v4.2.0", COMMIT_SHA2)]):
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # v4{text}\n")
+                workflow_yml.write_text.assert_called_once_with(
+                    f"uses: actions/checkout@{COMMIT_SHA2} # v4.2.0{text}\n"
+                )
 
     def test_commit_sha_whose_comment_names_no_ref_is_left_alone(self, mock_glob: Mock):
         """Test that a commit SHA is read as bare when its comment does not name a tag or branch."""
         for comment in ("ratchet:actions/checkout@v4", "pin@v4.1.1", "tag=v4.1.1", "pinned by hand", "TODO", "FIXME"):
-            with self.subTest(comment), patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA)):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # {comment}\n")
+            with self.subTest(comment), patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2)):
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # {comment}\n")
                 workflow_yml.write_text.assert_not_called()
                 self.assertEqual(github_requests("commits"), [])
                 self.assertEqual(len(github_requests("releases")), 1)
@@ -1177,7 +1198,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=None, tags=None, commit=github_not_found())
     def test_pinned_branch_of_a_repository_that_is_gone_is_left_alone_and_reported_as_an_error(self, mock_glob: Mock):
         """Test that a pinned branch whose repository no longer exists is left as it is, reported as an error."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main\n")
         workflow_yml.write_text.assert_not_called()
         location, reason = Location(workflow_yml, 1), "HTTP 404, Not Found"
         self.assert_unpinned_ref_logged("actions/checkout", "main", location, reason, ref=RefKind.REF)
@@ -1185,7 +1206,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=[], tags=[], listed_commits=github_not_found())
     def test_commit_sha_whose_one_word_comment_names_no_ref_is_left_alone_and_reported_at_debug(self, mock_glob: Mock):
         """Test that a commit SHA is left as it is, reported at DEBUG, when its one-word comment does not name a ref."""
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # pinned\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # pinned\n")
         workflow_yml.write_text.assert_not_called()
         self.assertEqual(github_refs_whose_commits_were_listed(), ["pinned"])
         self.assertEqual(len(github_requests("commits")), 1)
@@ -1195,35 +1216,34 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(
         releases=[],
         tags=[],
-        commit=github_commits_json(NEW_SHA, date=FRESH_DATE),
-        listed_commits=[github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)],
+        commit=github_commits_json(COMMIT_SHA2, date=FRESH_DATE),
+        listed_commits=[github_commits_json(COMMIT_SHA3, date=PAST_COOLDOWN_DATE)],
     )
     def test_moved_branch_inside_the_cooldown_is_re_pinned_to_its_newest_commit_past_the_cooldown(
         self, mock_glob: Mock
     ):
         """Test that a branch opted into drift, its head fresh, adopts the newest commit older than the cooldown."""
         marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{PAST_COOLDOWN_SHA} # main{marker}\n")
-        drifted = _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA)
-        self.assert_adopted_drift_logged(drifted, _ALLOW_HASH_DRIFT)
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA3} # main{marker}\n")
+        self.assert_adopted_drift_logged(_drifted(workflow_yml, new_sha=COMMIT_SHA3), _ALLOW_HASH_DRIFT)
         self.assert_no_warnings_logged()
 
     @kills.delete(
-        references_github.PinUpdater._comment_names_no_ref,
+        PinUpdater._comment_names_no_ref,
         " or reference.marker.ignores(Scope.UPDATE)",
         "a pinned branch held back by `ignore[update]` still lists its commits",
     )
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_ignore_update_holds_a_branch_back(self, mock_glob: Mock):
         """Test that `ignore[update]` leaves a pinned branch as it is, its commits unasked and its releases read."""
         marker = "  # update-time: ignore[update]"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main{marker}\n")
         workflow_yml.write_text.assert_not_called()
         self.assertEqual(github_requests("commits"), [])
         self.assertTrue(github_requests("releases"))
 
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_a_floating_pin_directive_on_a_held_back_branch_is_reported(self, mock_glob: Mock):
         """Test that a branch whose update is held back stays unpinned, its `allow[floating-pin]` reported."""
         marker = "ignore[update] allow[floating-pin]"
@@ -1233,12 +1253,12 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             Reason.NEVER_PINNED, "actions/checkout", Location(workflow_yml, 1), "allow[floating-pin]"
         )
 
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_a_hash_drift_directive_on_a_held_back_branch_is_reported(self, mock_glob: Mock):
         """Test that a pinned branch whose update is held back keeps its pin, its `allow[hash-drift]` reported."""
         marker = "ignore[update] allow[hash-drift]"
         workflow_yml = self.scanned_workflow(
-            mock_glob, f"uses: actions/checkout@{OLD_SHA} # main  # update-time: {marker}\n"
+            mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # main  # update-time: {marker}\n"
         )
         workflow_yml.write_text.assert_not_called()
         self.assert_redundant_directive_logged(
@@ -1246,15 +1266,15 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         )
 
     @kills.force_none(
-        references_github.PinUpdater._report_redundant_directives,
+        PinUpdater._report_redundant_directives,
         "Reason.NO_DRIFT_FOR_A_COMMIT",
         "an `allow[hash-drift]` beside a commit SHA, which cannot drift, goes unreported",
     )
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2))
     def test_a_hash_drift_directive_on_a_bare_commit_sha_is_reported(self, mock_glob: Mock):
         """Test that a bare commit SHA is left as it is, its `allow[hash-drift]` reported as redundant."""
         workflow_yml = self.scanned_workflow(
-            mock_glob, f"uses: actions/checkout@{OLD_SHA}  # update-time: allow[hash-drift]\n"
+            mock_glob, f"uses: actions/checkout@{COMMIT_SHA1}  # update-time: allow[hash-drift]\n"
         )
         workflow_yml.write_text.assert_not_called()
         self.assert_redundant_directive_logged(
@@ -1266,8 +1286,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
         A commit SHA whose comment does not name a tag or branch is left bare too.
         """
-        cases = {"bare commit SHA": OLD_SHA, "commit SHA whose comment does not name a ref": f"{OLD_SHA} # pinned"}
-        commit, listed_commits = github_commits_json(NEW_SHA), github_not_found()
+        cases = {
+            "bare commit SHA": COMMIT_SHA1,
+            "commit SHA whose comment does not name a ref": f"{COMMIT_SHA1} # pinned",
+        }
+        commit, listed_commits = github_commits_json(COMMIT_SHA2), github_not_found()
         for case, ref in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit, listed_commits=listed_commits):
                 workflow_yml = self.scanned_workflow(
@@ -1295,13 +1318,13 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
         A full commit SHA whose comment does not name a tag or branch is such a commit SHA too.
         """
-        marker = "  # update-time: set[cooldown=30]"
         commit, listed_commits = github_commits_json(full_commit_sha("3e8a870")), github_not_found()
         cases = {
-            "full commit SHA": OLD_SHA,
+            "full commit SHA": COMMIT_SHA1,
             "short commit SHA": "3e8a870",
-            "full commit SHA whose comment does not name a ref": f"{OLD_SHA} # pinned",
+            "full commit SHA whose comment does not name a ref": f"{COMMIT_SHA1} # pinned",
         }
+        marker = "  # update-time: set[cooldown=30]"
         for case, ref in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit, listed_commits=listed_commits):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{ref}{marker}\n")
@@ -1317,8 +1340,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
         A commit SHA whose comment does not name a tag or branch is left bare too.
         """
-        cases = {"bare commit SHA": OLD_SHA, "commit SHA whose comment does not name a ref": f"{OLD_SHA} # pinned"}
-        commit, listed_commits = github_commits_json(NEW_SHA), github_not_found()
+        cases = {
+            "bare commit SHA": COMMIT_SHA1,
+            "commit SHA whose comment does not name a ref": f"{COMMIT_SHA1} # pinned",
+        }
+        commit, listed_commits = github_commits_json(COMMIT_SHA2), github_not_found()
         for case, ref in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit, listed_commits=listed_commits):
                 workflow_yml = self.scanned_workflow(
@@ -1334,11 +1360,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         "steers_the_update=_ACTION.steers_the_update,\n",
         "an `ignore[update]` on a bare commit SHA is logged as holding the update back",
     )
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA), listed_commits=github_not_found())
+    @patch_github(releases=[], tags=[], commit=github_commits_json(COMMIT_SHA2), listed_commits=github_not_found())
     def test_an_ignore_update_on_a_bare_commit_sha_is_reported(self, mock_glob: Mock):
         """Test that a bare commit SHA is left as it is, its `ignore[update]` redundant, and holding nothing back."""
         workflow_yml = self.scanned_workflow(
-            mock_glob, f"uses: actions/checkout@{OLD_SHA}  # update-time: ignore[update]\n"
+            mock_glob, f"uses: actions/checkout@{COMMIT_SHA1}  # update-time: ignore[update]\n"
         )
         workflow_yml.write_text.assert_not_called()
         self.assert_redundant_directive_logged(
@@ -1361,9 +1387,9 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     def test_a_live_bound_on_a_branch_pinned_to_a_version_tag_is_not_reported(self, mock_glob: Mock):
         """Test that a bound on a branch this run pins to a version tag is not reported when it bounds that version."""
         cases = {
-            "first pin": ("main", "allow[update<6]", OLD_SHA),
-            "re-pin": (f"{OLD_SHA} # main", "allow[update<6]", OLD_SHA),
-            "adopted drift": (f"{OLD_SHA} # main", "allow[update<6] allow[hash-drift]", NEW_SHA),
+            "first pin": ("main", "allow[update<6]", COMMIT_SHA1),
+            "re-pin": (f"{COMMIT_SHA1} # main", "allow[update<6]", COMMIT_SHA1),
+            "adopted drift": (f"{COMMIT_SHA1} # main", "allow[update<6] allow[hash-drift]", COMMIT_SHA2),
         }
         for case, (uses, directives, sha) in cases.items():
             tags, commit = [github_tag_json("v5.0.0", sha)], github_commits_json(sha, date=PAST_COOLDOWN_DATE)
@@ -1373,12 +1399,12 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{sha} # v5.0.0{marker}\n")
                 self.assert_no_warnings_logged()
 
-    @patch_github(releases=[], tags=[github_tag_json("v5.0.0", OLD_SHA)], commit=github_commits_json(OLD_SHA))
+    @patch_github(releases=[], tags=[github_tag_json("v5.0.0", COMMIT_SHA1)], commit=github_commits_json(COMMIT_SHA1))
     def test_a_dead_bound_on_a_branch_pinned_to_a_version_tag_is_reported_at_that_version(self, mock_glob: Mock):
         """Test that a bound on a branch this run pins to a version tag is reported if it blocks every update there."""
         marker = "  # update-time: allow[update<4]"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{OLD_SHA} # v5.0.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA1} # v5.0.0{marker}\n")
         self.assert_logged(
             message_of(Logger.redundant_bound),
             dependency="actions/checkout",
@@ -1393,15 +1419,19 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             github_release_json("v4.3.0", published_at=PAST_COOLDOWN_DATE),
             github_release_json("v4.0.5", published_at=PAST_COOLDOWN_DATE),
         ],
-        tags=[github_tag_json("v4", NEW_SHA), github_tag_json("v4.3.0", NEW_SHA), github_tag_json("v4.0.5", OLD_SHA)],
+        tags=[
+            github_tag_json("v4", COMMIT_SHA2),
+            github_tag_json("v4.3.0", COMMIT_SHA2),
+            github_tag_json("v4.0.5", COMMIT_SHA1),
+        ],
     )
     def test_a_moving_version_tag_is_pinned_to_its_commit_although_a_bound_excludes_it(self, mock_glob: Mock):
         """Test that `@v4` is pinned as the version its commit carries, its bound reported if it blocks every update."""
         marker = "  # update-time: allow[update<4.1]"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@v4{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v4.3.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # v4.3.0{marker}\n")
         location = Location(workflow_yml, 1)
-        self.assert_pinned_logged("actions/checkout", "4.3.0", NEW_SHA, location, among_others=True)
+        self.assert_pinned_logged("actions/checkout", "4.3.0", COMMIT_SHA2, location, among_others=True)
         self.assert_logged(
             message_of(Logger.redundant_bound),
             dependency="actions/checkout",
@@ -1413,28 +1443,29 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @patch_github(
         releases=[github_release_json("v4.3.0", published_at=PAST_COOLDOWN_DATE)],
-        tags=[github_tag_json("v4.3.0", NEW_SHA)],
+        tags=[github_tag_json("v4.3.0", COMMIT_SHA2)],
     )
     def test_a_moved_version_tag_is_warned_about_although_a_bound_excludes_it(self, mock_glob: Mock):
         """Test that a pinned version tag that moved is warned about as tag drift, whatever its bound excludes."""
         marker = "  # update-time: allow[update<4.1]"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v4.3.0{marker}\n")
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{COMMIT_SHA1} # v4.3.0{marker}\n")
         workflow_yml.write_text.assert_not_called()
-        drifted = _drifted(workflow_yml, version="4.3.0", kind=DriftKind.TAG)
-        self.assert_drift_logged(drifted, among_others=True)  # Beside the bound blocking every update
+        self.assert_drift_logged(
+            _drifted(workflow_yml, version="4.3.0", kind=DriftKind.TAG), among_others=True
+        )  # Beside the bound blocking every update
 
     @patch_github(
         releases=[
             github_release_json("20240301", published_at=PAST_COOLDOWN_DATE),
             github_release_json("20240101", published_at=PAST_COOLDOWN_DATE),
         ],
-        tags=[github_tag_json("20240301", NEW_SHA)],
-        commit=github_commits_json(OLD_SHA),
+        tags=[github_tag_json("20240301", COMMIT_SHA2)],
+        commit=github_commits_json(COMMIT_SHA1),
     )
     def test_hex_version_tag_beyond_the_listed_tags_is_updated_as_a_version(self, mock_glob: Mock):
         """Test that a version tag of hex digits alone, missing from the listed tags, is updated as a version."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: owner/repo@20240101\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: owner/repo@{NEW_SHA} # 20240301\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: owner/repo@{COMMIT_SHA2} # 20240301\n")
 
     @patch_github(releases=[], tags=[], commit=github_commits_json(full_commit_sha("1234567")))
     def test_a_held_back_short_commit_sha_of_digits_is_not_checked_as_a_version(self, mock_glob: Mock):
@@ -1448,9 +1479,9 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         """Test that `set[vulnerability-level=none]` on a branch or a bare commit SHA is reported as redundant."""
         cases = {
             "branch": "actions/checkout@main",
-            "bare commit SHA": f"actions/checkout@{OLD_SHA}",
+            "bare commit SHA": f"actions/checkout@{COMMIT_SHA1}",
         }
-        commit = github_commits_json(OLD_SHA)
+        commit = github_commits_json(COMMIT_SHA1)
         for case, uses in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit):
                 workflow_yml = self.scanned_workflow(
@@ -1463,7 +1494,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                     "set[vulnerability-level=none]",
                 )
 
-    @patch_github(releases=[], tags=[github_tag_json("v5.0.0", OLD_SHA)], commit=github_commits_json(OLD_SHA))
+    @patch_github(releases=[], tags=[github_tag_json("v5.0.0", COMMIT_SHA1)], commit=github_commits_json(COMMIT_SHA1))
     def test_a_vulnerability_level_none_marker_on_a_branch_pinned_to_a_version_tag_is_judged_at_that_version(
         self, mock_glob: Mock
     ):
@@ -1471,7 +1502,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         marker = "  # update-time: set[vulnerability-level=none]"
         with osv(_action_advisory("actions/checkout", {"introduced": "0"})):
             workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{OLD_SHA} # v5.0.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA1} # v5.0.0{marker}\n")
         location = Location(workflow_yml, 1)
         self.assert_ignored_vulnerability_logged(
             "actions/checkout", location, VULNERABILITY.advisory, "set[vulnerability-level=none]"
@@ -1487,10 +1518,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         cases = {
             "branch": ("actions/checkout@main", ceiling, ceiling),
             "level bound": ("actions/checkout@main", "ignore[major-update]", "ignore[major-update]"),
-            "pinned branch": (f"actions/checkout@{OLD_SHA} # main", ceiling, ceiling),
+            "pinned branch": (f"actions/checkout@{COMMIT_SHA1} # main", ceiling, ceiling),
             "held-back branch": ("actions/checkout@main", f"ignore[update] {ceiling}", ceiling),
         }
-        commit = github_commits_json(OLD_SHA)
+        commit = github_commits_json(COMMIT_SHA1)
         for case, (uses, marker, directive) in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: {uses}  # update-time: {marker}\n")
@@ -1499,49 +1530,48 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 )
 
     @kills.delete(
-        sources_github._highest_version_at,
+        github._highest_version_at,
         " or ()",
         "a branch whose repository's tags cannot be listed ends the run rather than being pinned as the branch",
         raises="TypeError: 'NoneType' object is not iterable",
     )
-    @patch_github(releases=None, tags=None, commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=None, tags=None, commit=github_commits_json(COMMIT_SHA2))
     def test_pin_branch_as_the_branch_when_its_tags_cannot_be_listed(self, mock_glob: Mock):
         """Test that a branch is pinned to its commit as the branch when the repository's tags cannot be listed."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main\n")
-        self.assert_pinned_logged("actions/checkout", "main", NEW_SHA, Location(workflow_yml, 1))
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{COMMIT_SHA2} # main\n")
+        self.assert_pinned_logged("actions/checkout", "main", COMMIT_SHA2, Location(workflow_yml, 1))
 
     @kills.delete(
-        sources_github.version_at_tag,
+        github.version_at_tag,
         " or ()",
         "a version tag whose repository's tags cannot be listed ends the run rather than being left as it is",
         raises="TypeError: 'NoneType' object is not iterable",
     )
-    @patch_github(releases=None, tags=None, commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=None, tags=None, commit=github_commits_json(COMMIT_SHA2))
     def test_version_tag_is_left_alone_when_its_repository_cannot_be_listed(self, mock_glob: Mock):
         """Test that a reference to a version tag is left as it is when the repository's tags cannot be listed."""
-        workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v4\n")
-        workflow_yml.write_text.assert_not_called()
+        self.scanned_workflow(mock_glob, "uses: actions/checkout@v4\n").write_text.assert_not_called()
         self.assertEqual(len(github_requests("tags")), 1)
         tags = f"{repository_url('actions/checkout')}/tags?per_page=100"
         self.assert_could_not_fetch_logged(releases_url("actions/checkout"), tags)
         self.assert_no_info_logged()
 
-    @patch_github(releases=[], tags=[github_tag_json("v4.3.0", NEW_SHA)], commit=github_commits_json(NEW_SHA))
+    @patch_github(releases=[], tags=[github_tag_json("v4.3.0", COMMIT_SHA2)], commit=github_commits_json(COMMIT_SHA2))
     def test_marker_keeps_the_branch_floating(self, mock_glob: Mock):
         """Test that a marker allowing the floating pin leaves a branch as it is, naming what it resolves to."""
         marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
         workflow_yml.write_text.assert_not_called()
         location = Location(workflow_yml, 1)
-        resolved = DependencyVersion("4.3.0", sha=NEW_SHA)
+        resolved = DependencyVersion("4.3.0", sha=COMMIT_SHA2)
         self.assert_kept_ref_logged("actions/checkout", "main", resolved, location, _ALLOW_FLOATING_PIN)
         self.assert_no_warnings_logged()
 
     @patch_github(
         releases=[github_release_json("v1.0", published_at=FRESH_DATE)],
         tags=[],
-        commit=github_commits_json(NEW_SHA),
+        commit=github_commits_json(COMMIT_SHA2),
         archived=True,
     )
     def test_archived_repository_of_a_branch_reference_warned(self, mock_glob: Mock):
@@ -1552,11 +1582,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(
         releases=[github_release_json("v1.0", published_at=FRESH_DATE)],
         tags=[],
-        commit=github_commits_json(NEW_SHA),
+        commit=github_commits_json(COMMIT_SHA2),
         archived=True,
     )
     def test_a_branch_reference_is_looked_up_with_the_staleness_check_switched_off(self, mock_glob: Mock):
         """Test that `--stale-after 0` still asks GitHub about a branch reference, since GitHub reports archival."""
-        with staleness_disabled:
+        with staleness_disabled():
             workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
         self.assert_archived_repository_logged("actions/checkout", Location(workflow_yml, 1))

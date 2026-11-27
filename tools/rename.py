@@ -6,8 +6,8 @@ import subprocess  # nosec
 import sys
 from fnmatch import fnmatch
 from functools import partial
-from pathlib import Path
-from typing import TYPE_CHECKING
+from pathlib import Path, PurePath
+from typing import TYPE_CHECKING, Final, override
 
 import libcst
 from libcst.codemod import CodemodContext
@@ -26,14 +26,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
 # What the rename exits with when it did not land, so the recipe that runs it stops.
-_FAILED = 1
+_FAILED: Final[int] = 1
 
 # A name as prose refers to one, in the backticks the docstrings and the documentation quote it in.
-_MENTION = re.compile(r"`([\w.]+)`")
+_MENTION: Final[re.Pattern[str]] = re.compile(r"`([\w.]+)`")
 
 # Where the prose that can mention a renamed name lives, which is rarely the files the rename was given.
-_PROSE_ROOTS = ("src", "tests", "tools", "docs", ".claude")
-_PROSE_FILES = ("*.py", "*.md", "*.in")
+_PROSE_ROOTS: Final[tuple[str, ...]] = ("src", "tests", "tools", "docs", ".claude")
 
 
 def _surviving_occurrences(name: str, source: str) -> list[int]:
@@ -74,7 +73,8 @@ class _ReferenceFinder(libcst.CSTVisitor):
         self._name = name
         self.lines: set[int] = set()
 
-    def visit_Name(self, node: libcst.Name) -> None:  # noqa: N802
+    @override
+    def visit_Name(self, node: libcst.Name) -> None:
         """Record the line of the name where it refers to what sits at module level.
 
         An attribute does where the code reads it through an import. Another name does unless a function or a class
@@ -148,12 +148,8 @@ def _prose_files() -> list[Path]:
     command = ["git", "ls-files", "-z", *_PROSE_ROOTS]
     listed = subprocess.run(command, check=False, capture_output=True, text=True).stdout  # noqa: S603 # nosec
     tracked = (Path(entry) for entry in listed.split("\0") if entry)
-    return [path for path in tracked if any(fnmatch(path.name, pattern) for pattern in _PROSE_FILES)]
-
-
-def _sources(paths: list[str]) -> dict[str, str]:
-    """Return what each path holds, read once so the same text is renamed and searched."""
-    return {path: Path(path).read_text() for path in paths}
+    prose_files = ("*.py", "*.md", "*.in")
+    return [path for path in tracked if any(fnmatch(path.name, pattern) for pattern in prose_files)]
 
 
 class _InPlaceRenameCommand(RenameCommand):
@@ -164,27 +160,32 @@ class _InPlaceRenameCommand(RenameCommand):
     names several names.
     """
 
-    def leave_ImportFrom(  # noqa: N802
+    @override
+    def leave_ImportFrom(
         self, original_node: libcst.ImportFrom, updated_node: libcst.ImportFrom
     ) -> libcst.Import | libcst.ImportFrom:
-        """Return the import with the old name renamed in place where it imports that name without an alias."""
+        """Return the import with the old name renamed in place where it imports that name, its alias dropped."""
         names = updated_node.names
         if updated_node.module is None or isinstance(names, libcst.ImportStar):
             return super().leave_ImportFrom(original_node, updated_node)
-        module = get_full_name_for_node(updated_node.module)
-        matches = [
-            not alias.asname and f"{module}.{get_full_name_for_node(alias.name)}" == self.old_name for alias in names
-        ]
+        module = "." * len(updated_node.relative) + (get_full_name_for_node(updated_node.module) or "")
+        matches = [f"{module}.{get_full_name_for_node(alias.name)}" == self.old_name for alias in names]
         if not any(matches):
             return super().leave_ImportFrom(original_node, updated_node)
         self.bypass_import = True  # The import stands renamed, so `leave_Module` does not import the new name again
+        for alias, match in zip(names, matches, strict=True):
+            if match and (bound := alias.evaluated_alias) is not None:
+                # What the alias stands for, so `leave_Name` renames a reference to the alias as one to the name
+                self.as_name = (bound, alias.evaluated_name)
         new_name = libcst.Name(self.new_name.rpartition(".")[-1])
         renamed = [
-            alias.with_changes(name=new_name) if match else alias for alias, match in zip(names, matches, strict=True)
+            alias.with_changes(name=new_name, asname=None) if match else alias
+            for alias, match in zip(names, matches, strict=True)
         ]
         return updated_node.with_changes(names=renamed)
 
-    def leave_Attribute(  # noqa: N802
+    @override
+    def leave_Attribute(
         self, original_node: libcst.Attribute, updated_node: libcst.Attribute
     ) -> libcst.Name | libcst.Attribute:
         """Return the attribute with the old name renamed where the code reads it through its module's name.
@@ -199,13 +200,14 @@ class _InPlaceRenameCommand(RenameCommand):
         return super().leave_Attribute(original_node, updated_node)
 
 
-def _renamed(old: str, new: str, source: str) -> str:
+def _renamed(old: str, new: str, source: str, context: CodemodContext | None = None) -> str:
     """Return the source with the old name renamed to the new one, resolved against the source's own scopes.
 
     A source that never uses the old name stays as it is. `RenameCommand` would import the new name into it when the
-    source imports the old name's module.
+    source imports the old name's module. A source holding a relative import needs the context naming its package.
     """
-    renamed = _InPlaceRenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
+    command = _InPlaceRenameCommand(context or CodemodContext(), old, new)
+    renamed = command.transform_module(libcst.parse_module(source)).code
     return renamed if _surviving_occurrences(old.rpartition(".")[-1], source) else source
 
 
@@ -217,17 +219,24 @@ class _AttributeRenamer(libcst.CSTTransformer):
         super().__init__()
         self._old, self._new = old, new
 
-    def leave_Attribute(self, original_node: libcst.Attribute, updated_node: libcst.Attribute) -> libcst.Attribute:  # noqa: N802
+    @override
+    def leave_Attribute(self, original_node: libcst.Attribute, updated_node: libcst.Attribute) -> libcst.Attribute:
         """Return the attribute renamed when it carries the old name, or as it is otherwise."""
         return updated_node.with_changes(attr=self._renamed(original_node.attr))
 
-    def leave_Arg(self, original_node: libcst.Arg, updated_node: libcst.Arg) -> libcst.Arg:  # noqa: N802
+    def _renamed(self, node: libcst.BaseExpression) -> libcst.BaseExpression:
+        """Return the new name when the node is the old name, or the node as it is otherwise."""
+        return libcst.Name(self._new) if isinstance(node, libcst.Name) and node.value == self._old else node
+
+    @override
+    def leave_Arg(self, original_node: libcst.Arg, updated_node: libcst.Arg) -> libcst.Arg:
         """Return the argument renamed when its keyword is the old name, or as it is otherwise."""
         if original_node.keyword is None:
             return updated_node
         return updated_node.with_changes(keyword=self._renamed(original_node.keyword))
 
-    def leave_ClassDef(self, original_node: libcst.ClassDef, updated_node: libcst.ClassDef) -> libcst.ClassDef:  # noqa: N802, ARG002
+    @override
+    def leave_ClassDef(self, original_node: libcst.ClassDef, updated_node: libcst.ClassDef) -> libcst.ClassDef:
         """Return the class with its members of the old name renamed."""
         body = [self._renamed_member(statement) for statement in updated_node.body.body]
         return updated_node.with_changes(body=updated_node.body.with_changes(body=body))
@@ -258,10 +267,6 @@ class _AttributeRenamer(libcst.CSTTransformer):
             return statement.with_changes(targets=targets)
         return statement
 
-    def _renamed(self, node: libcst.BaseExpression) -> libcst.BaseExpression:
-        """Return the new name when the node is the old name, or the node as it is otherwise."""
-        return libcst.Name(self._new) if isinstance(node, libcst.Name) and node.value == self._old else node
-
 
 def _renamed_attributes(old: str, new: str, _path: str, source: str) -> str:
     """Return the source with each attribute, keyword argument, and method of the old name renamed to the new one."""
@@ -270,8 +275,33 @@ def _renamed_attributes(old: str, new: str, _path: str, source: str) -> str:
 
 
 def _renamed_module_level(old: str, new: str, path: str, source: str) -> str:
-    """Return the source with the module-level name renamed, spelled the way the file at the path reaches it."""
-    return _renamed(*_names_for(path, old, new), source)
+    """Return the source with the module-level name renamed, spelled the way the file at the path reaches it.
+
+    A file can also reach the name by a relative import, so it is renamed in that spelling as well, in the context of
+    its own package, which the relative import is resolved against.
+    """
+    renamed = _renamed(*_names_for(path, old, new), source)
+    if (relative := _relative_names(path, old, new)) is None:
+        return renamed
+    context = CodemodContext(full_package_name=PurePath(path).parent.as_posix().replace("/", "."))
+    return _renamed(*relative, renamed, context)
+
+
+def _relative_names(path: str, old: str, new: str) -> tuple[str, str] | None:
+    """Return the pair of names spelled as a relative import in the file at the path reaches them.
+
+    The import climbs from the file's package to the nearest package that holds the old name's module or is it. The
+    pair is None where the old name is bare, or where its module lies outside every package above the file.
+    """
+    module, _, bare_old = old.rpartition(".")
+    parts = module.split(".")
+    for level, package in enumerate(PurePath(path).parents, start=1):
+        for end in range(len(parts), 0, -1):
+            if _is_module(f"{package.as_posix()}/__init__.py", ".".join(parts[:end])):
+                relative = "." * level + ".".join(parts[end:])
+                separator = "." if end < len(parts) else ""
+                return f"{relative}{separator}{bare_old}", f"{relative}{separator}{new.rpartition('.')[-1]}"
+    return None
 
 
 def _names_for(path: str, old: str, new: str) -> tuple[str, str]:
@@ -286,16 +316,6 @@ def _names_for(path: str, old: str, new: str) -> tuple[str, str]:
         return inside, bare_new
     module = old.rpartition(".")[0]
     return old, f"{module}.{bare_new}" if module else bare_new
-
-
-def _names_its_module(old: str, paths: Iterable[str]) -> bool:
-    """Return whether one of the files is a module the old name names, as a bare name always does."""
-    return "." not in old or any(_inside_module(path, old) is not None for path in paths)
-
-
-def _names_a_member(old: str, paths: Iterable[str]) -> bool:
-    """Return whether the old name names a member of a class, in a module that one of the files is."""
-    return any((name := _inside_module(path, old)) is not None and "." in name for path in paths)
 
 
 def _inside_module(path: str, old: str) -> str | None:
@@ -355,11 +375,12 @@ def _survivors_message(name: str, left: list[str], changed: dict[str, str]) -> s
 def main() -> int:
     """Rename the name over the files named on the command line, and report a rename that did not land."""
     old, new, *paths = sys.argv[1:]
-    if not _names_its_module(old, paths):
+    # A bare name always names its module, and a qualified one has to name a module among the files.
+    if "." in old and all(_inside_module(path, old) is None for path in paths):
         _report(f"none of the files given is a module that {old} names; add the file that defines it")
         return _FAILED
-    sources = _sources(paths)
-    member = _names_a_member(old, paths)
+    sources = {path: Path(path).read_text() for path in paths}
+    member = any((name := _inside_module(path, old)) is not None and "." in name for path in paths)
     # A member is renamed by its bare name in every source, a module-level name as each file reaches it.
     rename = partial(_renamed_attributes if member else _renamed_module_level, old, new)
     if (renamed := _renamed_sources(sources, rename)) is None:
@@ -384,5 +405,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

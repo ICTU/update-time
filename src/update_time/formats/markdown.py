@@ -1,16 +1,17 @@
 """How a file name or a content type marks a text as Markdown, and what Markdown markup says about a line."""
 
 import re
+from typing import Final
 from urllib.parse import urlparse
 
 # A Markdown file carries this extension.
-EXTENSION = ".md"
+EXTENSION: Final[str] = ".md"
 # A server reports Markdown text under this media type.
-_CONTENT_TYPE = "text/markdown"
+_CONTENT_TYPE: Final[str] = "text/markdown"
 # The runs of characters a fenced code block is opened and closed with.
-_FENCES = ("```", "~~~")
+_FENCES: Final[tuple[str, ...]] = ("```", "~~~")
 # The target of an inline link, in the parentheses that follow the link's text.
-_LINK_TARGET = re.compile(r"(?<=\])\([^)]*\)")
+_LINK_TARGET: Final[re.Pattern[str]] = re.compile(r"(?<=\])\([^)]*\)")
 
 
 def is_file(name: str) -> bool:

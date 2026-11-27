@@ -6,15 +6,10 @@ from unittest.mock import Mock
 
 from update_time.io.file import rewrite_file
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
 if TYPE_CHECKING:
     from update_time.primitives.line import Line
-
-
-def _rewrite_second_line(lines: list[Line]) -> list[str]:
-    """Return the lines with `second` replaced by `third`, standing in for a transform that rewrites a reference."""
-    return [line.text.replace("second", "third") for line in lines]
 
 
 class RewriteFileTest(unittest.TestCase):
@@ -31,3 +26,8 @@ class RewriteFileTest(unittest.TestCase):
         mock_file = mock_path("first\nsecond")
         rewrite_file(mock_file, _rewrite_second_line, Mock())
         mock_file.write_text.assert_called_once_with("first\nthird")
+
+
+def _rewrite_second_line(lines: list[Line]) -> list[str]:
+    """Return the lines with `second` replaced by `third`, standing in for a transform that rewrites a reference."""
+    return [line.text.replace("second", "third") for line in lines]

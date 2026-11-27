@@ -13,11 +13,11 @@ from mutation_time.mutation import kills
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import RISK_LEVELS, VULNERABILITY_LEVEL
-from update_time.io import cli as cli_module
-from update_time.io.cli import parse_args
+from update_time.io.cli import _scanned_file_types, parse_args
 from update_time.io.log import LOG_LEVEL
 
-from tests.helpers import patch_environ, patch_pathlib_path
+from tests.environment import patch_environ
+from tests.file_mocks import patch_pathlib_path
 
 if TYPE_CHECKING:
     import argparse
@@ -31,10 +31,9 @@ class CommandLineInterfaceTest(unittest.TestCase):
         self.enterContext(patch("update_time.io.cli.inside_git_repository", Mock(return_value=True)))
         self.enterContext(patch_environ({"NO_COLOR": "1"}, clear=False))  # Make argparse write colourless help
 
-    def parsed(self, *argv: str) -> argparse.Namespace:
-        """Parse the given command-line arguments and return the resulting namespace."""
-        with patch("sys.argv", ["update-time", *argv]):
-            return parse_args()
+    def test_version(self):
+        """Test that the --version option shows the version and exits."""
+        self.assertEqual(self.stdout_of("--version").strip(), f"v{version('update-time')}")
 
     def stdout_of(self, *argv: str) -> str:
         """Parse the given arguments, assert they exit cleanly (status 0), and return the captured standard output."""
@@ -47,6 +46,22 @@ class CommandLineInterfaceTest(unittest.TestCase):
             parse_args()
         self.assertEqual(cm.exception.code, 0)
         return stdout.getvalue()
+
+    def test_help(self):
+        """Test that the --help option shows the help text and exits."""
+        self.assertIn("usage: update-time", self.stdout_of("--help"))
+
+    @kills.replace(
+        _scanned_file_types,
+        "file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types",
+        "file_type.name for dependency_type in list(DEPENDENCY_TYPES)[:-1] for file_type in dependency_type.file_types",
+        "a file type the dependency types declare goes unnamed in the help",
+    )
+    def test_help_names_the_file_types_of_every_dependency_type(self):
+        """Test that the help names every file type the dependency types declare."""
+        file_types = self.declared_file_types()
+        description = self.description_of_help()
+        self.assertEqual([file_type for file_type in file_types if file_type not in description], [])
 
     def declared_file_types(self) -> list[str]:
         """Return the file types the dependency types declare, in declaration order, repetitions included.
@@ -70,40 +85,8 @@ class CommandLineInterfaceTest(unittest.TestCase):
             help_text = self.stdout_of("--help")
         return help_text.partition("\n\npositional arguments:")[0].rpartition("\n\n")[2]
 
-    def assert_rejected(self, argv: list[str], expected_message: str) -> None:
-        """Assert that parsing the given arguments exits with status 2 and the expected message on standard error."""
-        stderr = io.StringIO()
-        with (
-            patch("sys.argv", ["update-time", *argv]),
-            contextlib.redirect_stderr(stderr),
-            self.assertRaises(SystemExit) as cm,
-        ):
-            parse_args()
-        self.assertEqual(cm.exception.code, 2)
-        self.assertIn(expected_message, stderr.getvalue())
-
-    def test_version(self):
-        """Test that the --version option shows the version and exits."""
-        self.assertEqual(self.stdout_of("--version").strip(), f"v{version('update-time')}")
-
-    def test_help(self):
-        """Test that the --help option shows the help text and exits."""
-        self.assertIn("usage: update-time", self.stdout_of("--help"))
-
     @kills.replace(
-        cli_module._scanned_file_types,
-        "file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types",
-        "file_type.name for dependency_type in list(DEPENDENCY_TYPES)[:-1] for file_type in dependency_type.file_types",
-        "a file type the dependency types declare goes unnamed in the help",
-    )
-    def test_help_names_the_file_types_of_every_dependency_type(self):
-        """Test that the help names every file type the dependency types declare."""
-        file_types = self.declared_file_types()
-        description = self.description_of_help()
-        self.assertEqual([file_type for file_type in file_types if file_type not in description], [])
-
-    @kills.replace(
-        cli_module._scanned_file_types,
+        _scanned_file_types,
         "unique(names)",
         "list(names)",
         "the help names a file type twice when two dependency types declare it",
@@ -117,7 +100,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
         self.assertEqual([file_type for file_type in shared if description.count(file_type) != 1], [])
 
     @kills.replace(
-        cli_module._scanned_file_types,
+        _scanned_file_types,
         "unique(names)",
         "sorted(set(names))",
         "the help names the file types in an order of its own rather than the one they are declared in",
@@ -125,12 +108,16 @@ class CommandLineInterfaceTest(unittest.TestCase):
     def test_help_names_the_file_types_in_declaration_order(self):
         """Test that the help names the file types in the order the dependency types declare them."""
         file_types = list(dict.fromkeys(self.declared_file_types()))
-        description = self.description_of_help()
-        self.assertEqual(sorted(file_types, key=description.index), file_types)
+        self.assertEqual(sorted(file_types, key=self.description_of_help().index), file_types)
 
     def test_default_cooldown(self):
         """Test that the cooldown defaults to the default cooldown period."""
         self.assertEqual(COOLDOWN.default, self.parsed().cooldown)
+
+    def parsed(self, *argv: str) -> argparse.Namespace:
+        """Parse the given command-line arguments and return the resulting namespace."""
+        with patch("sys.argv", ["update-time", *argv]):
+            return parse_args()
 
     def test_cooldown(self):
         """Test that the --cooldown option sets the cooldown period."""
@@ -139,6 +126,18 @@ class CommandLineInterfaceTest(unittest.TestCase):
     def test_negative_cooldown(self):
         """Test that a negative --cooldown is rejected."""
         self.assert_rejected(["--cooldown", "-1"], "-1 is not a non-negative integer")
+
+    def assert_rejected(self, argv: list[str], expected_message: str) -> None:
+        """Assert that parsing the given arguments exits with status 2 and the expected message on standard error."""
+        stderr = io.StringIO()
+        with (
+            patch("sys.argv", ["update-time", *argv]),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            parse_args()
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn(expected_message, stderr.getvalue())
 
     def test_non_integer_cooldown(self):
         """Test that a non-integer --cooldown is rejected with a user-facing message."""

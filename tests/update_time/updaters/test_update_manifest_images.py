@@ -1,35 +1,39 @@
 """Unit tests for the manifest image update script."""
 
 import unittest
+from typing import override
 from unittest.mock import Mock, patch
 
 from mutation_time.mutation import kills
 from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.domain.directive import Consequence, ImageNotLookedUpReason
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
-from update_time.formats import yaml as yaml_format
-from update_time.manifests import docker_compose as docker_compose_manifest
+from update_time.formats import yaml
+from update_time.manifests.docker_compose import built_images
 from update_time.primitives.location import Location
-from update_time.references import file as references_file
-from update_time.references import resolve as references_resolve
-from update_time.sources import oci
+from update_time.references.file import update_yaml_files
+from update_time.references.resolve import _warn_about_redundant_update_directives, _why_the_pin_never_floats
+from update_time.sources.oci import ImagesNotPulled
 from update_time.updaters.update_manifest_images import _update_manifest_images
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, STALE_DATE
-from tests.update_time.helpers import docker_hub_version, docker_tag
 from tests.update_time.registry import mock_docker_registry
-from tests.update_time.updaters.helpers import mock_docker_hub_auth
+from tests.update_time.sources.docker_hub_answers import docker_hub_version, docker_tag
 
 
-@mock_docker_hub_auth
 class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
     """Unit tests for the update manifest images function."""
 
-    def reference(self, image: str) -> str:
-        """Return a Docker Compose / Helm `image:` line for the image."""
-        return f"image: {image}\n"
+    @override
+    def run_updater(self, mock_file: Mock) -> None:
+        """Run the Compose half, which is the one the shared tests of the mixin exercise."""
+        self.run_compose_updater(mock_file)
+
+    def run_compose_updater(self, *mock_files: Mock) -> None:
+        """Run the manifest updater with the mock files as the only Docker Compose files."""
+        self.run_updater_over(list(mock_files), "docker-compose*.yml")
 
     def run_updater_over(self, mock_files: list[Mock], glob_pattern: str) -> None:
         """Run the manifest updater with the mock files as the only files the glob pattern finds.
@@ -38,23 +42,11 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         the files and the rest with nothing processes each of them exactly once.
         """
 
-        def rglob(pattern: str, *, case_sensitive: bool | None = None) -> list[Mock]:  # noqa: ARG001
+        def rglob(pattern: str, **_kwargs: object) -> list[Mock]:
             return mock_files if pattern == glob_pattern else []
 
         with patch("pathlib.Path.rglob", side_effect=rglob):
             _update_manifest_images()
-
-    def run_compose_updater(self, *mock_files: Mock) -> None:
-        """Run the manifest updater with the mock files as the only Docker Compose files."""
-        self.run_updater_over(list(mock_files), "docker-compose*.yml")
-
-    def run_helm_updater(self, mock_file: Mock) -> None:
-        """Run the manifest updater with the mock file as the only Helm chart."""
-        self.run_updater_over([mock_file], "*.yml")
-
-    def run_updater(self, mock_file: Mock) -> None:
-        """Run the Compose half, which is the one the shared tests of the mixin exercise."""
-        self.run_compose_updater(mock_file)
 
     def test_pin_tagless_image(self):
         """Test that an `image:` naming no tag is pinned to the version and digest `latest` serves."""
@@ -65,18 +57,22 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_manifest, 1))
         self.assert_no_warnings_logged()
 
+    @override
+    def reference(self, image: str) -> str:
+        """Return a Docker Compose / Helm `image:` line for the image."""
+        return f"image: {image}\n"
+
     def test_image_whose_tag_the_registry_does_not_serve_is_not_stale(self):
         """Test that an `image:` whose tag the registry does not list is not reported stale."""
         self.requests.side_effect = mock_docker_registry(docker_tag("v4.7.0", DIGEST, tag_last_pushed=STALE_DATE))
         mock_manifest = mock_path(self.reference("acme/api:ci"))
         self.run_compose_updater(mock_manifest)
         mock_manifest.write_text.assert_not_called()
-        location = Location(mock_manifest, 1)
-        self.assert_unpinned_floating_tag_logged("acme/api", "ci", location, FloatingPin.NOT_LISTED)
+        self.assert_unpinned_floating_tag_logged("acme/api", "ci", Location(mock_manifest, 1), FloatingPin.NOT_LISTED)
         self.assert_no_warnings_logged()
 
     @kills.append(
-        docker_compose_manifest.built_images,
+        built_images,
         'for service in document["services"].values()',
         "[:1]",
         "only the first service is read, so an image a later service builds is looked up on a registry",
@@ -103,7 +99,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_left_alone_unqueried(mock_manifest, "acme/db", "2.0.0", 9, built)
 
     @kills.delete(
-        oci.ImagesNotPulled,
+        ImagesNotPulled,
         'image.partition("@")[0] for image in ',
         "a digest the file records beside a built image's tag survives into the match, so the image is looked up",
     )
@@ -115,7 +111,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_left_alone_unqueried(mock_manifest, "acme/api", "1.2.3", 4, ImageNotLookedUp.BUILT_IMAGE)
 
     @kills.replace(
-        docker_compose_manifest.built_images,
+        built_images,
         '(image := service["image"].string()) is not None\n',
         '((image := service["image"].string()) or True)\n',
         "a service that builds an image without tagging one aborts the run",
@@ -132,14 +128,14 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_no_warnings_logged()
 
     @kills.delete(
-        yaml_format.Document.__contains__,
+        yaml.Document.__contains__,
         "isinstance(self._value, dict) and ",
         "a service declared with no body is read as a mapping, ending the run",
         raises="TypeError: argument of type 'NoneType' is not a container or iterable",
         case="a service has no body",
     )
     @kills.replace(
-        yaml_format.Document.__getitem__,
+        yaml.Document.__getitem__,
         "Document(self._value.get(key)) if isinstance(self._value, dict) else Document()",
         "Document(self._value.get(key))",
         "a Compose file that is a list rather than a mapping ends the run",
@@ -147,7 +143,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         case="the document is a list",
     )
     @kills.replace(
-        yaml_format.Document.values,
+        yaml.Document.values,
         "[Document(value) for value in self._value.values()] if isinstance(self._value, dict) else []",
         "[Document(value) for value in self._value.values()]",
         "a Compose file listing its services rather than mapping them ends the run",
@@ -171,10 +167,9 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
                 self.assert_no_warnings_logged()
 
     @kills.replace(
-        oci.ImagesNotPulled.__call__,
-        'as_written = f"{pinned.name}{tag_of(pinned.version)}"\n'
-        "        return self.reason if as_written in self._without_digests else None\n",
-        'return self.reason if pinned.name in {i.partition(":")[0] for i in self._without_digests} else None\n',
+        ImagesNotPulled.__call__,
+        'f"{pinned.name}{tag_of(pinned.version)}" in self._without_digests',
+        'pinned.name in {i.partition(":")[0] for i in self._without_digests}',
         "a reference is matched on its name alone, so every tag of a built repository is left alone",
     )
     def test_other_tag_of_a_built_repository_is_updated(self):
@@ -188,7 +183,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_no_warnings_logged()
 
     @kills.append(
-        references_file.update_yaml_files,
+        update_yaml_files,
         "get_new_version = ",
         'get_new_version if "get_new_version" in dir() else ',
         "the getter built for one file judges the files after it, so what one file builds reaches them all",
@@ -205,7 +200,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_no_warnings_logged()
 
     @kills.delete(
-        references_resolve._why_the_pin_never_floats,
+        _why_the_pin_never_floats,
         "if image_not_looked_up is not None:\n"
         "        return ImageNotLookedUpReason(image_not_looked_up, Consequence.TAG_NEVER_PINNED)\n"
         "    ",
@@ -241,7 +236,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         )
 
     @kills.replace(
-        references_resolve._warn_about_redundant_update_directives,
+        _warn_about_redundant_update_directives,
         "else:\n        warn_if_the_bound_is_redundant(reference, log)",
         "warn_if_the_bound_is_redundant(reference, log)",
         "a bound on an image never looked up is reported twice, once as never having an effect",
@@ -270,6 +265,10 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_chart, 3))
         self.assert_no_warnings_logged()
 
+    def run_helm_updater(self, mock_file: Mock) -> None:
+        """Run the manifest updater with the mock file as the only Helm chart."""
+        self.run_updater_over([mock_file], "*.yml")
+
     def test_helm_template_in_the_reference_is_left_alone_and_reported(self):
         """Test that a Helm chart's reference whose image name or tag holds a template is reported and not looked up."""
         cases = {
@@ -297,6 +296,13 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 class ScannedManifestsTest(unittest.TestCase):
     """Unit tests for which manifest files are scanned for pinned images."""
 
+    def test_docker_compose_files_are_scanned(self):
+        """Test that the Docker Compose files are scanned from the repository root."""
+        update_yaml_files, _glob_for = self.scan()
+        self.assertEqual(update_yaml_files.call_args.args, (DOCKER_COMPOSE_FILES,))
+        self.assertEqual(DOCKER_COMPOSE_FILES.patterns, ("docker-compose*.yml",))
+        self.assertEqual(DOCKER_COMPOSE_FILES.start, "")
+
     def scan(self) -> tuple[Mock, Mock]:
         """Run the updater over no files, and return the mocks standing in for its two passes."""
         with (
@@ -305,13 +311,6 @@ class ScannedManifestsTest(unittest.TestCase):
         ):
             _update_manifest_images()
         return update_yaml_files, glob_for
-
-    def test_docker_compose_files_are_scanned(self):
-        """Test that the Docker Compose files are scanned from the repository root."""
-        update_yaml_files, _glob_for = self.scan()
-        self.assertEqual(update_yaml_files.call_args.args, (DOCKER_COMPOSE_FILES,))
-        self.assertEqual(DOCKER_COMPOSE_FILES.patterns, ("docker-compose*.yml",))
-        self.assertEqual(DOCKER_COMPOSE_FILES.start, "")
 
     def test_helm_yaml_files_are_scanned(self):
         """Test all YAML files in the Helm folder are scanned, so pinned images stay in sync with Docker Compose."""

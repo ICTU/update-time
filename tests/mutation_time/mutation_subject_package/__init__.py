@@ -1,6 +1,6 @@
 """Code for the tests of the mutation decorator to mutate: a package whose modules import each other."""
 
-from tests.mutation_time.mutation_subject_package.step import STEP
+from .step import STEP
 
 
 class Counter:

@@ -9,7 +9,7 @@ from update_time.manifests.catalogs_yaml import CatalogsYaml
 from update_time.manifests.npm_declaration import CatalogEntry, Catalogs
 from update_time.primitives.location import Location
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
 
 class DeclarationsTest(unittest.TestCase):

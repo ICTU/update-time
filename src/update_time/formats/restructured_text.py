@@ -3,20 +3,28 @@
 import re
 import string
 from itertools import pairwise
+from typing import Final
 
 # A reStructuredText file carries this extension.
-EXTENSION = ".rst"
+EXTENSION: Final[str] = ".rst"
 # The characters reStructuredText allows a heading to be underlined with.
-_ADORNMENT_CHARACTERS = frozenset(string.punctuation)
+_ADORNMENT_CHARACTERS: Final[frozenset[str]] = frozenset(string.punctuation)
 # Docutils reads a run of this length or longer as the underline of a longer title.
-_SHORTEST_UNDERLINE = 4
+_SHORTEST_UNDERLINE: Final[int] = 4
 # The target of a hyperlink, in the angle brackets that follow the link's text. A match starts where the whitespace
 # before the target starts, so a long run of whitespace is not scanned again from each of its characters.
-_LINK_TARGET = re.compile(r"(?<!\s)\s*<[^>]*>(?=`_)")
+_LINK_TARGET: Final[re.Pattern[str]] = re.compile(r"(?<!\s)\s*<[^>]*>(?=`_)")
 # An inline literal, its text between double backticks, such as ``abi3``.
-_INLINE_LITERAL = re.compile(r"``(.+?)``")
+_INLINE_LITERAL: Final[re.Pattern[str]] = re.compile(r"``(.+?)``")
 # A label naming the section below it, such as `.. _v1-0:`.
-_LABEL = re.compile(r"\.\. _[^:]+:")
+_LABEL: Final[re.Pattern[str]] = re.compile(r"\.\. _[^:]+:")
+
+
+def text(markup: str) -> str:
+    """Return the text the markup shows: its headings without their underlines, its literals without backticks."""
+    lines = ["", *markup.splitlines()]
+    shown = "\n".join(line for title, line in pairwise(lines) if not heading_underline(title, line))
+    return _INLINE_LITERAL.sub(r"\1", shown)
 
 
 def heading_underline(title: str, line: str) -> str:
@@ -37,13 +45,6 @@ def heading_underline(title: str, line: str) -> str:
     ):
         return character
     return ""
-
-
-def text(markup: str) -> str:
-    """Return the text the markup shows: its headings without their underlines, its literals without backticks."""
-    lines = ["", *markup.splitlines()]
-    shown = "\n".join(line for title, line in pairwise(lines) if not heading_underline(title, line))
-    return _INLINE_LITERAL.sub(r"\1", shown)
 
 
 def is_label(line: str) -> bool:

@@ -2,33 +2,40 @@
 
 import unittest
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from unittest.mock import Mock, patch
 
 if TYPE_CHECKING:
-    from unittest.mock import _patch
+    from unittest.mock import _patch  # simplint: ignore[private-import-path] # no public patcher type
 
 from mutation_time.mutation import kills
 from update_time.domain.file_type import FileType
-from update_time.io import filesystem as filesystem_module
-from update_time.io.filesystem import _EXCLUDE_PATHS, configure_excluded_paths, glob_for, inside_git_repository
+from update_time.io import filesystem
+from update_time.io.filesystem import (
+    _EXCLUDE_PATHS,
+    _holds_unnamed_hidden_part,
+    configure_excluded_paths,
+    glob_for,
+    inside_git_repository,
+)
 
-from tests.helpers import patch_environ, patch_pathlib_path
-from tests.update_time.helpers import SCAN_ROOT
+from tests.environment import patch_environ
+from tests.file_mocks import patch_pathlib_path
+from tests.update_time.fixtures import SCAN_ROOT
 
 # The file types the walk is exercised with: the patterns and the declaration each test needs, and nothing else.
-_TEXT_FILES = FileType("text files", ("*.txt",))
-_TEXT_FILES_IN_EXAMPLE = FileType("text files", ("*.txt",), start="example")
-_TEXT_FILES_IN_HIDDEN_EXAMPLE = FileType("text files", ("*.txt",), start=".example")
-_HIDDEN_TEXT_FILES = FileType("hidden text files", (".*.txt",), case_sensitive=False)
-_YAML_FILES = FileType("YAML files", ("*.yml", "*.yaml"))
-_DEVCONTAINER_IN_FOLDER = FileType("devcontainer configs", (".devcontainer/devcontainer.json",))
-_CASE_INSENSITIVE_FILES = FileType("Dockerfiles", ("Dockerfile",), case_sensitive=False)
-_TEXT_FILES_AT_ROOT = FileType("text files", ("*.txt",), recursive=False)
+_TEXT_FILES: Final[FileType] = FileType("text files", ("*.txt",))
+_TEXT_FILES_IN_EXAMPLE: Final[FileType] = FileType("text files", ("*.txt",), start="example")
+_TEXT_FILES_IN_HIDDEN_EXAMPLE: Final[FileType] = FileType("text files", ("*.txt",), start=".example")
+_HIDDEN_TEXT_FILES: Final[FileType] = FileType("hidden text files", (".*.txt",), case_sensitive=False)
+_YAML_FILES: Final[FileType] = FileType("YAML files", ("*.yml", "*.yaml"))
+_DEVCONTAINER_IN_FOLDER: Final[FileType] = FileType("devcontainer configs", (".devcontainer/devcontainer.json",))
+_CASE_INSENSITIVE_FILES: Final[FileType] = FileType("Dockerfiles", ("Dockerfile",), case_sensitive=False)
+_TEXT_FILES_AT_ROOT: Final[FileType] = FileType("text files", ("*.txt",), recursive=False)
 
 # The git checks start from the project, and a run excludes the vendor directory.
-_PROJECT = Path("/home/user/project")
-_VENDOR = Path("vendor")
+_PROJECT: Final[Path] = Path("/home/user/project")
+_VENDOR: Final[Path] = Path("vendor")
 
 
 @patch_pathlib_path(cwd=SCAN_ROOT)
@@ -36,18 +43,18 @@ _VENDOR = Path("vendor")
 class GlobForTest(unittest.TestCase):
     """Unit tests for walking the files a file type declares."""
 
+    def test_the_walk_returns_every_file_it_finds(self, mock_glob: Mock):
+        """Test that the walk returns every file the glob finds."""
+        for case, kept_files in (("one file", ["file.txt"]), ("several files", ["file.txt", "folder/b.txt"])):
+            with self.subTest(case):
+                self.assert_kept(mock_glob, _TEXT_FILES, [], kept_files)
+
     def assert_kept(
         self, mock_glob: Mock, file_type: FileType, skipped_files: list[str], kept_files: list[str]
     ) -> None:
         """Assert that the walk over the skipped and the kept files returns the kept files alone."""
         mock_glob.return_value = [SCAN_ROOT / path for path in skipped_files + kept_files]
         self.assertEqual(list(glob_for(file_type)), [SCAN_ROOT / path for path in kept_files])
-
-    def test_the_walk_returns_every_file_it_finds(self, mock_glob: Mock):
-        """Test that the walk returns every file the glob finds."""
-        for case, kept_files in (("one file", ["file.txt"]), ("several files", ["file.txt", "folder/b.txt"])):
-            with self.subTest(case):
-                self.assert_kept(mock_glob, _TEXT_FILES, [], kept_files)
 
     def test_case_sensitivity_is_taken_from_the_declaration(self, mock_glob: Mock):
         """Test that the walk asks for the case sensitivity the file type declares, so a `dockerfile` counts."""
@@ -80,32 +87,31 @@ class GlobForTest(unittest.TestCase):
     def test_always_ignored_folders_are_skipped(self, mock_glob: Mock):
         """Test that the walk skips a file in an always-ignored folder, and returns a file beside it."""
         ignored_folders = ["project/build", "project/target", "example/node_modules", "src/__pycache__"]
-        skipped_files = [f"{folder}/file.txt" for folder in ignored_folders]
-        self.assert_kept(mock_glob, _TEXT_FILES, skipped_files, ["src/file.txt"])
+        self.assert_kept(mock_glob, _TEXT_FILES, [f"{folder}/file.txt" for folder in ignored_folders], ["src/file.txt"])
 
     @kills.replace(
-        filesystem_module.glob_for,
+        filesystem.glob_for,
         "_is_skipped(path.relative_to(start)",
         "_is_skipped(path.relative_to(root)",
         "a file under a hidden start folder, such as `.github`, is skipped as hidden",
         case="a hidden start folder, such as .github",
     )
     @kills.replace(
-        filesystem_module._holds_unnamed_hidden_part,
+        _holds_unnamed_hidden_part,
         "_hidden(relative_path.parts)",
         "_hidden(relative_path.parts[:-1])",
         "the walk returns a hidden file that the pattern does not name, such as `.env.txt`",
         case="a hidden file outside the pattern",
     )
     @kills.replace(
-        filesystem_module._holds_unnamed_hidden_part,
+        _holds_unnamed_hidden_part,
         "segment, case_sensitive=case_sensitive)",
         "segment, case_sensitive=True)",
         "a hidden file that a case-insensitive pattern names is skipped where its case differs, as `.NOTES.TXT` is",
         case="a hidden file a wildcard matches, in any case",
     )
     @kills.replace(
-        filesystem_module._holds_unnamed_hidden_part,
+        _holds_unnamed_hidden_part,
         "_hidden(relative_path.parts)",
         "_hidden(relative_path.parts[-1:])",
         "the walk returns a file in a hidden folder that the pattern does not name, such as `.git`",
@@ -157,12 +163,6 @@ class GlobForTest(unittest.TestCase):
 class InsideGitRepositoryTest(unittest.TestCase):
     """Unit tests for detecting whether a directory sits inside a git repository."""
 
-    @staticmethod
-    def patch_git_entry(*git_dirs: Path) -> _patch:
-        """Patch `Path.exists` so that only a `.git` entry in one of the given directories exists."""
-        git_entries = {git_dir / ".git" for git_dir in git_dirs}
-        return patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self in git_entries)
-
     def test_a_directory_is_inside_a_repository_where_it_or_a_parent_holds_a_git_entry(self):
         """Test that the check walks up from the directory to the filesystem root looking for a `.git` entry."""
         cases = (
@@ -173,6 +173,12 @@ class InsideGitRepositoryTest(unittest.TestCase):
         for case, git_dirs, directory, inside in cases:
             with self.subTest(case), self.patch_git_entry(*git_dirs):
                 self.assertEqual(inside_git_repository(directory), inside)
+
+    @staticmethod
+    def patch_git_entry(*git_dirs: Path) -> _patch:
+        """Patch `Path.exists` so that only a `.git` entry in one of the given directories exists."""
+        git_entries = {git_dir / ".git" for git_dir in git_dirs}
+        return patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self in git_entries)
 
     def test_git_entry_is_a_file(self):
         """Test that a `.git` *file* (a worktree or submodule pointer) counts, so `.is_dir()` is not required."""

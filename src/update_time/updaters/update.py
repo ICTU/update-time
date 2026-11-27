@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from signal import Signals
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES, DependencyType
@@ -20,18 +20,21 @@ from update_time.io.log import get_logger, set_log_level
 from update_time.io.network import report_network_settings
 from update_time.io.process import Processes
 from update_time.primitives.command import Command
-from update_time.sources import docker_hub, github
+from update_time.sources.docker_hub import TOKEN_VARIABLE as DOCKER_HUB_TOKEN_VARIABLE
+from update_time.sources.docker_hub import USERNAME_VARIABLE
+from update_time.sources.github import TOKEN_VARIABLE as GITHUB_TOKEN_VARIABLE
 
 if TYPE_CHECKING:
     from argparse import Namespace
     from collections.abc import Iterator, Mapping
+    from types import FrameType
 
     from update_time.io.log import Logger
 
-_SRC = Path(__file__).parent
+_SRC: Final[Path] = Path(__file__).parent
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Script:
     """An updater script, and whether it may run beside the others."""
 
@@ -44,7 +47,7 @@ class _Script:
         return Command(sys.executable, str(_SRC / f"update_{self.name}.py"))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Scripts:
     """The updater scripts serving each dependency type."""
 
@@ -53,20 +56,6 @@ class _Scripts:
     def __iter__(self) -> Iterator[_Script]:
         """Yield every registered updater script."""
         return (script for scripts in self.scripts.values() for script in scripts)
-
-    @property
-    def parallel_scripts(self) -> tuple[_Script, ...]:
-        """Return each script that may run beside another."""
-        return tuple(script for script in self if script.parallel)
-
-    @property
-    def sequential_scripts(self) -> tuple[_Script, ...]:
-        """Return each script that may not run beside another."""
-        return tuple(script for script in self if not script.parallel)
-
-    def dependency_type(self, script: _Script) -> DependencyType:
-        """Return the dependency type the script serves."""
-        return next(dependency_type for dependency_type, scripts in self.scripts.items() if script in scripts)
 
     def run(self, processes: Processes, logger: Logger) -> int:
         """Run every updater script and return the highest exit code, counting a script a signal stopped as 1.
@@ -85,38 +74,52 @@ class _Scripts:
         results.extend(result(script, *processes.run(script.command)) for script in self.sequential_scripts)
         return max(results, default=0)
 
+    def dependency_type(self, script: _Script) -> DependencyType:
+        """Return the dependency type the script serves."""
+        return next(dependency_type for dependency_type, scripts in self.scripts.items() if script in scripts)
+
+    @property
+    def parallel_scripts(self) -> tuple[_Script, ...]:
+        """Return each script that may run beside another."""
+        return tuple(script for script in self if script.parallel)
+
+    @property
+    def sequential_scripts(self) -> tuple[_Script, ...]:
+        """Return each script that may not run beside another."""
+        return tuple(script for script in self if not script.parallel)
+
 
 # The updater scripts serving each dependency type. package_json rewrites the package.json files that node_engine
 # rewrites too, so package_json may not run beside another script.
 _SCRIPTS = _Scripts(
-    {
+    scripts={
         DEPENDENCY_TYPES.python_dependencies: (
-            _Script("pyproject_toml"),
-            _Script("requirements_txt"),
-            _Script("python_inline_script_metadata"),
+            _Script(name="pyproject_toml"),
+            _Script(name="requirements_txt"),
+            _Script(name="python_inline_script_metadata"),
         ),
-        DEPENDENCY_TYPES.npm_dependencies: (_Script("package_json", parallel=False),),
-        DEPENDENCY_TYPES.maven_dependencies: (_Script("pom_xml"),),
-        DEPENDENCY_TYPES.node_engine_version: (_Script("node_engine"),),
-        DEPENDENCY_TYPES.python_version: (_Script("python_version_file"),),
+        DEPENDENCY_TYPES.npm_dependencies: (_Script(name="package_json", parallel=False),),
+        DEPENDENCY_TYPES.maven_dependencies: (_Script(name="pom_xml"),),
+        DEPENDENCY_TYPES.node_engine_version: (_Script(name="node_engine"),),
+        DEPENDENCY_TYPES.python_version: (_Script(name="python_version_file"),),
         DEPENDENCY_TYPES.docker_images: (
-            _Script("dockerfile_base_image"),
-            _Script("circle_ci_config"),
-            _Script("gitlab_ci_config"),
-            _Script("manifest_images"),
-            _Script("devcontainer"),
+            _Script(name="dockerfile_base_image"),
+            _Script(name="circle_ci_config"),
+            _Script(name="gitlab_ci_config"),
+            _Script(name="manifest_images"),
+            _Script(name="devcontainer"),
         ),
-        DEPENDENCY_TYPES.github_actions: (_Script("github_action"),),
-        DEPENDENCY_TYPES.pre_commit_hooks: (_Script("pre_commit_config"),),
-        DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script("jsdelivr"),),
+        DEPENDENCY_TYPES.github_actions: (_Script(name="github_action"),),
+        DEPENDENCY_TYPES.pre_commit_hooks: (_Script(name="pre_commit_config"),),
+        DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script(name="jsdelivr"),),
     }
 )
 
 
-_STOP_SIGNALS = (Signals.SIGINT, Signals.SIGQUIT, Signals.SIGTERM, Signals.SIGHUP)
+_STOP_SIGNALS: Final[tuple[Signals, ...]] = (Signals.SIGINT, Signals.SIGQUIT, Signals.SIGTERM, Signals.SIGHUP)
 
 # The environment variables holding the credentials that raise the rate limits of GitHub and Docker Hub.
-_CREDENTIALS = (github.TOKEN_VARIABLE, docker_hub.USERNAME_VARIABLE, docker_hub.TOKEN_VARIABLE)
+_CREDENTIALS: Final[tuple[str, ...]] = (GITHUB_TOKEN_VARIABLE, USERNAME_VARIABLE, DOCKER_HUB_TOKEN_VARIABLE)
 
 
 def _report_context(logger: Logger) -> None:
@@ -127,7 +130,7 @@ def _report_context(logger: Logger) -> None:
     report_network_settings(logger)
 
 
-def _stop(processes: Processes, logger: Logger, signal_number: int, _frame: object) -> None:
+def _stop(processes: Processes, logger: Logger, signal_number: int, _frame: FrameType | None) -> None:
     """Log the signal, and stop the updaters running and the ones still to start."""
     logger.stopped(Signals(signal_number))
     processes.stop(Signals(signal_number))
@@ -164,5 +167,5 @@ def main() -> int:
     return exit_code if processes.stop_signal is None else 128 + processes.stop_signal
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

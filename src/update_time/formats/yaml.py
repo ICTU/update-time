@@ -5,7 +5,7 @@ Note: `import yaml` below resolves to the third-party PyYAML package, not this m
 
 import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import yaml
 
@@ -15,14 +15,14 @@ if TYPE_CHECKING:
 
 
 # What this format is called in a message about a file that does not parse.
-FORMAT = "YAML"
+FORMAT: Final[str] = "YAML"
 
 
 @dataclass(frozen=True)
 class Document:
     """A parsed YAML document, or a node in one: a mapping, a sequence, a scalar, or None for an empty file."""
 
-    _value: object = None
+    _value: object = None  # simplint: ignore[imprecise-annotation] # a YAML node holds any value the loader builds
 
     def __getitem__(self, key: str) -> Document:
         """Return the node under the key, or an empty node where this node is not a mapping holding the key."""
@@ -32,13 +32,13 @@ class Document:
         """Return whether this node is a mapping holding the key."""
         return isinstance(self._value, dict) and key in self._value
 
-    def string(self) -> str | None:
-        """Return this node's value where it is a string."""
-        return self._value if isinstance(self._value, str) else None
-
     def __iter__(self) -> Iterator[str]:
         """Return an iterator over the keys of this node where it is a mapping."""
         return iter(self._value if isinstance(self._value, dict) else [])
+
+    def string(self) -> str | None:
+        """Return this node's value where it is a string."""
+        return self._value if isinstance(self._value, str) else None
 
     def values(self) -> list[Document]:
         """Return the values of this node where it is a mapping."""
@@ -81,11 +81,15 @@ class KeyedValue:
     column: int
 
 
-def _children(value: object) -> list[object]:
+def _children(value: object) -> list[object]:  # simplint: ignore[imprecise-annotation] # the loader builds any value
     """Return the values of a mapping, or the items of a sequence."""
     if isinstance(value, dict):
         return list(value.values())
     return list(value) if isinstance(value, list) else []
+
+
+# A key of a YAML mapping.
+type _Key = object  # simplint: ignore[imprecise-annotation] # a key may be any value the loader builds
 
 
 class _Mapping(dict):
@@ -94,7 +98,7 @@ class _Mapping(dict):
     def __init__(self) -> None:
         """Start without entries."""
         super().__init__()
-        self.keyed_values: dict[object, KeyedValue] = {}
+        self.keyed_values: dict[_Key, KeyedValue] = {}
 
 
 class _Loader(yaml.SafeLoader):
@@ -119,7 +123,9 @@ def _mapping(loader: _Loader, node: yaml.MappingNode) -> Iterator[_Mapping]:
         )
 
 
-def _value_under_unknown_tag(loader: _Loader, suffix: str, node: yaml.Node) -> object:
+def _value_under_unknown_tag(
+    loader: _Loader, suffix: str, node: yaml.Node
+) -> object:  # simplint: ignore[imprecise-annotation] # the loader builds any value
     """Return the node constructed under the tag its value resolves to, rather than the unknown one."""
     del suffix
     # A copy, because the node itself is mid-construction and constructing it again reads as a recursive node.

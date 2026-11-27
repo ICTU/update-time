@@ -2,16 +2,17 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final
 
-from update_time.domain.marker import Scope
-from update_time.domain.source import Source
+from .marker import Scope
+from .source import Source
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from update_time.domain.dependency import ImageNotLookedUp, PinnedDependency
-    from update_time.domain.marker import Marker
+    from .dependency import ImageNotLookedUp, PinnedDependency
+    from .marker import Marker
 
 
 class Reason(StrEnum):
@@ -139,17 +140,16 @@ type RedundancyReason = Reason | ImageNotLookedUpReason
 type _AppliesDirective = Callable[[Source, PinnedDependency], bool]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Directive:
     """One of the directives a marker can carry that the reference's source may be unable to apply.
 
-    `scope` is what the directive steers, which the marker is asked for both the directive it carries and whether it
-    carries one at all, in whichever of the scope's forms (see `Marker.directive_for`).
-    `is_applied_by` tells whether the source the check asks can apply the directive to the pinned dependency.
-    `reason` is why the source cannot apply it, and `without_a_version` why it holds nothing back for a reference
-    that pins no version, which is None for a directive such a reference still steers something with.
-    `consequence` is what Update-time never does for a reference whose image it does not look up, which is None for
-    a directive whose source cannot apply it whether or not the image is looked up.
+    `scope` is what the directive steers (see `Marker.directive_for`).
+    `is_applied_by` tells whether a source can apply the directive to the pinned dependency.
+    `reason` is why it cannot, and `without_a_version` why the directive does not hold anything back for a reference
+    that does not pin a version. It is None where such a reference still steers something with the directive.
+    `consequence` is what Update-time never does for a reference whose image it does not look up. It is None where the
+    source cannot apply the directive either way.
     """
 
     scope: Scope
@@ -168,45 +168,52 @@ class _Directive:
 # These are the directives a source may be unable to apply. A pass over them reports their warnings in this order.
 # `update` is the one scope with no row: every source resolves a version, so there is no capability a source could lack
 # for it.
-DIRECTIVES = (
+DIRECTIVES: Final[tuple[_Directive, ...]] = (
     _Directive(
-        Scope.YANKED,
-        Source.reports_yanks,
-        Reason.NO_YANK_CONCEPT,
-        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,
+        scope=Scope.YANKED,
+        is_applied_by=Source.reports_yanks,
+        reason=Reason.NO_YANK_CONCEPT,
+        without_a_version=Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,
     ),
     _Directive(
-        Scope.VULNERABLE,
-        Source.reports_vulnerabilities,
-        Reason.NO_VULNERABILITY_REPORTS,
-        Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+        scope=Scope.VULNERABLE,
+        is_applied_by=Source.reports_vulnerabilities,
+        reason=Reason.NO_VULNERABILITY_REPORTS,
+        without_a_version=Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
     ),
     _Directive(
-        Scope.ARCHIVED,
-        Source.reports_archival,
-        Reason.NO_ARCHIVAL_SIGNAL,
+        scope=Scope.ARCHIVED,
+        is_applied_by=Source.reports_archival,
+        reason=Reason.NO_ARCHIVAL_SIGNAL,
         consequence=Consequence.ARCHIVAL_NEVER_CHECKED,
     ),
     _Directive(
-        Scope.COOLDOWN,
-        Source.reports_publication_dates,
-        Reason.NO_COOLDOWN_DATES,
-        Reason.NO_VERSION_TO_UPDATE,  # a cooldown steers an update, and no update is resolved for such a reference
+        scope=Scope.COOLDOWN,
+        is_applied_by=Source.reports_publication_dates,
+        reason=Reason.NO_COOLDOWN_DATES,
+        without_a_version=Reason.NO_VERSION_TO_UPDATE,
         consequence=Consequence.NEVER_UPDATED,
     ),
     _Directive(
-        Scope.STALE,
-        Source.reports_publication_dates,
-        Reason.NO_STALENESS_DATES,
+        scope=Scope.STALE,
+        is_applied_by=Source.reports_publication_dates,
+        reason=Reason.NO_STALENESS_DATES,
         consequence=Consequence.STALENESS_NEVER_CHECKED,
     ),
 )
 
 # The directives whose scope steers a warning rather than the update, which is every one but the cooldown.
-WARNING_DIRECTIVES = tuple(directive for directive in DIRECTIVES if directive.scope is not Scope.COOLDOWN)
+WARNING_DIRECTIVES: Final[tuple[_Directive, ...]] = tuple(
+    directive for directive in DIRECTIVES if directive.scope is not Scope.COOLDOWN
+)
 
 # A held-back update makes each opt-in redundant, for the reason given beside the scope it opts into.
-_HELD_BACK_OPT_INS = {Scope.FLOATING_PIN: Reason.NEVER_PINNED, Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED}
+_HELD_BACK_OPT_INS: Final[MappingProxyType[Scope, Reason]] = MappingProxyType(
+    {
+        Scope.FLOATING_PIN: Reason.NEVER_PINNED,
+        Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED,
+    }
+)
 
 
 def opt_in_redundancy(marker: Marker, scope: Scope, reason: RedundancyReason | None) -> RedundancyReason | None:

@@ -7,15 +7,18 @@ from contextlib import suppress
 from functools import cache
 from pathlib import Path
 from signal import Signals
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from update_time.io.log import get_logger
 from update_time.primitives.command import Command, Result
+
+from .log import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-_LOG = get_logger("process")
+    from .log import Logger
+
+_LOG: Final[Logger] = get_logger("process")
 
 
 def is_installed(executable: str) -> bool:
@@ -42,14 +45,6 @@ def run(command: Command, cwd: Path | None = None, environment: Mapping[str, str
     return outcome
 
 
-def _report_unrunnable(command: Command, error: OSError) -> None:
-    """Report the error that kept the system from running the command."""
-    if isinstance(error, FileNotFoundError):
-        _LOG.command_not_found(command)
-    else:
-        _LOG.command_error(command, error)
-
-
 @cache
 def _log_version(executable: str, directory: Path) -> None:
     """Log the version of the executable in the directory, where it reports one.
@@ -58,14 +53,6 @@ def _log_version(executable: str, directory: Path) -> None:
     """
     if isinstance(version := _tool_version(executable, directory), str):
         _LOG.tool_version(executable, directory, version)
-
-
-def tool_version(executable: str, directory: Path) -> str | None:
-    """Return the version the executable reports in the directory, or report why it is unknown and return None."""
-    if isinstance(outcome := _tool_version(executable, directory), OSError):
-        _report_unrunnable(Command(executable, "--version"), outcome)
-        return None
-    return outcome
 
 
 @cache
@@ -100,6 +87,22 @@ def run_unlogged(command: Command, cwd: Path | None, environment: Mapping[str, s
     except subprocess.CalledProcessError as error:
         return Result(error.stdout, error.stderr, succeeded=False)
     return Result(completed.stdout, completed.stderr, succeeded=True)
+
+
+def _report_unrunnable(command: Command, error: OSError) -> None:
+    """Report the error that kept the system from running the command."""
+    if isinstance(error, FileNotFoundError):
+        _LOG.command_not_found(command)
+    else:
+        _LOG.command_error(command, error)
+
+
+def tool_version(executable: str, directory: Path) -> str | None:
+    """Return the version the executable reports in the directory, or report why it is unknown and return None."""
+    if isinstance(outcome := _tool_version(executable, directory), OSError):
+        _report_unrunnable(Command(executable, "--version"), outcome)
+        return None
+    return outcome
 
 
 class Processes:

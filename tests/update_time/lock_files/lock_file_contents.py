@@ -1,6 +1,10 @@
-"""Test helpers that build the lock files and the compiled requirements files the tests read."""
+"""The contents of the lock files and the compiled requirements files the tests read."""
 
 import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from update_time.formats.json import JSON
 
 
 def bun_lock_contents(workspaces: dict, packages: dict[str, str]) -> str:
@@ -16,7 +20,7 @@ def bun_lock_contents(workspaces: dict, packages: dict[str, str]) -> str:
     return f'{{\n  "lockfileVersion": 1,\n  "workspaces": {workspaces_object},\n  "packages": {{\n{entries}  }},\n}}\n'
 
 
-def _value(value: object, indent: int) -> str:
+def _value(value: JSON, indent: int) -> str:
     """Return the value as bun writes it, an object with a member on each line, each followed by a comma."""
     if not isinstance(value, dict):
         return json.dumps(value)

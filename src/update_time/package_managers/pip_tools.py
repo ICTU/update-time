@@ -1,15 +1,16 @@
 """pip-tools as the tool that recompiles a requirements file pip-compile compiled."""
 
 import re
-from typing import ClassVar, override
+from typing import ClassVar, Final, override
 
 from update_time.io.process import run_unlogged
-from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.command import Command
+
+from .requirements_compiler import RequirementsCompiler
 
 # What `pip config list` prints about `uploaded-prior-to`, a line per place that sets it: `global.uploaded-prior-to=…`
 # for a config file, and `:env:.uploaded-prior-to=…` for `PIP_UPLOADED_PRIOR_TO`.
-_CONFIG_UPLOADED_PRIOR_TO = re.compile(r"^[^.\n]*\.uploaded-prior-to=", re.MULTILINE)
+_CONFIG_UPLOADED_PRIOR_TO: Final[re.Pattern[str]] = re.compile(r"^[^.\n]*\.uploaded-prior-to=", re.MULTILINE)
 
 
 class PipCompile(RequirementsCompiler):

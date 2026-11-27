@@ -3,7 +3,7 @@
 import tomllib
 from functools import reduce
 from operator import getitem
-from typing import TYPE_CHECKING, TypeIs, cast
+from typing import TYPE_CHECKING, Final, TypeIs, cast
 
 import tomlkit
 import tomlkit.container
@@ -13,14 +13,16 @@ import tomlkit.items
 from update_time.primitives.text import line_number
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from datetime import date, time
     from pathlib import Path
 
 
 # What this format is called in a message about a file that does not parse.
-FORMAT = "TOML"
+FORMAT: Final[str] = "TOML"
 
-# The text that stands in for a value, so the line holding the value can be found.
-_PLACEHOLDER = "update-time: placeholder"
+# Any value of a TOML document: a table, an array, a string, a number, a boolean, a date, or a time.
+type TOML = Mapping[str, TOML] | Sequence[TOML] | str | int | float | bool | date | time
 
 
 def parse(text: str) -> dict | None:
@@ -31,17 +33,17 @@ def parse(text: str) -> dict | None:
         return None
 
 
-def load(path: Path) -> dict:
-    """Return the parsed TOML, raising an `OSError` or a `ValueError` that says why the file cannot be read as TOML."""
-    return tomllib.loads(path.read_text())
-
-
 def read(path: Path) -> dict | None:
     """Return the parsed TOML, or None when the file can't be read, isn't UTF-8, or isn't valid TOML."""
     try:
         return load(path)
     except OSError, ValueError:
         return None
+
+
+def load(path: Path) -> dict:
+    """Return the parsed TOML, raising an `OSError` or a `ValueError` that says why the file cannot be read as TOML."""
+    return tomllib.loads(path.read_text())
 
 
 def parse_document(text: str) -> tomlkit.TOMLDocument | None:
@@ -65,9 +67,11 @@ def dumps(document: tomlkit.TOMLDocument) -> str:
 def line_of(text: str, table: str, key: str) -> int:
     """Return the number of the line holding the key of the table, which the TOML text has to declare."""
     document = tomlkit.parse(text)
-    cast("dict[str, object]", document[table])[key] = _PLACEHOLDER
+    # The text that stands in for a value, so the line holding the value can be found.
+    placeholder = "update-time: placeholder"
+    cast("dict[str, object]", document[table])[key] = placeholder
     placed = tomlkit.dumps(document)
-    return line_number(placed, placed.index(_PLACEHOLDER))
+    return line_number(placed, placed.index(placeholder))
 
 
 def is_string(value: object) -> TypeIs[tomlkit.items.String]:
@@ -82,7 +86,7 @@ def nested_array(document: tomlkit.TOMLDocument, *keys: str) -> tomlkit.items.Ar
 
 def nested_value(document: tomlkit.TOMLDocument, *keys: str) -> tuple[str, str] | None:
     """Return the value the nested keys hold and the comment trailing it, or None when they hold nothing."""
-    item: object = document
+    item: tomlkit.TOMLDocument | tomlkit.items.Item | None = document
     for key in keys:
         item = item.get(key) if isinstance(item, dict) else None
     if not isinstance(item, tomlkit.items.Item):
@@ -124,6 +128,22 @@ def _expand_inline_tables(document: tomlkit.TOMLDocument, super_table: str, tabl
         _add_table(document, super_table, table, _table_from(child))
 
 
+def _remove_root_key(document: tomlkit.TOMLDocument, key: str) -> None:
+    """Remove the key from the document, and the blank lines after it when it is the document's first key."""
+    body = document.body
+    index = next(index for index, (name, _) in enumerate(body) if name is not None and name.key == key)
+    del document[key]
+    if any(name is not None for name, _ in body[:index]):
+        return
+    while index + 1 < len(body) and body[index + 1][0] is None and _is_blank_line(body[index + 1][1]):
+        del body[index + 1]
+
+
+def _is_blank_line(item: tomlkit.items.Item) -> bool:
+    """Return whether the item is a blank line."""
+    return isinstance(item, tomlkit.items.Whitespace) and "\n" in item.s
+
+
 def _table_from(inline: tomlkit.items.InlineTable, expanding: str = "") -> tomlkit.items.Table:
     """Return a table holding the inline table's items, with the item named `expanding` turned into a table too."""
     items = [
@@ -139,22 +159,7 @@ def _table_from(inline: tomlkit.items.InlineTable, expanding: str = "") -> tomlk
     return table
 
 
-def _remove_root_key(document: tomlkit.TOMLDocument, key: str) -> None:
-    """Remove the key from the document, and the blank lines after it when it is the document's first key."""
-    body = document.body
-    index = next(index for index, (name, _) in enumerate(body) if name is not None and name.key == key)
-    del document[key]
-    if any(name is not None for name, _ in body[:index]):
-        return
-    while (
-        index + 1 < len(body)
-        and body[index + 1][0] is None
-        and isinstance(body[index + 1][1], tomlkit.items.Whitespace)
-    ):
-        del body[index + 1]
-
-
-def _holds_commented_keys(item: object) -> bool:
+def _holds_commented_keys(item: object) -> TypeIs[tomlkit.items.Table | tomlkit.container.OutOfOrderTableProxy]:
     """Return whether the item is a table that can hold a commented key, rather than an inline table or a value."""
     return isinstance(item, tomlkit.items.Table | tomlkit.container.OutOfOrderTableProxy)
 
@@ -168,28 +173,11 @@ def _add_table(document: tomlkit.TOMLDocument, super_table: str, name: str, tabl
     part = cast("tomlkit.items.Table", document.body[index][1])
     decorations = _pop_trailing_decorations(_last_table(part))
     following: list[tomlkit.items.Item] = [*decorations, *(item for _, item in document.body[index + 1 : index + 2])]
-    if following and not _starts_with_blank_line(following):
+    if following and not _is_blank_line(following[0]):
         table.add(tomlkit.nl())
     for decoration in decorations:
         table.add(decoration)
     part.append(name, table)
-
-
-def _last_table(table: tomlkit.items.Table) -> tomlkit.items.Table:
-    """Return the table rendered last within the table: the table itself, or its last sub-table, nested or not."""
-    while keyed := [item for key, item in table.value.body if key is not None]:
-        last = keyed[-1]
-        if isinstance(last, tomlkit.items.AoT):  # AoT = Array of Tables
-            last = last.body[-1]
-        if not isinstance(last, tomlkit.items.Table):
-            break
-        table = last
-    return table
-
-
-def _starts_with_blank_line(items: list[tomlkit.items.Item]) -> bool:
-    """Return whether the first of the items is a blank line."""
-    return isinstance(items[0], tomlkit.items.Whitespace) and "\n" in items[0].s
 
 
 def _pop_trailing_decorations(table: tomlkit.items.Table) -> list[tomlkit.items.Whitespace | tomlkit.items.Comment]:
@@ -204,6 +192,18 @@ def _pop_trailing_decorations(table: tomlkit.items.Table) -> list[tomlkit.items.
         body.pop()
         decorations.insert(0, item)
     return decorations
+
+
+def _last_table(table: tomlkit.items.Table) -> tomlkit.items.Table:
+    """Return the table rendered last within the table: the table itself, or its last sub-table, nested or not."""
+    while keyed := [item for key, item in table.value.body if key is not None]:
+        last = keyed[-1]
+        if isinstance(last, tomlkit.items.AoT):  # AoT = Array of Tables
+            last = last.body[-1]
+        if not isinstance(last, tomlkit.items.Table):
+            break
+        table = last
+    return table
 
 
 def string(text: str, *, quoted_as: tomlkit.items.String) -> tomlkit.items.String:

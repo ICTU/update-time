@@ -30,6 +30,10 @@ class LookedUp[T]:
     reason: str = ""
     absent: bool = False  # Whether the source answered that what was looked up does not exist
 
+    def failure[Other](self) -> LookedUp[Other]:
+        """Return why this lookup found nothing, as a lookup of whatever type the caller returns."""
+        return LookedUp(None, self.reason, absent=self.absent)
+
 
 class DeferredLookup[T]:
     """A lookup made the first time its outcome is read, so an outcome nobody reads costs nothing."""
@@ -38,15 +42,15 @@ class DeferredLookup[T]:
         """Remember how to look the thing up."""
         self._look_up = look_up
 
-    @cached_property
-    def _outcome(self) -> LookedUp[T]:
-        """Look the thing up, once."""
-        return self._look_up()
-
     @property
     def value(self) -> T | None:
         """Return what the lookup found, or None."""
         return self._outcome.value
+
+    @cached_property
+    def _outcome(self) -> LookedUp[T]:
+        """Look the thing up, once."""
+        return self._look_up()
 
     @property
     def reason(self) -> str:

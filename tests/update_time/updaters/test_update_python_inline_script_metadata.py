@@ -1,5 +1,6 @@
 """Unit tests for the inline-script-metadata updater (discovery and orchestration of the uv package manager)."""
 
+from typing import TYPE_CHECKING, Final, override
 from unittest.mock import Mock, patch
 
 from mutation_time.mutation import kills
@@ -7,42 +8,33 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
 from update_time.io.log import FileContent, Logger
-from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
-from update_time.package_managers.uv import lock, marker_policy
-from update_time.package_managers.uv import uv as uv_module
+from update_time.manifests.python_dependency_toml import Declaration
+from update_time.package_managers.uv.lock import _LockUpdate, _Member, _with_cutoff
+from update_time.package_managers.uv.marker_policy import _unkept_lock_bound_redundancy
+from update_time.package_managers.uv.uv import _sourcing_files
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.updaters import update_python_inline_script_metadata
+from update_time.updaters.update_python_inline_script_metadata import _scripts, _update_python_inline_script_metadatas
 
-from tests.helpers import FakeFiles, patch_pathlib_path
-from tests.update_time.helpers import SCAN_ROOT, message_of, published_version, uv_path_source
-from tests.update_time.manifests.helpers import script
-from tests.update_time.package_managers.helpers import CONFIGURED_EXCLUDE_NEWER
-from tests.update_time.updaters.helpers import (
-    LOCK_FAILS,
-    NO_SOLUTION,
-    PYPROJECT_TOML,
-    UPLOAD_TIME_WITHOUT_CHANGELOG,
-    UvLockTestCase,
-    locked_package,
-    no_vulnerabilities,
-    pypi_answer,
-    uv_locks,
-)
+from tests.file_mocks import FakeFiles, patch_pathlib_path
+from tests.http_mocks import patch_get
+from tests.update_time.fixtures import SCAN_ROOT
+from tests.update_time.io.log_fields import published_version
+from tests.update_time.io.log_messages import message_of
+from tests.update_time.manifests.manifest_contents import script, uv_path_source
+from tests.update_time.package_managers.uv_settings import CONFIGURED_EXCLUDE_NEWER
+from tests.update_time.sources.osv_answers import no_vulnerabilities
+from tests.update_time.sources.pypi_answers import UPLOAD_TIME_WITHOUT_CHANGELOG
+
+from .scanning import PYPROJECT_TOML
+from .uv_lock import LOCK_FAILS, NO_SOLUTION, UvLockTestCase, locked_package, uv_locks
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # The script at the root of the scan, and the lock uv writes beside it.
-_SCRIPT = SCAN_ROOT / "tool.py"
-_SCRIPT_LOCK = SCAN_ROOT / "tool.py.lock"
-
-
-def _script_lock(*versions: str, package: str = "package") -> str:
-    """Return a script's lock that lists the package among the script's requirements, and locks it at the versions.
-
-    uv locks a package at several versions where it forks the resolution, one per Python version or platform.
-    """
-    requirements = f'[manifest]\nrequirements = [{{ name = "{package}", specifier = ">=1.0" }}]\n'
-    packages = "\n".join(locked_package(package, version) for version in versions)
-    return f"version = 1\n\n{requirements}\n{packages}"
+_SCRIPT: Final[Path] = SCAN_ROOT / "tool.py"
+_SCRIPT_LOCK: Final[Path] = SCAN_ROOT / "tool.py.lock"
 
 
 class _ScriptLockTestCase(UvLockTestCase):
@@ -51,9 +43,10 @@ class _ScriptLockTestCase(UvLockTestCase):
     manifest = _SCRIPT
     lock_file = _SCRIPT_LOCK
 
+    @override
     def update(self) -> None:
         """Run the inline script metadata updater."""
-        update_python_inline_script_metadata._update_python_inline_script_metadatas()
+        _update_python_inline_script_metadatas()
 
 
 # The checks over the settled pins are stubbed out so these tests focus on the update flow: each check makes registry
@@ -61,13 +54,13 @@ class _ScriptLockTestCase(UvLockTestCase):
 # runs them.
 @patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins", Mock())
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
-@patch("requests.Session.get")
+@patch_get()
 @patch("subprocess.run")
 class ScriptLockTest(_ScriptLockTestCase):
     """Unit tests for the exact pins of a script, which take the versions uv locks for the script."""
 
     @kills.replace(
-        lock._with_cutoff,
+        _with_cutoff,
         "cooldown_cutoff(COOLDOWN.get())",
         "cooldown_cutoff(0)",
         "uv locks a script, or a workspace without a lock, without the cooldown `--cooldown` sets",
@@ -109,7 +102,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assertEqual(["--exclude-newer" in command for command in uv_locks(run)], [True, True, False])
 
     @kills.replace(
-        lock._with_cutoff,
+        _with_cutoff,
         "settings_hold_exclude_newer(target.command,",
         "settings_hold_exclude_newer(_UV_LOCK,",
         "Update-time asks uv's settings for the directory, leaving out the script's own exclude-newer",
@@ -152,14 +145,14 @@ class ScriptLockTest(_ScriptLockTestCase):
         published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
         self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
 
-    @kills.delete(
-        uv_module.declarations_of,
-        "if isinstance(file, PyprojectToml) else frozenset()",
+    @kills.force_false(
+        _sourcing_files,
+        "not isinstance(file, PyprojectToml)",
         "a script takes on the sources of a workspace root above it, which `uv lock --script` ignores",
     )
     def test_a_pin_the_workspace_root_beside_the_script_sources_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pin moves and is reported, though a workspace root beside the script sources its package."""
-        root = "[tool.uv.workspace]\nmembers = []\n" + uv_path_source("package")
+        root = f"[tool.uv.workspace]\nmembers = []\n{uv_path_source('package')}"
         files = {_SCRIPT: script("package==1.0"), PYPROJECT_TOML: root}
         left = self.files_after_update(run, get, glob, files, _script_lock("1.1"))
         self.assertEqual(left[_SCRIPT], script("package==1.1"))
@@ -167,7 +160,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
 
     @kills.delete(
-        lock._LockUpdate._restore_lock,
+        _LockUpdate._restore_lock,
         "log.lock_not_removed if target.uv_lock_text is None else ",
         "the run reports a lock it cannot remove as one it cannot give back the text it held before the run",
     )
@@ -199,7 +192,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         )
 
     @kills.replace(
-        update_python_inline_script_metadata._scripts,
+        _scripts,
         "except (OSError, UnicodeDecodeError) as error:",
         "except OSError as error:",
         "a .py file that is not UTF-8 stops the update of every script",
@@ -207,7 +200,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         case="a .py file that is not UTF-8",
     )
     @kills.replace(
-        update_python_inline_script_metadata._scripts,
+        _scripts,
         "except (OSError, UnicodeDecodeError) as error:",
         "except UnicodeDecodeError as error:",
         "a .py file without read permission stops the update of every script",
@@ -215,7 +208,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         case="a .py file without read permission",
     )
     @kills.replace(
-        update_python_inline_script_metadata._scripts,
+        _scripts,
         "_LOG.unreadable_file(path, error, FileContent.INLINE_SCRIPT_METADATA)",
         "_ = error",
         "the run skips an unreadable .py file without a word",
@@ -252,11 +245,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @kills.delete(
-        update_python_inline_script_metadata._scripts,
-        "_LOG.path(path)",
-        "a script is not logged as checked before the lines about it",
-    )
+    @kills.delete(_scripts, "_LOG.path(path)", "a script is not logged as checked before the lines about it")
     def test_a_failed_uv_lock_of_the_script_as_written_is_reported_at_error_and_nothing_locks_after_it(
         self, run: Mock, get: Mock, glob: Mock
     ):
@@ -272,7 +261,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_recognised_marker_logged("package", Location(_SCRIPT, 4), Marker(ignored_scopes=Scope.UPDATE))
 
     @kills.replace(
-        update_python_inline_script_metadata._scripts,
+        _scripts,
         "if carries_a_block:\n            _LOG.path(path)",
         "_LOG.path(path)\n        if carries_a_block:",
         "every .py file is logged as checked, whether or not it carries a script block",
@@ -288,9 +277,19 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_no_debug_logged()
 
 
-@no_vulnerabilities
+def _script_lock(*versions: str, package: str = "package") -> str:
+    """Return a script's lock that lists the package among the script's requirements, and locks it at the versions.
+
+    uv locks a package at several versions where it forks the resolution, one per Python version or platform.
+    """
+    requirements = f'[manifest]\nrequirements = [{{ name = "{package}", specifier = ">=1.0" }}]\n'
+    packages = "\n".join(locked_package(package, version) for version in versions)
+    return f"version = 1\n\n{requirements}\n{packages}"
+
+
+@no_vulnerabilities()
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
-@patch("requests.Session.get", side_effect=pypi_answer)
+@patch_get()
 @patch("subprocess.run")
 class ScriptRedundantDirectiveTest(_ScriptLockTestCase):
     """Unit tests for the directives a run reports as redundant in a script that uv locks."""
@@ -319,20 +318,20 @@ class ScriptRedundantDirectiveTest(_ScriptLockTestCase):
         )
 
     @kills.delete(
-        marker_policy._unkept_lock_bound_redundancy,
+        _unkept_lock_bound_redundancy,
         "if declaration.pins_a_version else Reason.BOUND_DECIDES_NOTHING",
         "a bound on a range in a script without a lock goes unreported, though the run removes its lock",
         case="specifier bound",
     )
     @kills.replace(
-        lock._Member.bounded_declarations,
+        _Member.bounded_declarations,
         "if self.policy.bound_redundancy(declaration) is None]",
         "if declaration.narrowable]",
         "a bound on a range narrows the lock the run removes, and is judged at the version that lock records",
         case="specifier bound",
     )
     @kills.replace(
-        python_dependency_toml_manifest.Declaration.unnarrowable_reason,
+        Declaration.unnarrowable_reason,
         "Reason.URL_RATHER_THAN_VERSION",
         "Reason.BOUND_DECIDES_NOTHING",
         "a bound on a direct URL in a script is reported as if uv resolved the version",

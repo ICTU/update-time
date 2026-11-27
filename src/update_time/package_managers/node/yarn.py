@@ -3,46 +3,51 @@
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.io.log import get_logger
 from update_time.io.process import run, tool_version
 from update_time.manifests.catalogs_yaml import CatalogsYaml
-from update_time.package_managers.node.marker_policy import MARKER_POLICY, YARN_WITHOUT_A_COOLDOWN_POLICY
-from update_time.package_managers.node.package_manager import (
+from update_time.primitives.command import Command
+from update_time.primitives.timestamp import MINUTES_PER_DAY
+
+from .marker_policy import MARKER_POLICY, YARN_WITHOUT_A_COOLDOWN_POLICY
+from .package_manager import (
     CooldownArguments,
+    ManagerCooldown,
     PackageManager,
     catalogs_of,
     package_json_workspace_root,
 )
-from update_time.primitives.command import Command
-from update_time.primitives.timestamp import MINUTES_PER_DAY
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from update_time.domain.dependency import DependencyName
+    from update_time.io.log import Logger
     from update_time.lock_files.locked_versions import LockedVersions
     from update_time.manifests.npm_declaration import Declaration
     from update_time.package_managers.policy import ManagerPolicy
     from update_time.primitives.command import Result
 
 
-_LOG = get_logger("package.json")
-_YARN_INFO = Command("yarn", "info", "--all", "--json")
-_YARNRC = ".yarnrc.yml"  # The file at the workspace root that holds yarn's catalogs
-_YARN_CONFIG = Command("yarn", "config", "--json")
-_FIRST_YARN_WITH_A_COOLDOWN = (4, 10)  # The first version of yarn that knows npmMinimalAgeGate
+_LOG: Final[Logger] = get_logger("package.json")
+_YARN_INFO: Final[Command] = Command("yarn", "info", "--all", "--json")
+_YARNRC: Final[str] = ".yarnrc.yml"  # The file at the workspace root that holds yarn's catalogs
+_YARN_CONFIG: Final[Command] = Command("yarn", "config", "--json")
+_FIRST_YARN_WITH_A_COOLDOWN: Final[tuple[int, ...]] = (4, 10)  # The first version of yarn that knows npmMinimalAgeGate
 # yarn colours its output wherever COLORTERM is set, even where its output goes to a pipe.
-_NO_COLOR = {"NO_COLOR": "1"}
-_YARN_COOLDOWN = "npmMinimalAgeGate"  # The setting that holds yarn's cooldown
-_UNSET = "<default>"  # Where `yarn config` reports a setting that nothing sets to come from
-_WORKSPACE = "@workspace:"  # What separates a workspace's name from its path, in the line yarn reports for it
+_NO_COLOR: Final[dict[str, str]] = {"NO_COLOR": "1"}
+_YARN_COOLDOWN: Final[str] = "npmMinimalAgeGate"  # The setting that holds yarn's cooldown
+_UNSET: Final[str] = "<default>"  # Where `yarn config` reports a setting that nothing sets to come from
+_WORKSPACE: Final[str] = (
+    "@workspace:"  # What separates a workspace's name from its path, in the line yarn reports for it
+)
 # A locator holds a registry version after `@npm:`. yarn gives a dependency with peer dependencies a virtual locator,
 # which holds the version after `#npm:`.
-_REGISTRY_VERSION = re.compile(r"[@#]npm:(?P<version>[^@#:]+)$")
+_REGISTRY_VERSION: Final[re.Pattern[str]] = re.compile(r"[@#]npm:(?P<version>[^@#:]+)$")
 # The locator of a built-in patch holds its version after `::version=`. yarn applies such a patch to typescript, say.
-_BUILTIN_PATCH_VERSION = re.compile(r"#optional!builtin<.*::version=(?P<version>[^&]+)")
+_BUILTIN_PATCH_VERSION: Final[re.Pattern[str]] = re.compile(r"#optional!builtin<.*::version=(?P<version>[^&]+)")
 
 
 def _run_yarn(command: Command, directory: Path, environment: Mapping[str, str] | None = None) -> Result:
@@ -134,7 +139,7 @@ def _yarn_version_policy(path: Path, root: Path) -> ManagerPolicy[Declaration] |
     return YARN_WITHOUT_A_COOLDOWN_POLICY
 
 
-YARN = PackageManager(
+YARN: Final[PackageManager] = PackageManager(
     name="yarn",
     # `-R` resolves each package named again, within the ranges the workspaces declare, and leaves the ranges as they
     # are. Without it, `yarn up` moves a package to its latest version, and rewrites the ranges. `--mode` updates the
@@ -144,9 +149,11 @@ YARN = PackageManager(
     lock_files=("yarn.lock",),
     binary_lock=None,
     workspace_file=None,
-    cooldown_setting=_yarn_cooldown_setting,
-    cooldown_arguments=lambda days: CooldownArguments(
-        environment={"YARN_NPM_MINIMAL_AGE_GATE": str(days * MINUTES_PER_DAY)}
+    cooldown=ManagerCooldown(
+        setting=_yarn_cooldown_setting,
+        arguments=lambda days: CooldownArguments(
+            environment={"YARN_NPM_MINIMAL_AGE_GATE": str(days * MINUTES_PER_DAY)}
+        ),
     ),
     locked_versions=_yarn_locked_versions,
     catalogs=lambda root: catalogs_of(CatalogsYaml.readable(root / _YARNRC)),

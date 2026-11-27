@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.dependency import normalized_python_name
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import PEP_440
-from update_time.sources import pypi
+from update_time.sources.pypi import SOURCE
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -13,20 +13,6 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, PinnedDependency, VersionString
     from update_time.io.log import Logger
     from update_time.primitives.location import Location
-
-
-def by_package[ReferenceT: Reference](
-    declarations: Iterable[ReferenceT],
-) -> dict[DependencyName, list[ReferenceT]]:
-    """Return the declarations, each with its marker, grouped by the normalized name of their package.
-
-    A name uv or PyPI reports finds every declaration of its package, whichever of the spellings that normalize to
-    that name each declaration uses.
-    """
-    grouped: dict[DependencyName, list[ReferenceT]] = {}
-    for declaration in declarations:
-        grouped.setdefault(normalized_python_name(declaration.dependency), []).append(declaration)
-    return grouped
 
 
 def log_moved_versions(
@@ -54,6 +40,20 @@ def log_moved_versions(
             log_new_version(log, pin.name, pin.version, locations[name])
 
 
+def by_package[ReferenceT: Reference](
+    declarations: Iterable[ReferenceT],
+) -> dict[DependencyName, list[ReferenceT]]:
+    """Return the declarations, each with its marker, grouped by the normalized name of their package.
+
+    A name uv or PyPI reports finds every declaration of its package, whichever of the spellings that normalize to
+    that name each declaration uses.
+    """
+    grouped: dict[DependencyName, list[ReferenceT]] = {}
+    for declaration in declarations:
+        grouped.setdefault(normalized_python_name(declaration.dependency), []).append(declaration)
+    return grouped
+
+
 def log_new_version(
     log: Logger, package: DependencyName, version: VersionString, locations: Sequence[Location]
 ) -> None:
@@ -62,7 +62,7 @@ def log_new_version(
     The package is named as the package manager reports it, so one package is named one way however each line spells it.
     The changelog and publication date are fetched once, whichever locations the version is reported at.
     """
-    dependency_version = pypi.SOURCE.release(package, version)
+    dependency_version = SOURCE.release(package, version)
     for location in locations:
         # This message renders no version the reference is pinned to, so the reference names none.
         log.new_version(Reference(package, "", location), dependency_version)

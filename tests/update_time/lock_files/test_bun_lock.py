@@ -4,36 +4,37 @@ import unittest
 from pathlib import Path
 
 from mutation_time.mutation import kills
-from update_time.lock_files import bun_lock
+from update_time.lock_files.bun_lock import _entry, _version, _workspace_versions, locked_versions
 
-from tests.helpers import mock_path
-from tests.update_time.lock_files.helpers import bun_lock_contents
+from tests.file_mocks import mock_path
+
+from .lock_file_contents import bun_lock_contents
 
 
 class LockedVersionsTest(unittest.TestCase):
     """Unit tests for the versions a bun.lock records for the dependencies of each workspace."""
 
     @kills.append(
-        bun_lock._workspace_versions,
+        _workspace_versions,
         "for section in DEPENDENCY_SECTIONS",
         "[:1]",
         "the versions bun moved for dev and optional dependencies go unreported",
         case="every dependency section",
     )
     @kills.delete(
-        bun_lock._workspace_versions,
+        _workspace_versions,
         " if path else None",
         "a root named after a package it depends on gets the versions that package's own dependencies resolve to",
         case="a root named after a package it depends on",
     )
     @kills.delete(
-        bun_lock._entry,
+        _entry,
         "packages[own] if member is not None and own in packages else ",
         "a member that resolves a dependency to a version of its own gets the version the workspaces share",
         case="a scoped member's own version",
     )
     @kills.delete(
-        bun_lock._version,
+        _version,
         ' or ":" in version',
         "a workspace member, a git repository, or a path reads as the version of a dependency",
         case="entries that do not name a registry version",
@@ -73,20 +74,20 @@ class LockedVersionsTest(unittest.TestCase):
         }
         for case, (workspaces, packages, expected) in cases.items():
             with self.subTest(case):
-                self.assertEqual(bun_lock.locked_versions(mock_path(bun_lock_contents(workspaces, packages))), expected)
+                self.assertEqual(locked_versions(mock_path(bun_lock_contents(workspaces, packages))), expected)
 
     @kills.replace(
-        bun_lock._version,
-        "next(iter(package.elements()), yaml.Document())",
+        _version,
+        "next(iter(package.elements()), Document())",
         "package.elements()[0]",
         "an empty bun.lock entry stops the run",
         raises="IndexError: list index out of range",
         case="an empty entry",
     )
     @kills.replace(
-        bun_lock._version,
-        "yaml.Document()).string()",
-        "yaml.Document())._value",
+        _version,
+        "Document()).string()",
+        "Document())._value",
         "a bun.lock entry whose first element is not a string stops the run",
         raises="AttributeError: 'int' object has no attribute 'rsplit'",
         case="an entry whose first element is not a string",
@@ -99,16 +100,16 @@ class LockedVersionsTest(unittest.TestCase):
         for case, entry_without_a_resolution in cases.items():
             with self.subTest(case):
                 contents = lock.replace(entry, entry_without_a_resolution)
-                self.assertEqual(bun_lock.locked_versions(mock_path(contents)), {Path(): {}})
+                self.assertEqual(locked_versions(mock_path(contents)), {Path(): {}})
 
     @kills.delete(
-        bun_lock.locked_versions,
+        locked_versions,
         ' or "lockfileVersion" not in document',
         "a bun.lock holding merge conflict markers reads as a lock that records nothing",
         case="a merge conflict",
     )
     @kills.replace(
-        bun_lock.locked_versions,
+        locked_versions,
         'if document is None or "lockfileVersion"',
         'if "lockfileVersion"',
         "a bun.lock that does not parse ends the run with a traceback",
@@ -117,7 +118,6 @@ class LockedVersionsTest(unittest.TestCase):
     )
     def test_lock_that_does_not_hold_the_json_bun_writes_raises(self):
         """Test that a lock that does not parse, or does not name the version of its format, raises a ValueError."""
-        cases = {"not JSON": "{", "a merge conflict": "<<<<<<< HEAD\n{}\n"}
-        for case, contents in cases.items():
+        for case, contents in {"not JSON": "{", "a merge conflict": "<<<<<<< HEAD\n{}\n"}.items():
             with self.subTest(case), self.assertRaisesRegex(ValueError, "it does not hold the JSON bun writes"):
-                bun_lock.locked_versions(mock_path(contents))
+                locked_versions(mock_path(contents))

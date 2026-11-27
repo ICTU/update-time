@@ -2,23 +2,31 @@
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Final
 
 from packaging.version import Version
 
-from update_time.domain.dependency import VersionString, is_valid
+from .dependency import VersionString, is_valid
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from _typeshed import SupportsDunderLT
+# A semver version.
+_SEMVER: Final[re.Pattern[str]] = re.compile(
+    r"""
+    (?P<release>\d+(?:\.\d+)*)  # the release numbers
+    (?:-(?P<prerelease>[0-9A-Za-z.-]+))?  # the pre-release identifiers, if any
+    (?:\+[0-9A-Za-z.-]+)?  # the build metadata, if any
+    """,
+    re.VERBOSE,
+)
 
-# A semver version: its release numbers, its pre-release identifiers if any, and its build metadata if any.
-_SEMVER = re.compile(r"(?P<release>\d+(?:\.\d+)*)(?:-(?P<prerelease>[0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?")
+# Semver orders a version by this key. It holds the release numbers, and then what tells a release from a pre-release.
+type _SemverKey = tuple[tuple[int, ...], tuple[int] | tuple[int, tuple[tuple[int, int, str], ...]]]
 
 
-@dataclass(frozen=True)
-class _VersionScheme[Key: SupportsDunderLT[Any]]:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _VersionScheme[Key: (Version, _SemverKey)]:
     """A scheme that orders versions, by the key it gives each version it reads."""
 
     order: Callable[[VersionString], Key | None]
@@ -34,7 +42,7 @@ def _pep_440_order(version: VersionString) -> Version | None:
     return Version(version) if is_valid(version) else None
 
 
-def _semver_order(version: VersionString) -> tuple[object, ...] | None:
+def _semver_order(version: VersionString) -> _SemverKey | None:
     """Return the version as semver orders it, or None where it is not a semver version.
 
     A release orders after its pre-releases, and a numeric identifier before an alphanumeric one.
@@ -50,5 +58,5 @@ def _semver_order(version: VersionString) -> tuple[object, ...] | None:
     return release, (0, identifiers)
 
 
-PEP_440 = _VersionScheme(_pep_440_order)
-SEMVER = _VersionScheme(_semver_order)
+PEP_440: Final[_VersionScheme[Version]] = _VersionScheme(order=_pep_440_order)
+SEMVER: Final[_VersionScheme[_SemverKey]] = _VersionScheme(order=_semver_order)

@@ -9,7 +9,8 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 from graphlib import CycleError, TopologicalSorter
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, ClassVar, override
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar, Final, override
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import normalized_python_name
@@ -17,8 +18,7 @@ from update_time.io.filesystem import is_scanned
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files.uv_lock import UvLock
-from update_time.manifests import pyproject_config
-from update_time.manifests.pyproject_config import PyprojectConfig
+from update_time.manifests.pyproject_config import PyprojectConfig, read
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.command import Command
@@ -34,64 +34,23 @@ if TYPE_CHECKING:
         PythonDependencyToml,
     )
 
-_LOG = get_logger("pyproject.toml")
+_LOG: Final[Logger] = get_logger("pyproject.toml")
 # The signals that a Python package manager manages a pyproject.toml: its lock file, by name, and its table under
 # `[tool]`, which carries the manager's name. A build backend reads its settings from the tool's table as well, so the
 # lock file decides before the table, and uv's table before the others.
-_LOCK_FILES = {"uv.lock": "uv", "poetry.lock": "poetry", "pdm.lock": "pdm"}
-_MANAGERS = tuple(_LOCK_FILES.values())
+_LOCK_FILES: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {"uv.lock": "uv", "poetry.lock": "poetry", "pdm.lock": "pdm"}
+)
+_MANAGERS: Final[tuple[str, ...]] = tuple(_LOCK_FILES.values())
 
-# Update-time writes its cooldown into `[tool.uv] exclude-newer` with the managed-by comment. It recognises the comment
-# there by the lower-cased `update-time` word, so the prose can change.
-_MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to set exclude-newer yourself"
-_MANAGED_BY_COMMENT_WORD = "update-time"
 # The uv setting that holds a project's own cooldown, as the log names it.
-EXCLUDE_NEWER_SETTING = "uv exclude-newer"
-EXCLUDE_NEWER_OPTION = "--exclude-newer"
+EXCLUDE_NEWER_SETTING: Final[str] = "uv exclude-newer"
+EXCLUDE_NEWER_OPTION: Final[str] = "--exclude-newer"
 # What `--show-settings` prints about `exclude-newer`: `Some(…)` where the project's config, the user's config, or
 # `UV_EXCLUDE_NEWER` sets one, and `None` where none of them does.
-_SETTINGS_EXCLUDE_NEWER = re.compile(r"exclude_newer: ExcludeNewer \{\s*global: (?P<value>None|Some)\b")
-
-
-@dataclass(frozen=True)
-class _Signals:
-    """The lock files beside a project, and the tables of its pyproject.toml, that name a Python package manager."""
-
-    lock_files: tuple[Path, ...]
-    tables: tuple[str, ...]
-
-    def managers(self) -> tuple[str, ...]:
-        """Return the managers that the lock files name, or else uv where it has a table, or else the tables' managers.
-
-        A `[tool.uv]` table is uv's alone, while a build backend reads the other tables as well.
-        """
-        if self.lock_files:
-            return tuple(_LOCK_FILES[lock_file.name] for lock_file in self.lock_files)
-        return ("uv",) if "uv" in self.tables else self.tables
-
-
-class Decision(Enum):
-    """Whether uv runs for a pyproject.toml, or why not."""
-
-    RUN = auto()
-    UNMANAGED = auto()
-    SEVERAL_MANAGERS = auto()
-    NOTHING_TO_RESOLVE = auto()
-    ROOT_OUTSIDE_THE_SCAN = auto()
-
-
-def _signals(pyproject_toml: Path, config: PyprojectConfig) -> _Signals:
-    """Return the project's signals, without uv's where the config sets `managed = false`."""
-    managers = [manager for manager in _MANAGERS if manager != "uv" or config.uv.managed]
-    lock_files = tuple(
-        lock_file for lock_file in _lock_files(pyproject_toml.parent) if _LOCK_FILES[lock_file.name] in managers
-    )
-    return _Signals(lock_files, tuple(table for table in managers if table in config.tools))
-
-
-def _lock_files(directory: Path) -> tuple[Path, ...]:
-    """Return the lock file of each Python package manager that sits in the directory."""
-    return tuple(lock_file for name in _LOCK_FILES if (lock_file := directory / name).exists())
+_SETTINGS_EXCLUDE_NEWER: Final[re.Pattern[str]] = re.compile(
+    r"exclude_newer: ExcludeNewer \{\s*global: (?P<value>None|Some)\b"
+)
 
 
 def decision(pyproject_toml: Path, config: PyprojectConfig) -> Decision:
@@ -125,6 +84,82 @@ def decision(pyproject_toml: Path, config: PyprojectConfig) -> Decision:
     return Decision.UNMANAGED
 
 
+def _workspace_root(pyproject_toml: Path) -> Path:
+    """Return the pyproject.toml of the uv workspace root governing the project, or the project itself.
+
+    uv reads `exclude-newer` from the workspace root, not from a member manifest's own `[tool.uv]`, so walk up from
+    the project's directory: the root is the nearest ancestor whose pyproject.toml declares a `[tool.uv.workspace]`
+    that includes this project. A project that is part of no workspace (the common case) is its own root.
+    """
+    project_dir = pyproject_toml.parent
+    for ancestor in (project_dir, *project_dir.parents):
+        candidate = ancestor / "pyproject.toml"
+        workspace = _workspace_table(candidate)
+        if workspace is not None and _workspace_includes(ancestor, workspace, project_dir):
+            return candidate
+    return pyproject_toml
+
+
+def _workspace_table(pyproject_toml: Path) -> UvWorkspace | None:
+    """Return the `[tool.uv.workspace]` table of the pyproject.toml, or None if it has none or can't be read.
+
+    A missing (probing an ancestor) or malformed pyproject.toml reads back as None, so resolution keeps walking up
+    rather than aborting.
+    """
+    return _config(pyproject_toml).uv.workspace
+
+
+def _workspace_includes(root_dir: Path, workspace: UvWorkspace, project_dir: Path) -> bool:
+    """Return whether the workspace rooted at `root_dir` includes the project in `project_dir`.
+
+    uv treats the root project as a member of its own workspace, and every other project matched by a `members`
+    glob and not excluded by an `exclude` glob (both relative to the root).
+    """
+    if project_dir == root_dir:
+        return True
+    # `root_dir` is always an ancestor of `project_dir` here (see `_workspace_root`), so this never raises.
+    relative = PurePosixPath(project_dir.relative_to(root_dir).as_posix())
+    if any(relative.full_match(pattern) for pattern in workspace.exclude):
+        return False
+    return any(relative.full_match(pattern) for pattern in workspace.members)
+
+
+def _config(pyproject_toml: Path) -> PyprojectConfig:
+    """Return the config of the pyproject.toml, or an empty config where the file cannot be read or is not valid."""
+    return read(pyproject_toml) or PyprojectConfig()
+
+
+def _signals(pyproject_toml: Path, config: PyprojectConfig) -> _Signals:
+    """Return the project's signals, without uv's where the config sets `managed = false`."""
+    managers = [manager for manager in _MANAGERS if manager != "uv" or config.uv.managed]
+    lock_files = tuple(
+        lock_file for lock_file in _lock_files(pyproject_toml.parent) if _LOCK_FILES[lock_file.name] in managers
+    )
+    return _Signals(lock_files=lock_files, tables=tuple(table for table in managers if table in config.tools))
+
+
+def _lock_files(directory: Path) -> tuple[Path, ...]:
+    """Return the lock file of each Python package manager that sits in the directory."""
+    return tuple(lock_file for name in _LOCK_FILES if (lock_file := directory / name).exists())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Signals:
+    """The lock files beside a project, and the tables of its pyproject.toml, that name a Python package manager."""
+
+    lock_files: tuple[Path, ...]
+    tables: tuple[str, ...]
+
+    def managers(self) -> tuple[str, ...]:
+        """Return the managers that the lock files name, or else uv where it has a table, or else the tables' managers.
+
+        A `[tool.uv]` table is uv's alone, while a build backend reads the other tables as well.
+        """
+        if self.lock_files:
+            return tuple(_LOCK_FILES[lock_file.name] for lock_file in self.lock_files)
+        return ("uv",) if "uv" in self.tables else self.tables
+
+
 def _warn_about_the_managers(pyproject_toml: Path, root: Path, signals: _Signals) -> None:
     """Warn that the signals name a manager other than uv, or more than one, and point a member at its root's warning.
 
@@ -136,6 +171,16 @@ def _warn_about_the_managers(pyproject_toml: Path, root: Path, signals: _Signals
         _LOG.signals_of_more_than_one_manager(pyproject_toml, signals.lock_files, signals.tables)
     else:
         _LOG.unsupported_package_manager(pyproject_toml, managers[0], "uv")
+
+
+class Decision(Enum):
+    """Whether uv runs for a pyproject.toml, or why not."""
+
+    RUN = auto()
+    UNMANAGED = auto()
+    SEVERAL_MANAGERS = auto()
+    NOTHING_TO_RESOLVE = auto()
+    ROOT_OUTSIDE_THE_SCAN = auto()
 
 
 def configure_cooldown(pyproject_toml: Path) -> None:
@@ -169,16 +214,22 @@ def configure_cooldown(pyproject_toml: Path) -> None:
         return
     if existing is not None:
         value, comment = existing
-        if _MANAGED_BY_COMMENT_WORD not in comment.lower():
+        if "update-time" not in comment.lower():
             # A user-set exclude-newer: leave it alone.
             _LOG.project_cooldown(pyproject_toml, EXCLUDE_NEWER_SETTING, COOLDOWN.get())
             return
         if value == cooldown:
             return  # Already Update-time's and already current.
-    if file.set_tool_key("uv", "exclude-newer", cooldown, comment=_MANAGED_BY_COMMENT):
+    managed_by_comment = "managed by Update-time — remove this comment to set exclude-newer yourself"
+    if file.set_tool_key("uv", "exclude-newer", cooldown, comment=managed_by_comment):
         _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
     else:
         _LOG.uv_cooldown_not_set(pyproject_toml)
+
+
+def _duration(days: int) -> str:
+    """Return the number of days as uv reads a relative `exclude-newer`."""
+    return f"{days} days"
 
 
 def settings_hold_exclude_newer(command: Command, file: Path, log: Logger) -> bool:
@@ -190,18 +241,12 @@ def settings_hold_exclude_newer(command: Command, file: Path, log: Logger) -> bo
     return is_installed("uv") and _settings_hold_exclude_newer(command, file.parent, file, log)
 
 
-def _duration(days: int) -> str:
-    """Return the number of days as uv reads a relative `exclude-newer`."""
-    return f"{days} days"
-
-
 def _settings_hold_exclude_newer(command: Command, directory: Path, file: Path, log: Logger) -> bool:
     """Return whether uv's settings for the file's command, run in the directory, hold an `exclude-newer`.
 
     Where Update-time cannot read from uv's settings whether they hold one, it warns and treats them as holding none.
     """
-    settings = run(Command(*command, "--show-settings"), cwd=directory)
-    if not (match := _SETTINGS_EXCLUDE_NEWER.search(settings.stdout)):
+    if not (match := _SETTINGS_EXCLUDE_NEWER.search(run(Command(*command, "--show-settings"), cwd=directory).stdout)):
         log.uv_settings_unreadable(file)
         return False
     return match["value"] == "Some"
@@ -239,51 +284,6 @@ def workspace_pyproject_tomls(pyproject_toml: Path) -> list[Path]:
         if (member / "pyproject.toml").exists() and _workspace_includes(root_dir, workspace, member)
     }
     return [root, *sorted(members - {root})]
-
-
-def _workspace_root(pyproject_toml: Path) -> Path:
-    """Return the pyproject.toml of the uv workspace root governing the project, or the project itself.
-
-    uv reads `exclude-newer` from the workspace root, not from a member manifest's own `[tool.uv]`, so walk up from
-    the project's directory: the root is the nearest ancestor whose pyproject.toml declares a `[tool.uv.workspace]`
-    that includes this project. A project that is part of no workspace (the common case) is its own root.
-    """
-    project_dir = pyproject_toml.parent
-    for ancestor in (project_dir, *project_dir.parents):
-        candidate = ancestor / "pyproject.toml"
-        workspace = _workspace_table(candidate)
-        if workspace is not None and _workspace_includes(ancestor, workspace, project_dir):
-            return candidate
-    return pyproject_toml
-
-
-def _workspace_table(pyproject_toml: Path) -> UvWorkspace | None:
-    """Return the `[tool.uv.workspace]` table of the pyproject.toml, or None if it has none or can't be read.
-
-    A missing (probing an ancestor) or malformed pyproject.toml reads back as None, so resolution keeps walking up
-    rather than aborting.
-    """
-    return _config(pyproject_toml).uv.workspace
-
-
-def _config(pyproject_toml: Path) -> PyprojectConfig:
-    """Return the config of the pyproject.toml, or an empty config where the file cannot be read or is not valid."""
-    return pyproject_config.read(pyproject_toml) or PyprojectConfig()
-
-
-def _workspace_includes(root_dir: Path, workspace: UvWorkspace, project_dir: Path) -> bool:
-    """Return whether the workspace rooted at `root_dir` includes the project in `project_dir`.
-
-    uv treats the root project as a member of its own workspace, and every other project matched by a `members`
-    glob and not excluded by an `exclude` glob (both relative to the root).
-    """
-    if project_dir == root_dir:
-        return True
-    # `root_dir` is always an ancestor of `project_dir` here (see `_workspace_root`), so this never raises.
-    relative = PurePosixPath(project_dir.relative_to(root_dir).as_posix())
-    if any(relative.full_match(pattern) for pattern in workspace.exclude):
-        return False
-    return any(relative.full_match(pattern) for pattern in workspace.members)
 
 
 def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
@@ -330,7 +330,7 @@ def _path_sourced_roots(projects: Iterable[PyprojectToml]) -> set[Path]:
 
     uv passes over a source for a dependency that no project of the workspace declares, and so does the order.
     """
-    pyproject_tomls = {path for project in projects for path in _sourcing_files(project.path)}
+    pyproject_tomls = {path for project in projects for path in _sourcing_files(project)}
     declared = {
         normalized_python_name(declaration.dependency)
         for pyproject_toml in pyproject_tomls
@@ -341,6 +341,17 @@ def _path_sourced_roots(projects: Iterable[PyprojectToml]) -> set[Path]:
         for pyproject_toml in pyproject_tomls
         for path in _path_sourced_projects(pyproject_toml, declared)
     }
+
+
+def _sourcing_files(file: PythonDependencyToml) -> set[Path]:
+    """Return the pyproject.toml whose `[tool.uv] sources` apply to the file: its own and its workspace root's.
+
+    A workspace member inherits the sources of the root. `uv lock --script` locks a script on its own, so a script
+    does not inherit the sources of a workspace root.
+    """
+    if not isinstance(file, PyprojectToml):
+        return set()
+    return {file.path, _workspace_root(file.path)}
 
 
 def _path_sourced_projects(pyproject_toml: Path, declared: Collection[DependencyName]) -> list[Path]:
@@ -356,27 +367,11 @@ def _path_sourced_projects(pyproject_toml: Path, declared: Collection[Dependency
 
 
 def declarations_of(file: PythonDependencyToml) -> list[Declaration]:
-    """Return the file's declarations, each uv-sourced where the file, or the root of its uv workspace, sources it.
-
-    `uv lock --script` locks a script on its own, so a script does not inherit the sources of a workspace root.
-    """
-    inherited = _applying_sources(file.path) if isinstance(file, PyprojectToml) else frozenset()
+    """Return the file's declarations, each uv-sourced where the file, or the root of its uv workspace, sources it."""
+    inherited = frozenset().union(*(_config(path).uv.sources for path in _sourcing_files(file)))
     return [
         replace(declaration, uv_sourced=True)
         if normalized_python_name(declaration.dependency) in inherited
         else declaration
         for declaration in file.declarations()
     ]
-
-
-def _applying_sources(pyproject_toml: Path) -> frozenset[DependencyName]:
-    """Return the names of the dependencies that the `[tool.uv] sources` applying to the project resolve."""
-    return frozenset().union(*(_config(path).uv.sources for path in _sourcing_files(pyproject_toml)))
-
-
-def _sourcing_files(pyproject_toml: Path) -> set[Path]:
-    """Return the pyproject.toml whose `[tool.uv] sources` apply to the project: its own and its workspace root's.
-
-    A workspace member inherits the sources of the root.
-    """
-    return {pyproject_toml, _workspace_root(pyproject_toml)}

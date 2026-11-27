@@ -3,10 +3,11 @@
 import inspect
 import re
 import unittest
+from typing import Final
 
-import libcst as cst
-import libcst.matchers as m
+import libcst
 from fixit import Invalid, LintRule, Valid
+from libcst import matchers
 
 
 def _compares_actual_to_expected(assert_method_name: str) -> bool:
@@ -17,50 +18,34 @@ def _compares_actual_to_expected(assert_method_name: str) -> bool:
     comparisons such as `assertGreaterEqual` (`a` and `b`) and asymmetric assertions such as `assertIn`
     (`member` and `container`) don't follow this naming pattern.
     """
-    method = getattr(unittest.TestCase, assert_method_name)
-    parameters = list(inspect.signature(method).parameters)[1:3]
+    parameters = list(inspect.signature(getattr(unittest.TestCase, assert_method_name)).parameters)[1:3]
     return parameters == ["first", "second"] or tuple(parameter[-1] for parameter in parameters) == ("1", "2")
 
 
-_EQUALITY_ASSERT_METHODS = frozenset(
+_EQUALITY_ASSERT_METHODS: Final[frozenset[str]] = frozenset(
     name for name in dir(unittest.TestCase) if name.startswith("assert") and _compares_actual_to_expected(name)
 )
 
-# The number of positional arguments an equality assertion compares, and so the fewest it can be reported on.
-_COMPARED_ARGUMENTS = 2
-
-_LITERAL_NAMES = frozenset({"True", "False", "None"})
-_LITERAL_TYPES = (cst.SimpleString, cst.ConcatenatedString, cst.FormattedString, cst.Integer, cst.Float, cst.Imaginary)
-_DISPLAY_TYPES = (cst.List, cst.Tuple, cst.Set, cst.Dict)  # Collections written out, not built by a comprehension
-
-
-def _is_expected_like(node: cst.BaseExpression) -> bool:
-    """Return whether the expression is written out in the assertion, so it reads as its expected value.
-
-    A collection written out as a list, tuple, set, or dict counts however its elements are produced: the assertion
-    lays out the value it expects, instead of getting that value from the code under test.
-    """
-    if isinstance(node, (*_LITERAL_TYPES, *_DISPLAY_TYPES)):
-        return True
-    if isinstance(node, cst.Name):
-        return node.value in _LITERAL_NAMES
-    if isinstance(node, cst.UnaryOperation):
-        return _is_expected_like(node.expression)
-    if isinstance(node, cst.BinaryOperation):
-        return _is_expected_like(node.left) and _is_expected_like(node.right)
-    return False
-
-
-def _self_call_names(node: cst.CSTNode) -> set[str]:
-    """Return the names of the `self.<name>(...)` methods called anywhere inside the node."""
-    calls = m.findall(node, m.Call(func=m.Attribute(value=m.Name("self"))))
-    functions = (cst.ensure_type(call, cst.Call).func for call in calls)
-    return {cst.ensure_type(function, cst.Attribute).attr.value for function in functions}
+_LITERAL_NAMES: Final[frozenset[str]] = frozenset({"True", "False", "None"})
+_LITERAL_TYPES: Final[tuple[type[libcst.BaseExpression], ...]] = (
+    libcst.SimpleString,
+    libcst.ConcatenatedString,
+    libcst.FormattedString,
+    libcst.Integer,
+    libcst.Float,
+    libcst.Imaginary,
+)
+_DISPLAY_TYPES: Final[tuple[type[libcst.BaseExpression], ...]] = (
+    libcst.List,
+    libcst.Tuple,
+    libcst.Set,
+    libcst.Dict,
+)  # Collections written out, not built by a comprehension
 
 
 def _test_method(*body: str) -> str:
     """Return a test method with the given lines as its body, for a test case that needs more than one statement."""
-    return "def test_changes(self):\n" + "".join(f"    {line}\n" for line in body)
+    return f"def test_changes(self):\n{''.join(f'    {line}\n' for line in body)}"
 
 
 class AssertEqualActualFirst(LintRule):
@@ -126,25 +111,20 @@ class AssertEqualActualFirst(LintRule):
         super().__init__()
         self._written_out_names: list[set[str]] = [set()]
 
-    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+    def visit_FunctionDef(self, node: libcst.FunctionDef) -> None:
         """Track the names this function binds separately, so those of an enclosing function don't leak into it."""
         self._written_out_names.append(set())
 
-    def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:
+    def leave_FunctionDef(self, original_node: libcst.FunctionDef) -> None:
         """Forget the names bound by the function that ends here."""
         self._written_out_names.pop()
 
-    def visit_Assign(self, node: cst.Assign) -> None:
+    def visit_Assign(self, node: libcst.Assign) -> None:
         """Track every name the statement binds, since `first = second = value` binds more than one."""
-        bound_names = {target.target.value for target in node.targets if isinstance(target.target, cst.Name)}
+        bound_names = {target.target.value for target in node.targets if isinstance(target.target, libcst.Name)}
         self._track(bound_names, node.value)
 
-    def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
-        """Track an annotated assignment the same way as a plain one, when it carries a value to bind."""
-        if node.value is not None and isinstance(node.target, cst.Name):
-            self._track({node.target.value}, node.value)
-
-    def _track(self, bound_names: set[str], value: cst.BaseExpression) -> None:
+    def _track(self, bound_names: set[str], value: libcst.BaseExpression) -> None:
         """Remember the names bound to a written-out value, and forget those bound to a computed value instead."""
         names = self._written_out_names[-1]
         if _is_expected_like(value):
@@ -152,16 +132,18 @@ class AssertEqualActualFirst(LintRule):
         else:
             names -= bound_names
 
-    def _reads_as_expected(self, node: cst.BaseExpression) -> bool:
-        """Return whether the expression reads as the expected value: written out here, or bound to one earlier."""
-        return _is_expected_like(node) or (isinstance(node, cst.Name) and node.value in self._written_out_names[-1])
+    def visit_AnnAssign(self, node: libcst.AnnAssign) -> None:
+        """Track an annotated assignment the same way as a plain one, when it carries a value to bind."""
+        if node.value is not None and isinstance(node.target, libcst.Name):
+            self._track({node.target.value}, node.value)
 
-    def visit_Call(self, node: cst.Call) -> None:
+    def visit_Call(self, node: libcst.Call) -> None:
         """Report an assertion whose expected value precedes its computed actual value, with the fix."""
-        if not (isinstance(node.func, cst.Attribute) and node.func.attr.value in _EQUALITY_ASSERT_METHODS):
+        if not (isinstance(node.func, libcst.Attribute) and node.func.attr.value in _EQUALITY_ASSERT_METHODS):
             return
         positional = [argument for argument in node.args if argument.keyword is None and not argument.star]
-        if len(positional) < _COMPARED_ARGUMENTS:
+        compared_arguments = 2  # An equality assertion compares two positional arguments, so it needs both
+        if len(positional) < compared_arguments:
             return
         expected, actual = positional[0], positional[1]
         if not self._reads_as_expected(expected.value) or self._reads_as_expected(actual.value):
@@ -170,6 +152,27 @@ class AssertEqualActualFirst(LintRule):
         arguments[arguments.index(expected)] = expected.with_changes(value=actual.value)
         arguments[arguments.index(actual)] = actual.with_changes(value=expected.value)
         self.report(node, replacement=node.with_changes(args=arguments))
+
+    def _reads_as_expected(self, node: libcst.BaseExpression) -> bool:
+        """Return whether the expression reads as the expected value: written out here, or bound to one earlier."""
+        return _is_expected_like(node) or (isinstance(node, libcst.Name) and node.value in self._written_out_names[-1])
+
+
+def _is_expected_like(node: libcst.BaseExpression) -> bool:
+    """Return whether the expression is written out in the assertion, so it reads as its expected value.
+
+    A collection written out as a list, tuple, set, or dict counts however its elements are produced: the assertion
+    lays out the value it expects, instead of getting that value from the code under test.
+    """
+    if isinstance(node, (*_LITERAL_TYPES, *_DISPLAY_TYPES)):
+        return True
+    if isinstance(node, libcst.Name):
+        return node.value in _LITERAL_NAMES
+    if isinstance(node, libcst.UnaryOperation):
+        return _is_expected_like(node.expression)
+    if isinstance(node, libcst.BinaryOperation):
+        return _is_expected_like(node.left) and _is_expected_like(node.right)
+    return False
 
 
 class SubTestPerCase(LintRule):
@@ -199,7 +202,7 @@ class SubTestPerCase(LintRule):
         Invalid(_test_method("for name in names:", "    self.assertTrue(matches(name))")),
     ]
 
-    def visit_For(self, node: cst.For) -> None:
+    def visit_For(self, node: libcst.For) -> None:
         """Report a loop that asserts somewhere inside it without calling `subTest` anywhere inside it.
 
         Looking anywhere inside the loop means a nested case table is reported at most once: a `subTest` on the
@@ -210,19 +213,21 @@ class SubTestPerCase(LintRule):
             self.report(node)
 
 
+def _self_call_names(node: libcst.CSTNode) -> set[str]:
+    """Return the names of the `self.<name>(...)` methods called anywhere inside the node."""
+    calls = matchers.findall(node, matchers.Call(func=matchers.Attribute(value=matchers.Name("self"))))
+    functions = (libcst.ensure_type(call, libcst.Call).func for call in calls)
+    return {libcst.ensure_type(function, libcst.Attribute).attr.value for function in functions}
+
+
 # An identifier, as the code spells a name, and an identifier a docstring quotes between backticks. A backticked
 # run holding anything else — a `path:line`, an `# update-time: ignore` marker — is skipped here, and the twin
 # check would skip it in any case, since no name the code binds has that shape.
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_BACKTICKED_NAME = re.compile(f"`({_IDENTIFIER.pattern})`")
+_IDENTIFIER: Final[re.Pattern[str]] = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_BACKTICKED_NAME: Final[re.Pattern[str]] = re.compile(f"`({_IDENTIFIER.pattern})`")
 
 
-def _twin(name: str) -> str:
-    """Return the name under the opposite visibility: the private spelling of a public name, and the other way on."""
-    return name.removeprefix("_") if name.startswith("_") else f"_{name}"
-
-
-_QUERY_ENDPOINT = '''\
+_QUERY_ENDPOINT: Final[str] = '''\
 def _query(reference):
     return {"version": reference}
 
@@ -232,7 +237,7 @@ def reported_vulnerabilities(reference):
     return fetch("https://api.osv.dev/v1/query", json=_query(reference))
 '''
 
-_USED_NAME = '''\
+_USED_NAME: Final[str] = '''\
 def _pin(reference):
     return reference
 
@@ -242,13 +247,13 @@ def pin(references):
     return [_pin(reference) for reference in references]
 '''
 
-_NAME_FROM_ANOTHER_MODULE = '''\
+_NAME_FROM_ANOTHER_MODULE: Final[str] = '''\
 def changes(dependency):
     """Return what `get_changes` reports for the dependency."""
     return dependency
 '''
 
-_RENAMED_PIN = '''\
+_RENAMED_PIN: Final[str] = '''\
 def _latest_pin(reference):
     return reference
 
@@ -259,7 +264,7 @@ class PinUpdater:
         return _latest_pin(match)
 '''
 
-_MADE_PUBLIC = '''\
+_MADE_PUBLIC: Final[str] = '''\
 def helper(value):
     return value
 
@@ -291,44 +296,35 @@ class RenamedNameInDocstring(LintRule):
     def __init__(self) -> None:
         """Start with no names, until the module they are read from is visited."""
         super().__init__()
-        self._module = cst.Module(body=[])
+        self._module = libcst.Module(body=[])
         self._code_names: set[str] = set()
         self._quoted_words: set[str] = set()
-        self._documented: list[cst.Module | cst.FunctionDef | cst.ClassDef] = []
+        self._documented: list[libcst.Module | libcst.FunctionDef | libcst.ClassDef] = []
 
-    def visit_Module(self, node: cst.Module) -> None:
+    def visit_Module(self, node: libcst.Module) -> None:
         """Keep the module, which the strings are read from, and check its own docstring once the module is read."""
         self._module = node
         self._code_names = set()
         self._quoted_words = set()
         self._documented = [node]
 
-    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+    def visit_FunctionDef(self, node: libcst.FunctionDef) -> None:
         """Check the function's docstring once the module is read, so a report lands on the function."""
         self._documented.append(node)
 
-    def visit_ClassDef(self, node: cst.ClassDef) -> None:
+    def visit_ClassDef(self, node: libcst.ClassDef) -> None:
         """Check the class's docstring once the module is read, so a report lands on the class."""
         self._documented.append(node)
 
-    def visit_Name(self, node: cst.Name) -> None:
+    def visit_Name(self, node: libcst.Name) -> None:
         """Collect the name the code spells."""
         self._code_names.add(node.value)
 
-    def visit_SimpleString(self, node: cst.SimpleString) -> None:
+    def visit_SimpleString(self, node: libcst.SimpleString) -> None:
         """Collect the words the string spells out."""
         self._quote(node)
 
-    def visit_FormattedString(self, node: cst.FormattedString) -> None:
-        """Collect the words the f-string spells out."""
-        self._quote(node)
-
-    def leave_Module(self, original_node: cst.Module) -> None:
-        """Check each docstring against every name the module spells and every word its strings spell out."""
-        for node in self._documented:
-            self._report_renamed(node)
-
-    def _quote(self, node: cst.SimpleString | cst.FormattedString) -> None:
+    def _quote(self, node: libcst.SimpleString | libcst.FormattedString) -> None:
         """Collect the identifier-shaped words the string spells out, the backticked runs in it left out.
 
         A word spelled out in a string is data the module works with — a path in a URL, a key, a word of a message —
@@ -336,7 +332,16 @@ class RenamedNameInDocstring(LintRule):
         """
         self._quoted_words.update(_IDENTIFIER.findall(_BACKTICKED_NAME.sub(" ", self._module.code_for_node(node))))
 
-    def _report_renamed(self, node: cst.Module | cst.FunctionDef | cst.ClassDef) -> None:
+    def visit_FormattedString(self, node: libcst.FormattedString) -> None:
+        """Collect the words the f-string spells out."""
+        self._quote(node)
+
+    def leave_Module(self, original_node: libcst.Module) -> None:
+        """Check each docstring against every name the module spells and every word its strings spell out."""
+        for node in self._documented:
+            self._report_renamed(node)
+
+    def _report_renamed(self, node: libcst.Module | libcst.FunctionDef | libcst.ClassDef) -> None:
         """Report each name the docstring quotes that the code mentions only under the opposite visibility.
 
         A word the module's strings spell out is data it works with, whatever the code binds beside it, so a
@@ -347,6 +352,11 @@ class RenamedNameInDocstring(LintRule):
                 continue
             if name not in self._code_names and _twin(name) in self._code_names:
                 self.report(node, message=f"Rewrite `{name}` as `{_twin(name)}`: a rename left the docstring behind")
+
+
+def _twin(name: str) -> str:
+    """Return the name under the opposite visibility: the private spelling of a public name, and the other way on."""
+    return name.removeprefix("_") if name.startswith("_") else f"_{name}"
 
 
 class SubTestOutsideLoop(LintRule):
@@ -377,10 +387,78 @@ class SubTestOutsideLoop(LintRule):
         ),
     ]
 
-    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+    def visit_FunctionDef(self, node: libcst.FunctionDef) -> None:
         """Report an `assert*` helper that calls `subTest` without a loop of its own carrying one."""
         if not node.name.value.startswith("assert"):
             return
-        loops = m.findall(node, m.For())
+        loops = matchers.findall(node, matchers.For())
         if "subTest" in _self_call_names(node) and not any("subTest" in _self_call_names(loop) for loop in loops):
             self.report(node)
+
+
+class ImportAliasWithoutConflict(LintRule):
+    """Require an import to keep the imported name, unless another name of the module would clash with it.
+
+    An alias makes the reader learn a second name for one thing. Where two imports bind the same name, aliasing both
+    is allowed, though aliasing one of them would do.
+    """
+
+    METADATA_DEPENDENCIES = (libcst.metadata.ParentNodeProvider,)
+
+    VALID = [
+        Valid("from a import parse\n"),
+        Valid("from a import parse as parse_a\nfrom b import parse as parse_b\n"),  # The two imports clash.
+        Valid(
+            "from a import item as a_item\n\ndef f(item):\n    return a_item(item)\n"
+        ),  # The parameter would hide it.
+        Valid("import a.b as b\n\na = 1\n"),  # A bare `import a.b` binds `a`, which the module binds as well.
+    ]
+    INVALID = [
+        Invalid("from a import parse as parse_a\n\nparse_a()\n"),
+        # Attributes and keywords bind no name.
+        Invalid("from a import parse as parse_a\n\nobj.parse(x=1)\nf(parse=1)\n"),
+        Invalid("import a.b as b\n\nb.c()\n"),  # A bare `import a.b` binds `a`, which nothing else spells.
+    ]
+
+    def __init__(self) -> None:
+        """Start with no names, until the module they are read from is visited."""
+        super().__init__()
+        self._aliased: list[tuple[libcst.ImportAlias, str]] = []
+        self._spelled: list[str] = []
+
+    def visit_Module(self, node: libcst.Module) -> None:
+        """Forget the names of the module visited before."""
+        self._aliased = []
+        self._spelled = []
+
+    def visit_ImportAlias(self, node: libcst.ImportAlias) -> None:
+        """Keep an aliased import to check, and the name the import binds without its alias."""
+        bare = libcst.helpers.get_full_name_for_node(node.name) or ""
+        if not isinstance(self.get_metadata(libcst.metadata.ParentNodeProvider, node), libcst.ImportFrom):
+            bare = bare.split(".")[0]
+        if node.asname is not None:
+            self._aliased.append((node, bare))
+        self._spelled.append(bare)
+
+    def visit_Name(self, node: libcst.Name) -> None:
+        """Collect a name the code spells, other than in an import, after a dot, or as the keyword of an argument."""
+        parent = self.get_metadata(libcst.metadata.ParentNodeProvider, node)
+        if isinstance(parent, libcst.Attribute) and parent.attr is node:
+            return
+        if isinstance(parent, libcst.Arg) and parent.keyword is node:
+            return
+        if self._inside_import(node):
+            return
+        self._spelled.append(node.value)
+
+    def _inside_import(self, node: libcst.CSTNode) -> bool:
+        """Return whether the node is part of an import statement."""
+        while not isinstance(node, (libcst.Module, libcst.BaseSmallStatement)):
+            node = self.get_metadata(libcst.metadata.ParentNodeProvider, node)
+        return isinstance(node, (libcst.Import, libcst.ImportFrom))
+
+    def leave_Module(self, original_node: libcst.Module) -> None:
+        """Report each alias whose imported name nothing else in the module spells."""
+        for node, bare in self._aliased:
+            if self._spelled.count(bare) == 1:
+                self.report(node, message=f"Import `{bare}` without `as`: no other name of the module clashes with it")

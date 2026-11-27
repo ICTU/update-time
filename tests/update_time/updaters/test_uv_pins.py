@@ -1,31 +1,41 @@
 """Unit tests for the checks the updaters that delegate to uv run over the dependencies their files declare."""
 
-from typing import TYPE_CHECKING, ClassVar
-from unittest.mock import Mock, patch
+from typing import TYPE_CHECKING, ClassVar, Final
+from unittest.mock import Mock
 
 from mutation_time.mutation import kills
 from update_time.domain.dependency import Yank
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Scope
-from update_time.formats import toml as toml_module
-from update_time.io.log import Logger, get_logger
+from update_time.formats.toml import parse_document
+from update_time.io.log import (
+    Logger,
+    _Fields,  # simplint: ignore[private-import-path] # annotates with it
+    get_logger,
+)
 from update_time.manifests.inline_script import InlineScript
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.primitives.location import Location
-from update_time.references import delegated as delegated_module
+from update_time.references.delegated import _pin_resolver
 from update_time.updaters.uv_pins import warn_about_pins
 
-from tests.helpers import mock_path, requested_urls
-from tests.update_time.helpers import (
-    SCAN_ROOT,
-    LoggingTestCase,
-    message_of,
-    pyproject,
-    staleness_disabled,
-    uv_path_source,
+from tests.file_mocks import mock_path
+from tests.http_mocks import patch_get, requested_urls
+from tests.update_time.base_test_cases import LoggingTestCase
+from tests.update_time.fixtures import SCAN_ROOT
+from tests.update_time.io.log_messages import message_of
+from tests.update_time.manifests.manifest_contents import pyproject, pyproject_per_line, uv_path_source
+from tests.update_time.run_settings import staleness_disabled
+from tests.update_time.sources.osv_answers import no_vulnerabilities, osv, osv_queries
+from tests.update_time.sources.pypi_answers import (
+    PYPI_OLD_UPLOAD,
+    dated_pypi_index,
+    pypi_index,
+    pypi_release,
+    yanked_file,
 )
-from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, pypi_index, pypi_release, yanked_file
-from tests.update_time.updaters.fixtures import (
+
+from .fixtures import (
     ADVISORY,
     DJANGO_ADVISORY,
     DJANGO_VULNERABILITY,
@@ -35,22 +45,20 @@ from tests.update_time.updaters.fixtures import (
     PYPI_RECENT_UPLOAD,
     VULNERABILITY,
 )
-from tests.update_time.updaters.helpers import (
-    dated_pypi_index,
-    no_vulnerabilities,
-    osv,
-    osv_queries,
-    pyproject_per_line,
-)
 
 if TYPE_CHECKING:
+    from update_time.formats.json import JSON
     from update_time.manifests.python_dependency_toml import PythonDependencyToml
 
-_LOG = get_logger("uv pins")
+_LOG: Final[Logger] = get_logger("uv pins")
 
-# The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about
-# another check answer it with an index that lists no version and no distribution file to read a yank from.
-_no_yanks = patch("requests.Session.get", Mock(return_value=pypi_index()))
+
+def _index_without_yanks() -> Mock:
+    """Return a `Session.get` mock answering PyPI with an index that does not list a version to read a yank from.
+
+    The yank pass asks PyPI about every pin, whichever of the checks a test is about.
+    """
+    return Mock(return_value=pypi_index())
 
 
 class PythonDependencyTomlTestCase(LoggingTestCase):
@@ -72,8 +80,8 @@ class PythonDependencyTomlTestCase(LoggingTestCase):
         return PyprojectToml(mock_path(contents, parent=SCAN_ROOT))
 
 
-@no_vulnerabilities
-@patch("requests.Session.get")
+@no_vulnerabilities()
+@patch_get()
 class StaleDependencyTest(PythonDependencyTomlTestCase):
     """Unit tests for the staleness check, which reads the newest release PyPI lists for each dependency."""
 
@@ -87,7 +95,7 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
                 self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     @kills.replace(
-        toml_module.parse_document,
+        parse_document,
         "except tomlkit.exceptions.TOMLKitError:",
         "except tomlkit.exceptions.ParseError:",
         "TOML that tomlkit rejects with the base error aborts the run instead of leaving the file out",
@@ -142,17 +150,18 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         self.assert_no_warnings_logged()
 
 
-@no_vulnerabilities
-@patch("requests.Session.get")
+@no_vulnerabilities()
+@patch_get()
 class YankedPinTest(PythonDependencyTomlTestCase):
     """Unit tests for the yank check, which reads the yank state PyPI reports for the version each pin is left on."""
 
     reason: ClassVar = "broke Python 3.10"
 
-    @classmethod
-    def yanked_simple_api(cls, version: str, *newer: str) -> Mock:
-        """Mock the PyPI Index API response listing the version, whose distribution file the maintainer yanked."""
-        return pypi_index(version, *newer, files=[yanked_file(f"package-{version}.tar.gz", reason=cls.reason)])
+    def test_yanked_pin_warned(self, get: Mock):
+        """Test that a pin left on a yanked release is warned about, located at the line the pin sits on."""
+        file = self.check_a_yanked_pin(get)
+        yank = Yank(yanked=True, reason=self.reason)
+        self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2), yank)
 
     def check_a_yanked_pin(self, get: Mock, marker: str = "") -> PyprojectToml:
         """Run the checks over a file declaring one pin, on a release its maintainer yanked, and return the file."""
@@ -161,11 +170,10 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         warn_about_pins([file], _LOG, {})
         return file
 
-    def test_yanked_pin_warned(self, get: Mock):
-        """Test that a pin left on a yanked release is warned about, located at the line the pin sits on."""
-        file = self.check_a_yanked_pin(get)
-        yank = Yank(yanked=True, reason=self.reason)
-        self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2), yank)
+    @classmethod
+    def yanked_simple_api(cls, version: str, *newer: str) -> Mock:
+        """Mock the PyPI Index API response listing the version, whose distribution file the maintainer yanked."""
+        return pypi_index(version, *newer, files=[yanked_file(f"package-{version}.tar.gz", reason=cls.reason)])
 
     def test_yanked_pin_warned_although_a_newer_release_exists(self, get: Mock):
         """Test that a pin left on a yanked release is warned about although PyPI has a newer release to move to."""
@@ -176,8 +184,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
 
     def test_makes_no_pypi_request_of_its_own(self, get: Mock):
         """Test that the yank check reads the index the staleness check fetched, so a pin costs one request."""
-        file = self.check_a_yanked_pin(get)
-        self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
+        self.assert_yanked_dependency_logged("package", "1.0", Location(self.check_a_yanked_pin(get).path, 2))
         self.assertEqual(get.call_count, 1)
 
     def test_unparsable_version_leaves_the_other_pins_checked(self, get: Mock):
@@ -197,7 +204,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         self.assert_ignored_warning_logged(Scope.YANKED, "package", Location(file.path, 2), "ignore[yanked]")
 
     @kills.append(
-        delegated_module._pin_resolver,
+        _pin_resolver,
         "yank=get_yank(pin.dependency, pin.current_version))",
         ", marker=next(iter(pins)).marker",
         "one pin's marker steers every pin the file declares, rather than the one carrying it",
@@ -215,29 +222,28 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         file = self.check_a_yanked_pin(get, "ignore[update]")
         self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
 
-    @staleness_disabled
+    @staleness_disabled()
     def test_yanked_pin_warned_with_the_staleness_check_off(self, get: Mock):
         """Test that `--stale-after 0` leaves the yank check running, so the pin is still warned about."""
-        file = self.check_a_yanked_pin(get)
-        self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
+        self.assert_yanked_dependency_logged("package", "1.0", Location(self.check_a_yanked_pin(get).path, 2))
 
 
-@_no_yanks
-@staleness_disabled
+@patch_get(_index_without_yanks())
+@staleness_disabled()
 class VulnerablePinTest(PythonDependencyTomlTestCase):
     """Unit tests for the vulnerability check, whose OSV pass looks each pin up."""
-
-    def check_pins(self, file: PyprojectToml, *advisories: dict[str, object]) -> Mock:
-        """Run the checks over the file, with OSV answering the advisories, and return the mocked OSV endpoint."""
-        with osv(*advisories) as mock_post:
-            warn_about_pins([file], _LOG, {})
-        return mock_post
 
     def test_vulnerable_pin_warned(self):
         """Test that a pin OSV reports an advisory for is warned about, located at the line the pin sits on."""
         file = self.dependency_toml_file("django==3.2.0")
         self.check_pins(file, DJANGO_ADVISORY)
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(file.path, 2))
+
+    def check_pins(self, file: PyprojectToml, *advisories: dict[str, JSON]) -> Mock:
+        """Run the checks over the file, with OSV answering the advisories, and return the mocked OSV endpoint."""
+        with osv(*advisories) as mock_post:
+            warn_about_pins([file], _LOG, {})
+        return mock_post
 
     def test_a_name_pinned_twice(self):
         """Test that every pin of a name is looked up, so one pin never hides another's vulnerability."""
@@ -300,8 +306,8 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
         )
 
 
-@no_vulnerabilities
-@patch("requests.Session.get")
+@no_vulnerabilities()
+@patch_get()
 class ArchivedDependencyTest(PythonDependencyTomlTestCase):
     """Unit tests for the archival check, which reads the project status PyPI publishes for each dependency."""
 
@@ -340,7 +346,7 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2), among_others=True)
         self.assert_archived_dependency_logged("package", Location(file.path, 2), among_others=True)
 
-    @staleness_disabled
+    @staleness_disabled()
     def test_staleness_disabled_still_warns_about_an_archived_project(self, get: Mock):
         """Test that an archived project is warned about when the staleness check is switched off."""
         get.return_value = dated_pypi_index("1.0", archived=True)
@@ -364,15 +370,10 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
 
-@no_vulnerabilities
-@patch("requests.Session.get")
+@no_vulnerabilities()
+@patch_get()
 class RedundantDirectiveTest(PythonDependencyTomlTestCase):
     """Unit tests for the directives that hold nothing back for the dependency carrying them."""
-
-    def check_dependencies(self, get: Mock, file: PythonDependencyToml) -> None:
-        """Run the checks over the file, with PyPI listing an undated release, so nothing is warned about as stale."""
-        get.return_value = pypi_index("1.0")
-        warn_about_pins([file], _LOG, {})
 
     def test_a_scope_needing_a_version_is_redundant_without_an_exact_pin(self, get: Mock):
         """Test that a scope whose check needs a version reports that the dependency pins none."""
@@ -387,6 +388,11 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                 file = self.dependency_toml_file("package>=1.0", marker=directive)
                 self.check_dependencies(get, file)
                 self.assert_redundant_directive_logged(reason, "package", Location(file.path, 2), directive)
+
+    def check_dependencies(self, get: Mock, file: PythonDependencyToml) -> None:
+        """Run the checks over the file, with PyPI listing an undated release, so nothing is warned about as stale."""
+        get.return_value = pypi_index("1.0")
+        warn_about_pins([file], _LOG, {})
 
     def test_a_cooldown_is_reported_as_applying_per_run(self, get: Mock):
         """Test that a `cooldown` item is reported for either spec, since uv takes one per run."""
@@ -405,14 +411,6 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
         self.assert_redundant_directive_logged(
             Reason.MANAGER_RESOLVES_THE_VERSION, "package", Location(file.path, 2), "ignore[update]"
         )
-
-    @staticmethod
-    def unserved_declarations(directive: str) -> dict[str, str]:
-        """Return the contents of a file per way a declaration escapes PyPI, the directive steering its dependency."""
-        return {
-            "uv source": pyproject("local==1.0", marker=directive) + uv_path_source("local"),
-            "direct URL": pyproject("local @ https://example.com/local-1.0.tar.gz", marker=directive),
-        }
 
     def test_an_ignore_update_keeping_an_unserved_pin_is_not_reported(self, get: Mock):
         """Test that an `ignore[update]` on two dependencies is reported for the one not pinning a version."""
@@ -435,6 +433,14 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                         Reason.NO_PYPI_RELEASE, "local", Location(file.path, 2), directive
                     )
 
+    @staticmethod
+    def unserved_declarations(directive: str) -> dict[str, str]:
+        """Return the contents of a file per way a declaration escapes PyPI, the directive steering its dependency."""
+        return {
+            "uv source": pyproject("local==1.0", marker=directive) + uv_path_source("local"),
+            "direct URL": pyproject("local @ https://example.com/local-1.0.tar.gz", marker=directive),
+        }
+
     def test_an_opt_in_directive_is_reported(self, get: Mock):
         """Test that each opt-in is reported for the reason it decides nothing, on an exact pin and on a range."""
         cases = {
@@ -453,7 +459,7 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
         file = self.dependency_toml_file("package>=1.0", marker="ignore[update] allow[hash-drift]")
         self.check_dependencies(get, file)
         redundant = message_of(Logger.redundant_directive)
-        fields = {"dependency": "package", "location": Location(file.path, 2)}
+        fields: _Fields = {"dependency": "package", "location": Location(file.path, 2)}
         self.assert_logged_among_others(redundant, directive="allow[hash-drift]", reason=Reason.NO_HASH_PIN, **fields)
         self.assert_logged_among_others(
             redundant, directive="ignore[update]", reason=Reason.MANAGER_RESOLVES_THE_VERSION, **fields
@@ -469,7 +475,7 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
         )
 
 
-@patch("requests.Session.get")
+@patch_get()
 class UvSourcedDependencyTest(PythonDependencyTomlTestCase):
     """Unit tests for the dependencies uv resolves from a source of its own, which PyPI serves no release for."""
 

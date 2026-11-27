@@ -1,7 +1,7 @@
 """The Maven version ranges that hand a version bound to the versions plugin."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from packaging.version import InvalidVersion, Version
 
@@ -17,61 +17,7 @@ if TYPE_CHECKING:
 # this suffix gives a version that Maven sorts after every qualified form of it, and before the next release. A bound
 # reads a version up to the first character that is neither a digit nor a dot, so a clause ending at a version ends
 # after its qualified forms.
-_PAST_QUALIFIERS = ".0.0.0.1"
-
-
-@dataclass(frozen=True)
-class _Boundary:
-    """One end of an interval: a version, and whether the interval includes it."""
-
-    version: Version
-    included: bool
-
-    def lower_end(self) -> str:
-        """Return the boundary as Maven spells the lower end of a range."""
-        return f"{'[' if self.included else '('}{self.version}"
-
-    def upper_end(self) -> str:
-        """Return the boundary as Maven spells the upper end of a range."""
-        return f"{self.version}{']' if self.included else ')'}"
-
-
-@dataclass(frozen=True)
-class _Interval:
-    """The versions between two boundaries, open-ended on a side without one."""
-
-    lower: _Boundary | None = None
-    upper: _Boundary | None = None
-
-    def __and__(self, other: _Interval) -> _Interval:
-        """Return the versions both intervals hold."""
-        return _Interval(_tighter(self.lower, other.lower, after=True), _tighter(self.upper, other.upper, after=False))
-
-    @property
-    def empty(self) -> bool:
-        """Return whether the interval does not hold any version."""
-        if self.lower is None or self.upper is None:
-            return False
-        if self.lower.version == self.upper.version:
-            return not (self.lower.included and self.upper.included)
-        return self.lower.version > self.upper.version
-
-    def __str__(self) -> str:
-        """Return the interval as Maven spells a range."""
-        if self.lower is not None and self.lower == self.upper:
-            return f"[{self.lower.version}]"
-        lower = "(" if self.lower is None else self.lower.lower_end()
-        upper = ")" if self.upper is None else self.upper.upper_end()
-        return f"{lower},{upper}"
-
-
-def _tighter(boundary: _Boundary | None, other: _Boundary | None, *, after: bool) -> _Boundary | None:
-    """Return the boundary that holds fewer versions: the later lower one, or the earlier upper one."""
-    if boundary is None or other is None:
-        return other if boundary is None else boundary
-    if boundary.version != other.version:
-        return boundary if (boundary.version > other.version) == after else other
-    return other if boundary.included else boundary
+_PAST_QUALIFIERS: Final[str] = ".0.0.0.1"
 
 
 def maven_range(bound: VersionBound, current_version: VersionString) -> str | None:
@@ -95,24 +41,6 @@ def maven_range(bound: VersionBound, current_version: VersionString) -> str | No
     return ",".join(str(interval) for interval in intervals)
 
 
-def _complement(intervals: list[_Interval]) -> list[_Interval]:
-    """Return the intervals of the versions outside the given intervals, which have to be sorted and disjoint."""
-    gaps = []
-    lower = None
-    for interval in intervals:
-        if interval.lower is not None:
-            gaps.append(_Interval(lower, _flipped(interval.lower)))
-        if interval.upper is None:
-            return gaps
-        lower = _flipped(interval.upper)
-    return [*gaps, _Interval(lower)]
-
-
-def _flipped(boundary: _Boundary) -> _Boundary:
-    """Return the boundary at the same version with its inclusion reversed."""
-    return _Boundary(boundary.version, included=not boundary.included)
-
-
 def _names_a_release(clause: Specifier) -> bool:
     """Return whether the clause names a release: a version of numbers alone."""
     try:
@@ -122,16 +50,60 @@ def _names_a_release(clause: Specifier) -> bool:
     return str(version) == ".".join(str(component) for component in version.release)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Interval:
+    """The versions between two boundaries, open-ended on a side without one."""
+
+    lower: _Boundary | None = None
+    upper: _Boundary | None = None
+
+    def __and__(self, other: _Interval) -> _Interval:
+        """Return the versions both intervals hold."""
+        return _Interval(
+            lower=_tighter(self.lower, other.lower, after=True), upper=_tighter(self.upper, other.upper, after=False)
+        )
+
+    def __str__(self) -> str:
+        """Return the interval as Maven spells a range."""
+        if self.lower is not None and self.lower == self.upper:
+            return f"[{self.lower.version}]"
+        lower = "(" if self.lower is None else self.lower.lower_end()
+        upper = ")" if self.upper is None else self.upper.upper_end()
+        return f"{lower},{upper}"
+
+    @property
+    def empty(self) -> bool:
+        """Return whether the interval does not hold any version."""
+        if self.lower is None or self.upper is None:
+            return False
+        if self.lower.version == self.upper.version:
+            return not (self.lower.included and self.upper.included)
+        return self.lower.version > self.upper.version
+
+
+def _tighter(boundary: _Boundary | None, other: _Boundary | None, *, after: bool) -> _Boundary | None:
+    """Return the boundary that holds fewer versions: the later lower one, or the earlier upper one."""
+    if boundary is None or other is None:
+        return other if boundary is None else boundary
+    if boundary.version != other.version:
+        return boundary if (boundary.version > other.version) == after else other
+    return other if boundary.included else boundary
+
+
 def _pieces(clause: Specifier) -> list[_Interval]:
     """Return the intervals of the versions the clause matches."""
     version = clause.version.removesuffix(".*")
     if clause.operator == "===":
-        exactly = _Boundary(Version(version), included=True)
-        return [_Interval(exactly, exactly)]
+        exactly = _Boundary(version=Version(version), included=True)
+        return [_Interval(lower=exactly, upper=exactly)]
     if clause.operator == "~=":
         return [_between(version, _next_release(Version(version).release[:-1]))]
     wildcard = clause.version.endswith(".*")
-    past = _next_release(Version(version).release) if wildcard else f"{version}{_PAST_QUALIFIERS}"
+    # Maven sorts a qualified version after the release it qualifies: `33.0.0-jre` after `33.0.0`. Appending .0.0.0.1
+    # to a version gives a version that Maven sorts after every qualified form of it, and before the next release. A
+    # bound reads a version up to the first character that is neither a digit nor a dot, so a clause ending at a
+    # version ends after its qualified forms.
+    past = _next_release(Version(version).release) if wildcard else f"{version}.0.0.0.1"
     return {
         "<": [_below(version)],
         "<=": [_below(past)],
@@ -142,22 +114,56 @@ def _pieces(clause: Specifier) -> list[_Interval]:
     }[clause.operator]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Boundary:
+    """One end of an interval: a version, and whether the interval includes it."""
+
+    version: Version
+    included: bool
+
+    def lower_end(self) -> str:
+        """Return the boundary as Maven spells the lower end of a range."""
+        return f"{'[' if self.included else '('}{self.version}"
+
+    def upper_end(self) -> str:
+        """Return the boundary as Maven spells the upper end of a range."""
+        return f"{self.version}{']' if self.included else ')'}"
+
+
 def _between(first: str, past: str) -> _Interval:
     """Return the versions from `first` up to `past`."""
-    return _Interval(_from(first).lower, _below(past).upper)
-
-
-def _below(past: str) -> _Interval:
-    """Return the versions up to `past`."""
-    return _Interval(upper=_Boundary(Version(past), included=False))
-
-
-def _from(first: str) -> _Interval:
-    """Return the versions from `first` on."""
-    return _Interval(lower=_Boundary(Version(first), included=True))
+    return _Interval(lower=_from(first).lower, upper=_below(past).upper)
 
 
 def _next_release(release: tuple[int, ...]) -> str:
     """Return the release after the given one at its last component, such as `3.13` after `3.12`."""
     *head, last = release
     return ".".join(str(component) for component in (*head, last + 1))
+
+
+def _below(past: str) -> _Interval:
+    """Return the versions up to `past`."""
+    return _Interval(upper=_Boundary(version=Version(past), included=False))
+
+
+def _from(first: str) -> _Interval:
+    """Return the versions from `first` on."""
+    return _Interval(lower=_Boundary(version=Version(first), included=True))
+
+
+def _complement(intervals: list[_Interval]) -> list[_Interval]:
+    """Return the intervals of the versions outside the given intervals, which have to be sorted and disjoint."""
+    gaps = []
+    lower = None
+    for interval in intervals:
+        if interval.lower is not None:
+            gaps.append(_Interval(lower=lower, upper=_flipped(interval.lower)))
+        if interval.upper is None:
+            return gaps
+        lower = _flipped(interval.upper)
+    return [*gaps, _Interval(lower=lower)]
+
+
+def _flipped(boundary: _Boundary) -> _Boundary:
+    """Return the boundary at the same version with its inclusion reversed."""
+    return _Boundary(version=boundary.version, included=not boundary.included)

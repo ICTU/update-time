@@ -8,7 +8,7 @@ Update-time checks its project instead, and checks the version a compiled file p
 """
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.dependency import normalized_python_name
 from update_time.domain.directive import WARNING_DIRECTIVES, Reason
@@ -18,7 +18,12 @@ from update_time.domain.reference import Reference
 from update_time.io.filesystem import glob_for, is_scanned
 from update_time.io.log import get_logger
 from update_time.lock_files.compiled_requirements_txt import CompiledBy, CompiledRequirementsTxt, is_compiled
-from update_time.manifests import requirements_txt as requirements_txt_manifest
+from update_time.manifests.requirements_txt import (
+    EXACT_PIN_REFERENCE,
+    LOOSE_REQUIREMENT_REFERENCE,
+    declarations,
+    names_an_archive,
+)
 from update_time.markers.report import report_marker, warn_if_the_opt_in_is_redundant
 from update_time.package_managers.pip_tools import PipCompile
 from update_time.package_managers.uv.uv import UvPipCompile
@@ -27,17 +32,18 @@ from update_time.references.file import update_file
 from update_time.references.match import reference_matches
 from update_time.references.resolve import report_project_checks
 from update_time.references.vulnerability import warn_about_vulnerable_references
-from update_time.sources import pypi
+from update_time.sources.pypi import SOURCE, project
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.io.log import Logger
     from update_time.package_managers.requirements_compiler import RequirementsCompiler
     from update_time.primitives.line import Line
 
-_LOG = get_logger("requirements.txt")
+_LOG: Final[Logger] = get_logger("requirements.txt")
 
 
 def _warn_about_items_that_decide_nothing(reference: Reference, compiler: RequirementsCompiler | None) -> None:
@@ -47,21 +53,16 @@ def _warn_about_items_that_decide_nothing(reference: Reference, compiler: Requir
     So does a cooldown, where the compiler takes the cooldown of a package.
     """
     if compiler is None:
-        _warn_about_items_that_need_a_version_to_update(reference)
+        if bound_directive := reference.marker.bound_directive:
+            _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
+        if cooldown := reference.marker.directive_for(Scope.COOLDOWN):
+            _LOG.redundant_directive(reference, cooldown, Reason.NO_VERSION_TO_UPDATE)
     elif not compiler.package_cooldown_option and (cooldown := reference.marker.directive_for(Scope.COOLDOWN)):
         _LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)
     # Update-time never pins a requirement that does not pin a version, and the requirement does not carry a hash pin.
     # So each opt-in is redundant, whether or not the update is held back.
     warn_if_the_opt_in_is_redundant(reference, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED, _LOG)
     warn_if_the_opt_in_is_redundant(reference, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, _LOG)
-
-
-def _warn_about_items_that_need_a_version_to_update(reference: Reference) -> None:
-    """Warn about each item of the requirement's marker that steers an update, which needs a version to update."""
-    if bound_directive := reference.marker.bound_directive:
-        _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
-    if cooldown := reference.marker.directive_for(Scope.COOLDOWN):
-        _LOG.redundant_directive(reference, cooldown, Reason.NO_VERSION_TO_UPDATE)
 
 
 def _warn_about_items_that_need_a_version_to_check(reference: Reference) -> None:
@@ -77,14 +78,14 @@ def _check_loose_requirements(lines: list[Line], compiler: RequirementsCompiler 
     Such a requirement pins no version to resolve an update for, so it takes the project checks instead. The items of
     its marker that steer the update are reported here, whether or not those checks run.
     """
-    for line, match, marker in reference_matches(lines, requirements_txt_manifest.LOOSE_REQUIREMENT_REFERENCE):
+    for line, match, marker in reference_matches(lines, LOOSE_REQUIREMENT_REFERENCE):
         reference = Reference(match["dependency"], "", line.location, marker=marker)
         # No pass before this one reads these lines, so their markers are reported here.
         report_marker(reference, _LOG, steers_the_update=compiler is not None)
-        if requirements_txt_manifest.names_an_archive(reference.dependency):
+        if names_an_archive(reference.dependency):
             continue
         _warn_about_items_that_decide_nothing(reference, compiler)
-        report_project_checks(reference, _LOG, pypi.project)
+        report_project_checks(reference, _LOG, project)
 
 
 def _sources(compiled: CompiledRequirementsTxt) -> tuple[list[Path], list[str]]:
@@ -115,10 +116,10 @@ def _sources(compiled: CompiledRequirementsTxt) -> tuple[list[Path], list[str]]:
 
 def _update_pins(requirements_txt: Path, compiler: RequirementsCompiler | None) -> None:
     """Update the exact pins in a single requirements file, and check its other requirements."""
-    exact_pin = requirements_txt_manifest.EXACT_PIN_REFERENCE
-    lines = update_file(requirements_txt, exact_pin, source=pypi.SOURCE, logger=_LOG)
+    exact_pin = EXACT_PIN_REFERENCE
+    lines = update_file(requirements_txt, exact_pin, source=SOURCE, logger=_LOG)
     _check_loose_requirements(lines, compiler)
-    warn_about_vulnerable_references(lines, exact_pin, pypi.SOURCE, _LOG)
+    warn_about_vulnerable_references(lines, exact_pin, SOURCE, _LOG)
 
 
 def _compiler_for(compiled: CompiledRequirementsTxt) -> RequirementsCompiler:
@@ -173,8 +174,8 @@ def _check_pinned_versions(
     for requirements_file in requirements_files:
         pins = pins_of.get(requirements_file, {})
         pinned: list[Reference] = []
-        for declaration in requirements_txt_manifest.declarations(requirements_file):
-            if declaration.current_version or requirements_txt_manifest.names_an_archive(declaration.dependency):
+        for declaration in declarations(requirements_file):
+            if declaration.current_version or names_an_archive(declaration.dependency):
                 continue
             if versions := pins.get(normalized_python_name(declaration.dependency)):
                 pinned.extend(replace(declaration, current_version=version) for version in sorted(versions))
@@ -182,9 +183,9 @@ def _check_pinned_versions(
                 _warn_about_items_that_need_a_version_to_check(declaration)
         batches.append(pinned)
     for pin in pins_from_missing_sources:
-        report_project_checks(pin, _LOG, pypi.project)
+        report_project_checks(pin, _LOG, project)
     batches.append(pins_from_missing_sources)
-    warn_about_pinned_versions(batches, _LOG, pypi.SOURCE)
+    warn_about_pinned_versions(batches, _LOG, SOURCE)
 
 
 def _pins_by_source(
@@ -200,10 +201,5 @@ def _pins_by_source(
     return pins_of
 
 
-def main() -> None:  # pragma: no cover
-    """Update the dependencies in the repository's requirements files."""
+if __name__ == "__main__":
     _update_requirements_txts()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

@@ -1,7 +1,7 @@
 """Update the base images of Dockerfiles, writing a version that a build argument holds onto that argument's line."""
 
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKERFILES
@@ -24,11 +24,12 @@ from update_time.sources.oci import TagGetter
 
 if TYPE_CHECKING:
     from update_time.domain.marker import Marker
+    from update_time.io.log import Logger
     from update_time.manifests.dockerfile import ReferencePart
     from update_time.primitives.line import Line
 
 
-_LOG = get_logger("dockerfile")
+_LOG: Final[Logger] = get_logger("dockerfile")
 
 
 def _refusal(reason: ImageNotLookedUp) -> Source:
@@ -98,10 +99,5 @@ def _update_dockerfiles() -> None:
         rewrite_file(dockerfile, _updated_lines, _LOG)
 
 
-def main() -> None:  # pragma: no cover
-    """Update the base images in the repository's Dockerfiles."""
+if __name__ == "__main__":
     _update_dockerfiles()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

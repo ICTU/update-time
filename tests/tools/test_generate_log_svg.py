@@ -2,12 +2,17 @@
 
 import logging
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import patch
 
-from tools.generate_log_svg import _FixedTime, _LogOutput, _portable, generate
+from tools.generate_log_svg import (
+    _FixedTime,
+    _LogOutput,  # simplint: ignore[private-import-path] # annotates with it
+    _portable,
+    generate,
+)
 
-from tests.helpers import log_record
+from .log_records import log_record
 
 
 class FixedTimeTest(unittest.TestCase):
@@ -17,7 +22,7 @@ class FixedTimeTest(unittest.TestCase):
         """Test that the record's time is overwritten with the one the screenshot shows."""
         pinned = log_record("A message")
         _FixedTime().filter(pinned)
-        self.assertEqual(datetime.fromtimestamp(pinned.created).strftime("%H:%M:%S"), "09:14:03")  # noqa: DTZ006
+        self.assertEqual(datetime.fromtimestamp(pinned.created, UTC).astimezone().strftime("%H:%M:%S"), "09:14:03")
 
     def test_record_is_kept(self):
         """Test that the filter keeps the record, so pinning the time drops no line from the screenshot."""
@@ -48,17 +53,17 @@ class PortableSvgTest(unittest.TestCase):
 class GenerateTest(unittest.TestCase):
     """Unit tests for the sample log output the README embeds."""
 
-    def generated(self) -> _LogOutput:
-        """Return the generated output, which the generator can only produce while the root logger has no handlers."""
-        with patch.object(logging.getLogger(), "handlers", []):
-            return generate()
-
     def test_text_holds_every_sample(self):
         """Test that the fallback text holds each line the README quotes, at the pinned timestamp."""
         text = self.generated().text
         for quoted in ("09:14:03", "humanize", "3.14.6", "actions/checkout", "512 days"):
             with self.subTest(quoted=quoted):
                 self.assertIn(quoted, text)
+
+    def generated(self) -> _LogOutput:
+        """Return the generated output, which the generator can only produce while the root logger has no handlers."""
+        with patch.object(logging.getLogger(), "handlers", []):
+            return generate()
 
     def test_trailing_padding_is_stripped(self):
         """Test that no line keeps the padding the render adds, which would trail spaces through the README."""

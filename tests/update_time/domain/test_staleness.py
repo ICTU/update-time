@@ -7,7 +7,7 @@ from mutation_time.mutation import kills
 from update_time.domain.dependency import Project, Release
 from update_time.domain.staleness import STALE_AFTER, _is_stale, release_judged_alike, stale_release
 
-from tests.update_time.helpers import days_ago
+from tests.update_time.domain_objects import days_ago
 
 
 class IsStaleTest(unittest.TestCase):
@@ -15,13 +15,11 @@ class IsStaleTest(unittest.TestCase):
 
     def test_disabled(self):
         """Test that a threshold of 0 disables the check, so nothing is stale."""
-        old = days_ago(STALE_AFTER.default * 10)
-        self.assertFalse(_is_stale(old, 0))
+        self.assertFalse(_is_stale(days_ago(STALE_AFTER.default * 10), 0))
 
     def test_old_timestamp(self):
         """Test that a timestamp older than the threshold is stale."""
-        old = days_ago(STALE_AFTER.default + 1)
-        self.assertTrue(_is_stale(old, STALE_AFTER.default))
+        self.assertTrue(_is_stale(days_ago(STALE_AFTER.default + 1), STALE_AFTER.default))
 
     def test_recent_timestamp(self):
         """Test that a timestamp newer than the threshold is not stale."""

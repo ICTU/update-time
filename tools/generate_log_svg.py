@@ -7,13 +7,13 @@ and theme a run uses, then exported as an SVG, so the README shows exactly how t
 import io
 import logging
 import re
+import time
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
+from typing import Final
 
 from rich.console import Console
 
-from tools.log_fixtures import VULNERABILITY, reference, stale_publication_date
 from update_time.domain.dependency import Changes, DependencyVersion, Release
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import LOG_THEME
@@ -21,40 +21,7 @@ from update_time.io.log import Logger, configure_logging
 from update_time.primitives.digest import SHA256_HEX_CHARS
 from update_time.primitives.location import Location
 
-
-@dataclass(frozen=True)
-class _LogOutput:
-    """The sample log output in the two forms the README embeds: the SVG screenshot and its plain-text fallback."""
-
-    svg: str
-    text: str
-
-
-class _FixedTime(logging.Filter):
-    """Pin every record's timestamp so the screenshot never changes just because the clock moved."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Overwrite the record's creation time with a fixed timestamp and keep the record."""
-        # Use a naive datetime, so it always renders as 09:14:03 regardless of the machine local timezone.
-        record.created = datetime(2026, 7, 10, 9, 14, 3).timestamp()  # noqa: DTZ001
-        return True
-
-
-def _portable(svg: str) -> str:
-    """Make Rich's SVG render inline on GitHub, where it is embedded as an `<img>` from raw.githubusercontent.com.
-
-    Two tweaks. The first copies the `viewBox` size onto the `<svg>` element, since Rich emits none and a
-    size-less SVG shows as a broken image in Safari and renders tiny elsewhere. The second drops each
-    `@font-face`'s external CDN `url(...)` source, which the raw host's `sandbox` CSP blocks and some renderers
-    reject outright, leaving only the `local(...)` source so text falls back to a system monospace font.
-    """
-    match = re.search(r'viewBox="0 0 (\S+) (\S+)"', svg)
-    if match is None:  # pragma: no cover - Rich always emits a viewBox
-        message = "Rich SVG has no viewBox to size the <img> from"
-        raise ValueError(message)
-    width, height = match.groups()
-    svg = svg.replace('<svg class="rich-terminal"', f'<svg class="rich-terminal" width="{width}" height="{height}"', 1)
-    return re.sub(r",\s*url\([^)]+\)\s*format\([^)]+\)", "", svg)
+from .log_fixtures import VULNERABILITY, reference, stale_publication_date
 
 
 def generate() -> _LogOutput:
@@ -70,7 +37,7 @@ def generate() -> _LogOutput:
     log = Logger("update-time")
 
     # A representative digest, padded to the exact length of a real one so `_LogHighlighter` recognises and dims it.
-    digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
+    digest = f"sha256:{f'9f2c1e7b{"d4" * SHA256_HEX_CHARS}'[:SHA256_HEX_CHARS]}"
     changelog = Changes(
         "Changed in 4.15.0\n"
         "- :zap: Fantastic new features\n"
@@ -92,3 +59,44 @@ def generate() -> _LogOutput:
     svg = console.export_svg(title="update-time", unique_id="update-time-log")
     text = "\n".join(line.rstrip() for line in plain_text.splitlines())  # strip the trailing render padding
     return _LogOutput(svg=_portable(svg), text=text)
+
+
+class _FixedTime(logging.Filter):
+    """Pin every record's timestamp so the screenshot never changes just because the clock moved."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Overwrite the record's creation time with a fixed timestamp and keep the record."""
+        # Read the time as local time, so it renders as 09:14:03 in every timezone. An isdst of -1 lets mktime decide
+        # whether daylight saving time applies on that date.
+        record.created = time.mktime((2026, 7, 10, 9, 14, 3, 0, 0, -1))
+        return True
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _LogOutput:
+    """The sample log output in the two forms the README embeds: the SVG screenshot and its plain-text fallback."""
+
+    svg: str
+    text: str
+
+
+def _portable(svg: str) -> str:
+    """Make Rich's SVG render inline on GitHub, where it is embedded as an `<img>` from raw.githubusercontent.com.
+
+    Two tweaks. The first copies the `viewBox` size onto the `<svg>` element, since Rich emits none and a
+    size-less SVG shows as a broken image in Safari and renders tiny elsewhere. The second drops each
+    `@font-face`'s external CDN `url(...)` source, which the raw host's `sandbox` CSP blocks and some renderers
+    reject outright, leaving only the `local(...)` source so text falls back to a system monospace font.
+    """
+    match = _MATCH_PATTERN.search(svg)
+    if match is None:  # pragma: no cover - Rich always emits a viewBox
+        message = "Rich SVG has no viewBox to size the <img> from"
+        raise ValueError(message)
+    size = f'width="{match["width"]}" height="{match["height"]}"'
+    svg = svg.replace('<svg class="rich-terminal"', f'<svg class="rich-terminal" {size}', 1)
+    return _PORTABLE_PATTERN.sub("", svg)
+
+
+_MATCH_PATTERN: Final[re.Pattern[str]] = re.compile(r'viewBox="0 0 (?P<width>\S+) (?P<height>\S+)"')
+
+_PORTABLE_PATTERN: Final[re.Pattern[str]] = re.compile(r",\s*url\([^)]+\)\s*format\([^)]+\)")

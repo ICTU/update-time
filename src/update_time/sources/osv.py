@@ -7,7 +7,8 @@ naming the action, and Update-time matches the version itself.
 
 from dataclasses import dataclass
 from functools import cache, reduce
-from typing import TYPE_CHECKING, NotRequired, Self, TypedDict
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final, NotRequired, Self, TypedDict
 
 from cvss import CVSS3, CVSS4
 from cvss.exceptions import CVSSError
@@ -17,123 +18,14 @@ from packaging.version import InvalidVersion, Version
 from update_time.domain.vulnerability import Ecosystem, Vulnerability
 from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
-from update_time.sources.github import repository_of
+
+from .github import repository_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from update_time.domain.reference import Reference
-
-_LOG = get_logger("osv")
-
-
-# The name OSV gives each ecosystem.
-_OSV_ECOSYSTEMS = {
-    Ecosystem.PYPI: "PyPI",
-    Ecosystem.NPM: "npm",
-    Ecosystem.MAVEN: "Maven",
-    Ecosystem.GITHUB_ACTIONS: "GitHub Actions",
-}
-
-
-def _matches_versions(ecosystem: Ecosystem) -> bool:
-    """Return whether OSV matches a version against the ecosystem's advisories, which it does not for actions."""
-    return ecosystem is not Ecosystem.GITHUB_ACTIONS
-
-
-def _package_name(ecosystem: Ecosystem, dependency: str) -> str:
-    """Return the name OSV knows the dependency by in the ecosystem: for an action, the repository holding it."""
-    return str(repository_of(dependency)) if ecosystem is Ecosystem.GITHUB_ACTIONS else dependency
-
-
-class _Severity(TypedDict):
-    """A severity an advisory reports, as a CVSS vector string of the named version."""
-
-    type: str
-    score: str
-
-
-# One step of a range: the version that introduces the vulnerability, that fixes it, or that it last affects, keyed
-# by `introduced`, `fixed`, or `last_affected`.
-type _Event = dict[str, str]
-
-
-class _Range(TypedDict):
-    """A range of versions or commits, as events that say in order which of them are affected."""
-
-    type: str
-    events: list[_Event]
-
-
-class _Package(TypedDict):
-    """A dependency as OSV knows it: its name, and the ecosystem it belongs to."""
-
-    name: str
-    ecosystem: str
-
-
-class _Affected(TypedDict):
-    """An advisory's affected versions of one dependency, listed one by one or stated as ranges."""
-
-    package: NotRequired[_Package]
-    versions: NotRequired[list[str]]
-    ranges: NotRequired[list[_Range]]
-    database_specific: NotRequired[dict[str, str]]
-
-
-class _Record(TypedDict):
-    """One database's OSV record: what it is about, how bad its reviewers judged it to be, and what else names it.
-
-    OSV types the `aliases` and `severity` arrays as an array or null, so a database that states neither may state a
-    null rather than leave the field out.
-    """
-
-    id: str
-    aliases: NotRequired[list[str] | None]
-    summary: NotRequired[str]
-    severity: NotRequired[list[_Severity] | None]
-    database_specific: NotRequired[dict[str, str]]
-    affected: NotRequired[list[_Affected]]
-
-
-@dataclass(frozen=True)
-class _Query:
-    """What OSV is asked about a reference: the name OSV knows its dependency by, the ecosystem, and its version."""
-
-    name: str
-    ecosystem: Ecosystem
-    version: str  # Empty where OSV does not match the ecosystem's versions
-
-    @classmethod
-    def of(cls, reference: Reference, ecosystem: Ecosystem) -> Self:
-        """Return the query asking OSV about the reference."""
-        version = reference.current_version if _matches_versions(ecosystem) else ""
-        return cls(_package_name(ecosystem, reference.dependency), ecosystem, version)
-
-    @property
-    def package(self) -> _Package:
-        """Return the package OSV knows the dependency as."""
-        return {"name": self.name, "ecosystem": _OSV_ECOSYSTEMS[self.ecosystem]}
-
-    @property
-    def payload(self) -> dict[str, object]:
-        """Return the query as `/v1/query` and `/v1/querybatch` both take it."""
-        payload: dict[str, object] = {"package": self.package}
-        return payload | {"version": self.version} if self.version else payload
-
-
-# The CVSS vector versions OSV reports and the class that scores each, newest first, so an advisory carrying more
-# than one is read at its newest assessment. The two disagree on a quarter of the advisories carrying both.
-_CVSS_VERSIONS = (("CVSS_V4", CVSS4), ("CVSS_V3", CVSS3))
-
-# GitHub's risk levels, as the lowest CVSS base score each one covers, most severe first. A score below the `low`
-# band means the advisory reports no risk at all, which is no level to name. The levels are the ones `RISK_LEVELS`
-# orders, which the tests check these bands against, so that a level added to one is added to the other.
-_RISK_LEVEL_BANDS = ((9.0, "critical"), (7.0, "high"), (4.0, "moderate"), (0.1, "low"), (0.0, ""))
-
-
-_OSV = "https://osv.dev"
-_OSV_API = "https://api.osv.dev"
+    from update_time.io.log import Logger
 
 
 def get_vulnerabilities(references: Sequence[Reference], ecosystem: Ecosystem) -> list[list[Vulnerability] | None]:
@@ -151,11 +43,39 @@ def get_vulnerabilities(references: Sequence[Reference], ecosystem: Ecosystem) -
     ]
 
 
-def _vulnerabilities(query: _Query, version: str, *, has_advisories: bool | None) -> list[Vulnerability] | None:
-    """Return the vulnerabilities of the version, or None when OSV did not answer."""
-    if has_advisories is None:
-        return None
-    return _reported_vulnerabilities(query, version) if has_advisories else []
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Query:
+    """What OSV is asked about a reference: the name OSV knows its dependency by, the ecosystem, and its version."""
+
+    name: str
+    ecosystem: Ecosystem
+    version: str  # Empty where OSV does not match the ecosystem's versions
+
+    @classmethod
+    def of(cls, reference: Reference, ecosystem: Ecosystem) -> Self:
+        """Return the query asking OSV about the reference, which for an action names the repository holding it."""
+        version = reference.current_version if _matches_versions(ecosystem) else ""
+        if ecosystem is Ecosystem.GITHUB_ACTIONS:
+            return cls(name=str(repository_of(reference.dependency)), ecosystem=ecosystem, version=version)
+        return cls(name=reference.dependency, ecosystem=ecosystem, version=version)
+
+    @property
+    def payload(self) -> _QueryJSON:
+        """Return the query as `/v1/query` and `/v1/querybatch` both take it."""
+        payload: _QueryJSON = {"package": self.package}
+        if self.version:
+            payload["version"] = self.version
+        return payload
+
+    @property
+    def package(self) -> _Package:
+        """Return the package OSV knows the dependency as."""
+        return {"name": self.name, "ecosystem": _OSV_ECOSYSTEMS[self.ecosystem]}
+
+
+def _matches_versions(ecosystem: Ecosystem) -> bool:
+    """Return whether OSV matches a version against the ecosystem's advisories, which it does not for actions."""
+    return ecosystem is not Ecosystem.GITHUB_ACTIONS
 
 
 def _queries_with_advisories(queries: Sequence[_Query]) -> list[bool | None]:
@@ -168,10 +88,27 @@ def _queries_with_advisories(queries: Sequence[_Query]) -> list[bool | None]:
     asked. Such a query gets None rather than False.
     """
     payloads = [query.payload for query in queries]
-    batch = fetch_json(f"{_OSV_API}/v1/querybatch", _LOG, method="post", json={"queries": payloads}).value
-    results = batch.get("results", []) if batch is not None else []
-    answers = results[: len(queries)]
+    batch = fetch_json(
+        f"{_OSV_API}/v1/querybatch", _LOG, body=_BatchAnswerJSON, method="post", json={"queries": payloads}
+    ).value
+    answers = (batch.get("results", []) if batch is not None else [])[: len(queries)]
     return [bool(answer.get("vulns")) for answer in answers] + [None] * (len(queries) - len(answers))
+
+
+class _BatchAnswerJSON(TypedDict):
+    """OSV's answer to a batch of queries, an answer per query in the order of the queries.
+
+    The records in a batch answer carry their id and when they were last modified, and nothing else.
+    """
+
+    results: NotRequired[list[_QueryAnswerJSON]]
+
+
+def _vulnerabilities(query: _Query, version: str, *, has_advisories: bool | None) -> list[Vulnerability] | None:
+    """Return the vulnerabilities of the version, or None when OSV did not answer."""
+    if has_advisories is None:
+        return None
+    return _reported_vulnerabilities(query, version) if has_advisories else []
 
 
 def _reported_vulnerabilities(query: _Query, version: str) -> list[Vulnerability] | None:
@@ -188,8 +125,74 @@ def _advisory_records(query: _Query) -> list[_Record] | None:
     The request is cached, so references with the same query share it: two references to one action, or two pins of
     one version in different files.
     """
-    answer = fetch_json(f"{_OSV_API}/v1/query", _LOG, method="post", json=query.payload).value
+    answer = fetch_json(f"{_OSV_API}/v1/query", _LOG, body=_QueryAnswerJSON, method="post", json=query.payload).value
     return None if answer is None else answer.get("vulns", [])
+
+
+class _QueryAnswerJSON(TypedDict):
+    """OSV's answer to a query: the records of the advisories it holds for the query, left out where it holds none."""
+
+    vulns: NotRequired[list[_Record]]
+
+
+def _folded(vulnerabilities: list[Vulnerability]) -> list[Vulnerability]:
+    """Fold the advisories reporting one vulnerability into one, in the order they were first reported.
+
+    OSV answers with an advisory per database, so `django@3.2.0` returns 62 advisories covering 36 CVEs. An advisory
+    joins every vulnerability it shares an id with. Where a third advisory names two others, it folds them into one,
+    even when the two do not share an id. Where two rate alike, the fold keeps the earlier one.
+    """
+    folded: list[Vulnerability] = []
+    for vulnerability in vulnerabilities:
+        joined = [index for index, other in enumerate(folded) if other.names(vulnerability)]
+        merged = reduce(Vulnerability.merged, [folded[index] for index in joined] + [vulnerability])
+        folded = [other for index, other in enumerate(folded) if index not in joined]
+        folded.insert(joined[0] if joined else len(folded), merged)
+    return folded
+
+
+def _vulnerability(record: _Record) -> Vulnerability:
+    """Return the vulnerability the advisory record reports."""
+    return Vulnerability(
+        record["id"],
+        record.get("summary", ""),
+        _risk_level(record),
+        f"{_OSV}/{record['id']}",
+        frozenset(record.get("aliases") or []),
+    )
+
+
+def _risk_level(record: _Record) -> str:
+    """Return the record's risk level, or no level at all when it reports none Update-time can read.
+
+    A record GitHub reviewed states its level, upper-case, where Update-time reads it as the lower-case word the
+    marker language and the command line spell it with. One nobody reviewed states a CVSS vector at best, whose base
+    score bands into those same levels.
+    """
+    if level := record.get("database_specific", {}).get("severity", ""):
+        return level.lower()
+    vectors = {severity["type"]: severity["score"] for severity in record.get("severity") or []}
+    for version, cvss in _CVSS_VERSIONS:
+        if (vector := vectors.get(version)) is not None:
+            return _band(cvss, vector, record["id"])
+    return ""
+
+
+def _band(cvss: type[CVSS3 | CVSS4], vector: str, advisory: str) -> str:
+    """Return the level the vector's base score bands into, or no level when the vector cannot be scored.
+
+    A vector the `cvss` package refuses is a fault in the advisory, not in the project being scanned, so it is
+    warned about and leaves the advisory without a level, rather than ending the run over it.
+    """
+    try:
+        # The `cvss` package ships no type information, scores a v3 vector as a `Decimal` where it scores a v4 one
+        # as a float, and types the score as optional because construction sets it after initialising it to None.
+        # Converting is what the bands, which are floats, compare against; an unset score would band as no level.
+        score = float(cvss(vector).base_score or 0)
+    except CVSSError as error:
+        _LOG.malformed_cvss_vector(advisory, error)
+        return ""
+    return next(level for lowest, level in _RISK_LEVEL_BANDS if score >= lowest)
 
 
 def _records_naming_the_version(records: list[_Record], query: _Query, version: str) -> list[_Record]:
@@ -278,69 +281,92 @@ def _events_name(events: list[tuple[str, Version]], version: Version) -> bool:
     return named
 
 
-def _vulnerability(record: _Record) -> Vulnerability:
-    """Return the vulnerability the advisory record reports."""
-    return Vulnerability(
-        record["id"],
-        record.get("summary", ""),
-        _risk_level(record),
-        f"{_OSV}/{record['id']}",
-        frozenset(record.get("aliases") or []),
-    )
+class _Severity(TypedDict):
+    """A severity an advisory reports, as a CVSS vector string of the named version."""
+
+    type: str
+    score: str
 
 
-def _folded(vulnerabilities: list[Vulnerability]) -> list[Vulnerability]:
-    """Fold the advisories reporting one vulnerability into one, in the order they were first reported.
+# One step of a range: the version that introduces the vulnerability, that fixes it, or that it last affects, keyed
+# by `introduced`, `fixed`, or `last_affected`.
+type _Event = dict[str, str]
 
-    OSV answers with an advisory per database that carries the vulnerability, so a version's advisories are not
-    distinct vulnerabilities: `django@3.2.0` returns 62 advisories covering 36 CVEs. The advisories of one
-    vulnerability name each other, by their own ids as much as by the identifiers they share, so an advisory joins
-    every vulnerability it names something of, folding those into one. Two advisories naming nothing in common are
-    therefore read as one as soon as an advisory names both, whether it arrives before them, between them, or after
-    both. Each fold keeps the earlier advisory where the two rate alike, so the order OSV answered in is preserved.
+
+class _Range(TypedDict):
+    """A range of versions or commits, as events that say in order which of them are affected."""
+
+    type: str
+    events: list[_Event]
+
+
+class _Package(TypedDict):
+    """A dependency as OSV knows it: its name, and the ecosystem it belongs to."""
+
+    name: str
+    ecosystem: str
+
+
+class _QueryJSON(TypedDict):
+    """A query OSV takes: the package, and the version where OSV matches the ecosystem's versions."""
+
+    package: _Package
+    version: NotRequired[str]
+
+
+class _Affected(TypedDict):
+    """An advisory's affected versions of one dependency, listed one by one or stated as ranges."""
+
+    package: NotRequired[_Package]
+    versions: NotRequired[list[str]]
+    ranges: NotRequired[list[_Range]]
+    database_specific: NotRequired[dict[str, str]]
+
+
+class _Record(TypedDict):
+    """One database's OSV record: what it is about, how bad its reviewers judged it to be, and what else names it.
+
+    OSV types the `aliases` and `severity` arrays as an array or null, so a database that states neither may state a
+    null rather than leave the field out.
     """
-    folded: list[Vulnerability] = []
-    for vulnerability in vulnerabilities:
-        joined = [index for index, other in enumerate(folded) if other.names(vulnerability)]
-        merged = reduce(Vulnerability.merged, [folded[index] for index in joined] + [vulnerability])
-        folded = [other for index, other in enumerate(folded) if index not in joined]
-        folded.insert(joined[0] if joined else len(folded), merged)
-    return folded
+
+    id: str
+    aliases: NotRequired[list[str] | None]
+    summary: NotRequired[str]
+    severity: NotRequired[list[_Severity] | None]
+    database_specific: NotRequired[dict[str, str]]
+    affected: NotRequired[list[_Affected]]
 
 
-def _risk_level(record: _Record) -> str:
-    """Return the record's risk level, or no level at all when it reports none Update-time can read.
-
-    A record GitHub reviewed states its level, upper-case, where Update-time reads it as the lower-case word the
-    marker language and the command line spell it with. One nobody reviewed states a CVSS vector at best, whose base
-    score bands into those same levels.
-    """
-    if level := record.get("database_specific", {}).get("severity", ""):
-        return level.lower()
-    return _banded_risk_level(record)
-
-
-def _banded_risk_level(record: _Record) -> str:
-    """Return the level the newest CVSS vector the record carries bands into, or none when it carries none."""
-    vectors = {severity["type"]: severity["score"] for severity in record.get("severity") or []}
-    for version, cvss in _CVSS_VERSIONS:
-        if (vector := vectors.get(version)) is not None:
-            return _band(cvss, vector, record["id"])
-    return ""
+# The name OSV gives each ecosystem.
+_OSV_ECOSYSTEMS: Final[MappingProxyType[Ecosystem, str]] = MappingProxyType(
+    {
+        Ecosystem.PYPI: "PyPI",
+        Ecosystem.NPM: "npm",
+        Ecosystem.MAVEN: "Maven",
+        Ecosystem.GITHUB_ACTIONS: "GitHub Actions",
+    }
+)
 
 
-def _band(cvss: type[CVSS3 | CVSS4], vector: str, advisory: str) -> str:
-    """Return the level the vector's base score bands into, or no level when the vector cannot be scored.
+# The CVSS vector versions OSV reports and the class that scores each, newest first, so an advisory carrying more
+# than one is read at its newest assessment. The two disagree on a quarter of the advisories carrying both.
+_CVSS_VERSIONS: Final[tuple[tuple[str, type[CVSS3 | CVSS4]], ...]] = (("CVSS_V4", CVSS4), ("CVSS_V3", CVSS3))
 
-    A vector the `cvss` package refuses is a fault in the advisory, not in the project being scanned, so it is
-    warned about and leaves the advisory without a level, rather than ending the run over it.
-    """
-    try:
-        # The `cvss` package ships no type information, scores a v3 vector as a `Decimal` where it scores a v4 one
-        # as a float, and types the score as optional because construction sets it after initialising it to None.
-        # Converting is what the bands, which are floats, compare against; an unset score would band as no level.
-        score = float(cvss(vector).base_score or 0)
-    except CVSSError as error:
-        _LOG.malformed_cvss_vector(advisory, error)
-        return ""
-    return next(level for lowest, level in _RISK_LEVEL_BANDS if score >= lowest)
+# GitHub's risk levels, as the lowest CVSS base score each one covers, most severe first. A score below the `low`
+# band means the advisory reports no risk at all, which is no level to name. The levels are the ones `RISK_LEVELS`
+# orders, which the tests check these bands against, so that a level added to one is added to the other.
+_RISK_LEVEL_BANDS: Final[tuple[tuple[float, str], ...]] = (
+    (9.0, "critical"),
+    (7.0, "high"),
+    (4.0, "moderate"),
+    (0.1, "low"),
+    (0.0, ""),
+)
+
+
+_OSV: Final[str] = "https://osv.dev"
+_OSV_API: Final[str] = "https://api.osv.dev"
+
+
+_LOG: Final[Logger] = get_logger("osv")

@@ -12,7 +12,6 @@ A `start` that opens no object yields nothing, so a section declared as anything
 A backticked run holding anything else — a `path:line`, an `# update-time: ignore` marker — is skipped here, and the twin check would skip it in any case, since no name the code binds has that shape.
 A bare word parses as a name, with no call in it.
 A branch names no version to resolve an update for.
-A channel names no version and carries no digit.
 A check about the version a reference is left on has none to run on where the reference pins none, so its scope holds nothing back there.
 A class a framework discovers is found by scanning the module rather than by importing it, and an entry point is reached by running its file, so neither has a caller to find and reporting it would buy nothing.
 A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
@@ -30,14 +29,11 @@ A flag rather than a plain enum, so the scopes a marker steers combine into one 
 A floating tag's labels are kept where an alias carries them, so an alias carrying more of them outranks one carrying fewer, and a tag whose labels no single alias carries together still lands on one carrying some.
 A label no alias carries names a channel, and requiring it would leave no alias to pick from, so it is left out.
 A level added to one and not the other would leave scores banding to a level nothing compares against, or a threshold no score can reach.
-A line that carries no reference (no `regexp` match) is left untouched — a marker on it is for the line below.
 A line the regexp doesn't match is skipped, since it carries no reference and a marker on it belongs to the line below.
-A local action carries no `@`, so it doesn't match at all.
 A location a file format resolves for one entry names the column too, so an entry sharing its line with another is told apart from it.
 A marker that holds a scope back carries no text, because the scope has one spelling, which the warning spells out.
 A mock records every argument it was called with, and Update-time passes its credentials to `requests` as arguments, so a failing assertion about a mocked request would print them.
 A moderate vulnerability the advisory item does not name.
-A mutation is applied in memory, so no file on disk is touched and an interrupted run cannot leave a source file broken.
 A name mapped to None is an entry with no file to fetch, as a directory is.
 A path the user named on the command line stays a plain `Path` instead (see `_render_field`).
 A printf-style interpolation, such as a log message's ``: a value rather than prose.
@@ -104,7 +100,6 @@ Coverage stays at 100%, and `just test` enforces it, so you need no separate cov
 Create PyPI release metadata without project URLs, so the test needs no changelog response mocked.
 Don't say "Updating …" when checking whether there are any updates because there may well be no updates.
 Drop a test from the list only once every test on it passes, or when I tell you to drop it.
-Drop parentheses that are no aside: those without word content, and word-attached ones like `(re)writes`.
 Each case declares the same package with a specifier that pins no exact version: another of the PEP 440 operators, or a `==` naming a range.
 Each case: the directive list, the marker it expresses, and the verbatim text the marker keeps.
 Each directive a source may be unable to apply, keyed by the text the warning names it with.
@@ -163,7 +158,6 @@ Return a GitHub contents listing entry for the name, one with no file to fetch w
 Return a message for each dependency type with no section of its own, and each section documenting none.
 Return a message for each internal link that points at an anchor no heading in the document provides.
 Return each test the run reported as failing, once, in the order reported.
-Return every `Location(...)` the sample generators build.
 Return every dependency the file declares, each parsed once and located and marked at the line declaring it.
 Return every directive the marker's `vulnerable` scope carries, as the language spells them.
 Return every id this vulnerability is known by: its own advisory id and its aliases.
@@ -265,7 +259,6 @@ Test that a scope the marker does not hold back names no directive.
 Test that a scope whose check needs a version reports that the requirement pins no version.
 Test that a second identifier behind a comma is reported as an invalid item, naming no advisory.
 Test that a section in the details chapter naming no declared dependency type is reported.
-Test that a section or subsection heading gets no entry, so the table of contents lists chapters only.
 Test that a snapshot tag the registry serves no manifest for keeps its tag, with no digest to pin it.
 Test that a snippet the file doesn't hold leaves the file alone and runs no command.
 Test that a tag naming a Python object is refused, so reading a file constructs no arbitrary object.
@@ -294,7 +287,6 @@ Test that an unreachable registry yields no publication date instead of crashing
 Test that an unreachable registry yields no release instead of crashing.
 Test that empty npm output (e.g. from a failed command) is treated as no data rather than crashing.
 Test that every scope a marker can hold back has a row, so a scope added later is judged as the rest are.
-Test that fixtures.py defines no function or class, so behaviour is only ever added to helpers.py.
 Test that input holding no separator line is reported, rather than read as one snippet.
 Test that metadata naming no GitHub URL yields no changelog, without raising and without asking GitHub.
 Test that no authorization header is built when no credentials are configured.
@@ -317,7 +309,6 @@ Test that the field named `dependency` is wrapped, so no log method has to rende
 Test that the filter keeps the record, so pinning the time drops no line from the screenshot.
 Test that the full digest gets a single `repr.digest` span and no leftover fragment sub-spans inside it.
 Test that the listing is read until a page holds no alias, which is what says the aliases are exhausted.
-Test that the shared fixtures.py imports no helpers, so the dependency runs from helpers to fixtures.
 Test that the usage is reported when no file is named.
 Test that timestamps that are all absent yield None, as no timestamps at all do.
 Test that unreadable input leaves the file alone and runs no command.
@@ -329,7 +320,6 @@ The `++` and the `[^"]*` match each pair without giving characters back.
 The `changelog` directory answers a text naming no version, rather than raising, so a request for it fails the assertion below rather than the whole test.
 The `cvss` package ships no type information, scores a v3 vector as a `Decimal` where it scores a v4 one as a float, and types the score as optional because construction sets it after initialising it to None.
 The `item` is the text its creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.
-The advisories of one vulnerability name each other, by their own ids as much as by the identifiers they share, so an advisory joins every vulnerability it names something of, folding those into one.
 The advisory the sample vulnerability warning names, rated critical so it is reported at every risk level.
 The advisory the updater tests pin django to a vulnerable version for, and what Update-time reads it as.
 The attribute a decorated test carries, holding the mutations it registers.
@@ -343,7 +333,6 @@ The checks a dependency gets when a package manager updates it rather than Updat
 The checks the updaters that delegate to uv run over the dependencies their files declare.
 The code mentions the quoted name itself, so no rename moved it.
 The concepts the tool reasons about, and what a source must be able to answer about them.
-The converse of the rules above: a name spelled with a leading underscore claims no caller outside its module, so an import elsewhere means the spelling and the fact have parted company.
 The cooldown probe returns a value, so Update-time adds no cooldown of its own:.
 The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date.
 The declared hash is passed in rather than read from `reference`, because the URL's line carries no hash — only the dictionary's line does.
@@ -351,7 +340,6 @@ The default for a release fixture no test asks project URLs of.
 The dependency types every table has to answer for, in the order the tables have to list them in.
 The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 The directory a monorepo builds the package from.
-The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
 The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no room for it, so each reference closes over its own.
 The file type each updater scans, and the function that scans it.
 The first request batches every pin the check looks up; the ones after it follow from what it answered.
@@ -380,7 +368,6 @@ The names a repository gives the directory it keeps its documentation in, compar
 The names an updater hands its file type to: `glob_for` where it walks the files itself, `update_yaml_files` where the walk is done for it because each file is parsed before its references are rewritten.
 The null download URL of the `news` directory answers a text naming no version, rather than raising.
 The number of lines a version's changes are cut at where no later version ends them.
-The number of positional arguments an equality assertion compares, and so the fewest it can be reported on.
 The other ids this vulnerability is known by.
 The package.json a test is given unless it needs another: an engine to update, and nothing else.
 The parallel ones need no list of their own, since which scripts exist at all is pinned against the files on disk.
@@ -414,7 +401,6 @@ The two ways a version bound can be redundant for the current version (see `Vers
 The upload after it names no version, and the file without an upload time names no date.
 The versions no goal may adopt.
 The volta pin is steered by no marker.
-The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about another check answer it with an index that lists no version and no distribution file to read a yank from.
 These warnings are informational, so they change no file and do not affect the exit status.
 They are sorted, since a `frozenset` keeps no order, and a marker split over two placements reaches them in the order they merged rather than the order they were written.
 This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces.
@@ -438,7 +424,6 @@ Update-time adds no hash pin to a Python dependency.
 Update-time checks each pin a Python file declares against the newest release of its package on PyPI and reports the stale ones.
 Update-time checks the version the run leaves the reference on.
 Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
-Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method); it adds no mock argument.
 Warn about a `cooldown` marker on a reference whose source reports no publication date to measure a cooldown against, instead of accepting it in silence.
 Warn about a `stale` marker on a reference whose source reports no publication date to measure staleness against, instead of accepting it in silence.
 Warn when the hash the dictionary declares differs from the one jsDelivr serves for the URL's version.
@@ -454,17 +439,13 @@ Yield each line with its number, empty where the line is a code fence or sits in
 `=` is no PEP 440 operator.
 `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.
 `allow` naming one would keep that warning and drop the warning about every other advisory, which is a rule the language does not offer, so `allow[vulnerable=ID]` names no advisory.
-`allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default: `allow[hash-drift]` adopts a drifted hash pin, and `allow[floating-pin]` keeps a tag naming no version as it is rather than pinning it to the version it serves.
 `marker` steers every dependency the file declares, since they share the array's line (see `pyproject`).
-`reason` is why the source cannot apply it, and `without_a_version` why it holds nothing back for a reference that pins no version, which is None for a directive such a reference still steers something with.
-`resolved` is that hand-over, empty while no resolved URL is waiting for its dictionary.
 `update` is the one scope with no row: every source resolves a version, so there is no capability a source could lack for it.
 a Docker Hub token response carrying no token ends the run with a traceback.
 a JSON key naming no version is read as a feature reference without a tag.
 a TOML escape: the spec parses as `pkg>=1.0`.
 a `<5` bound on a v4 pin is live, so no redundancy warning.
 a changelog underlining its headings with backticks or tildes reports no changes at all, its file read as one fenced code block.
-a cooldown steers an update, and no update is resolved for such a reference.
 a decorated test reports under the wrapper's name, so a failing run names no test.
 a decorated test the checked test reaches stands aside too, so its mutations go unchecked.
 a dependency type that declares no file goes unnoticed, and the help stops naming its files.
@@ -501,7 +482,6 @@ a version the registry dates nowhere in its time map ends the run with a traceba
 an unknown tag reaches no constructor, so a Compose override file reads as unparsable.
 every mutation the test did not kill is reported with the first one's regression.
 it names the empty base image Docker builds from, which no registry serves.
-nltk ships no `py.typed` marker, so mypy has no types to resolve for it.
 noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword.
 npm normalizes specs such as `git+https://...` URLs to the `github:` shorthand whenever it saves the manifest, which previously produced a spurious diff even when no version changed; the original file is now restored unless a registry version was actually updated.
 on disk but registered for no dependency type.

@@ -10,10 +10,11 @@ from update_time.domain.reference import combined_marker
 from update_time.io.log import ToolTask, get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files import compiled_requirements_txt
-from update_time.manifests import requirements_txt
+from update_time.manifests.requirements_txt import declarations, holds_line, prepend_line
 from update_time.markers.report import warn_if_the_bound_is_redundant
-from update_time.package_managers.moved_versions import by_package, log_moved_versions
 from update_time.primitives.command import Command
+
+from .moved_versions import by_package, log_moved_versions
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -51,15 +52,6 @@ class RequirementsCompiler(ABC):
         elif not self._recompiled(command):
             self.log.tool_failed(self.compiled.path, ToolTask.RECOMPILE, self.tool)
 
-    @property
-    def _managed_by_comment_line(self) -> str:
-        """Return the line in a source that says Update-time sets the cutoff the compiled file's header records."""
-        cutoff = self.cutoff_option.removeprefix("--")
-        return (
-            f"# Update-time sets the {cutoff} in the compiled file's header; remove this line to set the {cutoff} "
-            "yourself"
-        )
-
     def _recompiled(self, command: Command) -> bool:
         """Recompile the file with the command, and return whether the tool succeeded."""
         compiled = self.compiled
@@ -67,11 +59,9 @@ class RequirementsCompiler(ABC):
         # writes the managed-by comment on a line of its own at the top of the file's source instead. It recognises the
         # comment by its whole line, since a marker in a source holds `update-time` as well.
         line = self._managed_by_comment_line
-        commented = any(requirements_txt.holds_line(source, line) for source in compiled.sources)
-        declarations = [
-            declaration for source in compiled.sources for declaration in requirements_txt.declarations(source)
-        ]
-        steering = by_package(declarations)
+        commented = any(holds_line(source, line) for source in compiled.sources)
+        references = [declaration for source in compiled.sources for declaration in declarations(source)]
+        steering = by_package(references)
         if option := self.package_cooldown_option:
             command = command.without_option(option)
         command, cooldown = self._managed_cutoff(command, commented=commented)
@@ -83,10 +73,19 @@ class RequirementsCompiler(ABC):
         if compiled.writes_to_standard_output:
             compiled.path.write_text(result.stdout)
         if cooldown and not commented:
-            requirements_txt.prepend_line(compiled.first_source, line)
+            prepend_line(compiled.first_source, line)
             self.log.configured_compiled_file_cooldown(compiled.first_source, compiled.path, cooldown, self.setting)
-        self._report_moved_versions(command.executable, declarations)
+        self._report_moved_versions(command.executable, references)
         return True
+
+    @property
+    def _managed_by_comment_line(self) -> str:
+        """Return the line in a source that says Update-time sets the cutoff the compiled file's header records."""
+        cutoff = self.cutoff_option.removeprefix("--")
+        return (
+            f"# Update-time sets the {cutoff} in the compiled file's header; remove this line to set the {cutoff} "
+            "yourself"
+        )
 
     def _managed_cutoff(self, command: Command, *, commented: bool) -> tuple[Command, str | None]:
         """Return the command without the cutoff Update-time manages, and the cooldown to pass in its place.
@@ -120,15 +119,6 @@ class RequirementsCompiler(ABC):
             word for name, days in cooldowns if days is not None for word in (option, f"{name}={self.duration(days)}")
         ]
 
-    def _report_moved_versions(self, executable: str, declarations: Iterable[Reference]) -> None:
-        """Report where the recompile moved a version, up or back: at each line in the sources declaring the package.
-
-        A requirement pinning an exact version is left out, since its version moved in the source and was reported
-        there.
-        """
-        after = compiled_requirements_txt.CompiledRequirementsTxt.read(self.compiled.path).pins
-        log_moved_versions(self.log, executable, self.compiled.pins, after, declarations)
-
     def _upgrades(self, declarations: _ByPackage) -> list[str]:
         """Return an `--upgrade-package` option for each of the file's pins that its markers do not hold back.
 
@@ -152,6 +142,15 @@ class RequirementsCompiler(ABC):
         """
         if not declaration.current_version:
             warn_if_the_bound_is_redundant(replace(declaration, current_version=pin.version), self.log)
+
+    def _report_moved_versions(self, executable: str, declarations: Iterable[Reference]) -> None:
+        """Report where the recompile moved a version, up or back: at each line in the sources declaring the package.
+
+        A requirement pinning an exact version is left out, since its version moved in the source and was reported
+        there.
+        """
+        after = compiled_requirements_txt.CompiledRequirementsTxt.read(self.compiled.path).pins
+        log_moved_versions(self.log, executable, self.compiled.pins, after, declarations)
 
 
 def _marker_of(pin: PinnedDependency, declarations: _ByPackage) -> Marker:

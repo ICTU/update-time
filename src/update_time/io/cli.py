@@ -4,69 +4,19 @@ import argparse
 import os
 from importlib.metadata import version
 from pathlib import Path
+from typing import Final
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, RISK_LEVELS, VULNERABILITY_LEVEL
-from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
-from update_time.io.log import LOG_LEVEL, LOG_LEVELS
 from update_time.primitives.iterables import unique
 from update_time.primitives.text import prose_list
 
-VERSION = version("update-time")
+from .filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
+from .log import LOG_LEVEL, LOG_LEVELS
 
-
-def _scanned_file_types() -> str:
-    """Return the file types the dependency types declare, listed.
-
-    A file type two dependency types declare, such as the `package.json` holding both npm dependencies and the Node
-    engine version, is named once.
-    """
-    names = (file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types)
-    return prose_list(unique(names))
-
-
-def days(value: str) -> int:
-    """Parse the value as a non-negative integer number of days."""
-    if (number := int(value)) < 0:
-        message = f"{value} is not a non-negative integer"
-        raise argparse.ArgumentTypeError(message)
-    return number
-
-
-def _directory(value: str) -> Path:
-    """Parse the value as the path to an existing directory."""
-    if not (path := Path(value)).is_dir():
-        message = f"{value} is not an existing directory"
-        raise argparse.ArgumentTypeError(message)
-    return path
-
-
-def _exclude_paths(value: str) -> list[Path]:
-    """Parse a comma-separated list of directories to exclude from the walk, each relative to the scan root.
-
-    Entries are normalised (trailing separators and redundant `.`/`..` segments collapsed). An absolute path, or one
-    that escapes the scan root (`../…`), is rejected: the option only narrows the tree, it can't redirect the walk.
-    """
-    paths = []
-    for entry in value.split(","):
-        if not (stripped := entry.strip()):
-            continue
-        if (path := Path(stripped)).is_absolute():
-            message = f"{stripped} is not a relative path"
-            raise argparse.ArgumentTypeError(message)
-        normalized = Path(os.path.normpath(path))
-        if normalized.parts and normalized.parts[0] == "..":
-            message = f"{stripped} is outside the scan root"
-            raise argparse.ArgumentTypeError(message)
-        paths.append(normalized)
-    return paths
-
-
-def _advisories(value: str) -> frozenset[str]:
-    """Parse a comma-separated list of advisory identifiers, each naming an advisory not to warn about."""
-    return frozenset(stripped for entry in value.split(",") if (stripped := entry.strip()))
+VERSION: Final[str] = version("update-time")
 
 
 def parse_args() -> argparse.Namespace:
@@ -165,3 +115,55 @@ def parse_args() -> argparse.Namespace:
             "pass --force to run anyway"
         )
     return args
+
+
+def _scanned_file_types() -> str:
+    """Return the file types the dependency types declare, listed.
+
+    A file type two dependency types declare, such as the `package.json` holding both npm dependencies and the Node
+    engine version, is named once.
+    """
+    names = (file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types)
+    return prose_list(unique(names))
+
+
+def _directory(value: str) -> Path:
+    """Parse the value as the path to an existing directory."""
+    if not (path := Path(value)).is_dir():
+        message = f"{value} is not an existing directory"
+        raise argparse.ArgumentTypeError(message)
+    return path
+
+
+def days(value: str) -> int:
+    """Parse the value as a non-negative integer number of days."""
+    if (number := int(value)) < 0:
+        message = f"{value} is not a non-negative integer"
+        raise argparse.ArgumentTypeError(message)
+    return number
+
+
+def _advisories(value: str) -> frozenset[str]:
+    """Parse a comma-separated list of advisory identifiers, each naming an advisory not to warn about."""
+    return frozenset(stripped for entry in value.split(",") if (stripped := entry.strip()))
+
+
+def _exclude_paths(value: str) -> list[Path]:
+    """Parse a comma-separated list of directories to exclude from the walk, each relative to the scan root.
+
+    Entries are normalised (trailing separators and redundant `.`/`..` segments collapsed). An absolute path, or one
+    that escapes the scan root (`../…`), is rejected: the option only narrows the tree, it can't redirect the walk.
+    """
+    paths = []
+    for entry in value.split(","):
+        if not (stripped := entry.strip()):
+            continue
+        if (path := Path(stripped)).is_absolute():
+            message = f"{stripped} is not a relative path"
+            raise argparse.ArgumentTypeError(message)
+        normalized = Path(os.path.normpath(path))
+        if normalized.parts and normalized.parts[0] == "..":
+            message = f"{stripped} is outside the scan root"
+            raise argparse.ArgumentTypeError(message)
+        paths.append(normalized)
+    return paths

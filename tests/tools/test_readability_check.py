@@ -7,6 +7,7 @@ import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Final
 from unittest.mock import Mock, patch
 
 from tools import readability_check
@@ -31,21 +32,16 @@ from tools.readability_check import (
 
 from mutation_time.mutation import kills
 
-from tests.helpers import FakeFiles, mock_path
+from tests.file_mocks import FakeFiles, mock_path
 
 # Every fixture below stays under these limits, so a case reports the rule under test alone.
-_RELAXED = _Limits(complexity=10, words=50, density=1.0)
-
-
-def _cache_text(verdicts: dict[str, str], key: str = "") -> str:
-    """Return the text of a cache holding the verdicts under the key, or under the current key where none is given."""
-    return json.dumps({"key": key or _cache_key(_Limits()), "verdicts": verdicts})
+_RELAXED: Final[_Limits] = _Limits(complexity=10, words=50, density=1.0)
 
 
 # The snippets of code that `IsCodeTest` names its cases by. Only the first of them parses as it is.
-_ACROSS_LINES = "def test_changes(self):\n    self.assertTrue(matches(name))\n"
-_HEADER_ALONE = 'for name in filter(None, parts.split(".")):'
-_FLATTENED_BLOCK = "if found:\nanchor = getattr(anchor, name)"
+_ACROSS_LINES: Final[str] = "def test_changes(self):\n    self.assertTrue(matches(name))\n"
+_HEADER_ALONE: Final[str] = 'for name in filter(None, parts.split(".")):'
+_FLATTENED_BLOCK: Final[str] = "if found:\nanchor = getattr(anchor, name)"
 
 
 class IsCodeTest(unittest.TestCase):
@@ -53,7 +49,7 @@ class IsCodeTest(unittest.TestCase):
 
     @kills.replace(
         readability_check._is_code,
-        "(source, block):",
+        r'(source, f"{header}\n{textwrap.indent(body, _INDENT)}\n{_INDENT}pass"):',
         "(source,):",
         "the check measures a snippet as prose when it does not parse on its own, so code reads as a sentence",
         case=_HEADER_ALONE,
@@ -74,8 +70,8 @@ class IsCodeTest(unittest.TestCase):
     )
     @kills.replace(
         readability_check._is_code,
-        "for candidate in (source, block):",
-        'for candidate in (source.split("\\n")[0], block):',
+        "for candidate in (source,",
+        'for candidate in (source.split("\\n")[0],',
         "a snippet is tried by its first line alone, so a test case across lines reads as prose",
         case=_ACROSS_LINES,
     )
@@ -102,19 +98,18 @@ class IsCodeTest(unittest.TestCase):
 class ExtractProseFromPythonTest(unittest.TestCase):
     """Unit tests for the prose extracted from a Python file."""
 
-    def prose(self, source_code: str) -> list[str]:
-        """Return the text of each run of prose the extractor finds in the source code."""
-        return [prose.text for prose in _extract_prose_from_python(mock_path(source_code))]
-
     def test_standalone_comments_join(self):
         """Test that consecutive standalone comments join, so a sentence across them is measured whole."""
         source_code = "# A sentence that starts here\n# and ends on the next line.\nversion = 1\n"
         self.assertEqual(self.prose(source_code), ["A sentence that starts here and ends on the next line."])
 
+    def prose(self, source_code: str) -> list[str]:
+        """Return the text of each run of prose the extractor finds in the source code."""
+        return [prose.text for prose in _extract_prose_from_python(mock_path(source_code))]
+
     def test_an_f_string_is_measured_once(self):
         """Test that an f-string's literal parts are measured with it, rather than again as literals of their own."""
-        source_code = 'msg = f"{name}\'s widgets"\n'
-        self.assertEqual(self.prose(source_code), ["'s widgets."])
+        self.assertEqual(self.prose('msg = f"{name}\'s widgets"\n'), ["'s widgets."])
 
     def test_raw_string_is_not_prose(self):
         """Test that a raw string is left out whether it interpolates or not, and whatever the case of its prefix.
@@ -155,26 +150,24 @@ class ExtractProseFromPythonTest(unittest.TestCase):
     def test_quoted_regexp_is_not_prose(self):
         """Test that a quoted string of backslashes is left out, since it reads as a regexp rather than a sentence."""
         backslashes = "\\\\" * 6  # Six escaped backslashes, one more than a sentence is allowed.
-        source_code = f'pattern = "{backslashes}"\ncomment = "A sentence."\n'
-        self.assertEqual(self.prose(source_code), ["A sentence."])
+        self.assertEqual(self.prose(f'pattern = "{backslashes}"\ncomment = "A sentence."\n'), ["A sentence."])
 
 
 class ExtractProseFromMarkdownTest(unittest.TestCase):
     """Unit tests for the prose extracted from a Markdown file."""
-
-    def prose(self, markdown: str) -> list[str]:
-        """Return the text of each run of prose the extractor finds in the Markdown."""
-        return [prose.text for prose in _extract_prose_from_markdown(mock_path(markdown))]
 
     def test_code_block_is_skipped(self):
         """Test that the lines inside a fenced code block are not prose, and neither are the fences."""
         markdown = "Before the block.\n```console\nnot prose at all\n```\nAfter the block.\n"
         self.assertEqual(self.prose(markdown), ["Before the block.", "After the block."])
 
+    def prose(self, markdown: str) -> list[str]:
+        """Return the text of each run of prose the extractor finds in the Markdown."""
+        return [prose.text for prose in _extract_prose_from_markdown(mock_path(markdown))]
+
     def test_table_row_is_skipped(self):
         """Test that a table row is not prose, since its cells are not sentences."""
-        markdown = "| Marker | Effect |\n| ------ | ------ |\nA sentence.\n"
-        self.assertEqual(self.prose(markdown), ["A sentence."])
+        self.assertEqual(self.prose("| Marker | Effect |\n| ------ | ------ |\nA sentence.\n"), ["A sentence."])
 
     def test_heading_is_its_own_sentence(self):
         """Test that a heading is a sentence of its own, read without its leading hashes."""
@@ -191,16 +184,11 @@ class ExtractProseFromMarkdownTest(unittest.TestCase):
 
     def test_blank_line_is_not_prose(self):
         """Test that a line with nothing on it but whitespace yields nothing to measure."""
-        markdown = "A sentence.\n\n   \nAnother sentence.\n"
-        self.assertEqual(self.prose(markdown), ["A sentence.", "Another sentence."])
+        self.assertEqual(self.prose("A sentence.\n\n   \nAnother sentence.\n"), ["A sentence.", "Another sentence."])
 
 
 class ExtractProseTest(unittest.TestCase):
     """Unit tests for finding the files to extract prose from, and handing each to the extractor for its kind."""
-
-    def prose(self, *paths: Mock) -> list[str]:
-        """Return the text of each run of prose found under the paths."""
-        return [prose.text for prose in _extract_prose(*paths)]
 
     def test_a_path_that_is_itself_a_matching_file(self):
         """Test that a file the glob matches is read as it is, rather than searched in."""
@@ -208,6 +196,10 @@ class ExtractProseTest(unittest.TestCase):
         python_file.is_file.return_value = True
         python_file.match.side_effect = lambda glob: glob == "*.py"
         self.assertEqual(self.prose(python_file), ["A comment sentence."])
+
+    def prose(self, *paths: Mock) -> list[str]:
+        """Return the text of each run of prose found under the paths."""
+        return [prose.text for prose in _extract_prose(*paths)]
 
     def test_a_directory_is_searched_for_each_glob(self):
         """Test that a directory is searched with every glob, and each file handed to the extractor for its kind."""
@@ -269,10 +261,9 @@ class FaultsTest(unittest.TestCase):
         "no sentence is reported for splitting its subject from its verb, so the fault goes unreported",
         case="a clause between the subject and its verb",
     )
-    @kills.replace(
-        readability_check._faults,
-        "_without_asides(sentence)",
-        "sentence",
+    @kills.force_false(
+        readability_check._tagged,
+        "_ASIDE.search(sentence)",
         "an aside's noun phrase reads as a clause wedged into the subject, so plain prose is reported",
         case="an aside holds the noun phrase",
     )
@@ -354,13 +345,13 @@ class FaultsTest(unittest.TestCase):
     )
     @kills.delete(
         readability_check._is_plain,
-        "_denies_existence(tagged, index) or ",
+        "denies_existence or ",
         "`there is no new version` is reported, though that is how plain prose says it",
         case="a negation denying that anything exists",
     )
     @kills.delete(
         readability_check._is_plain,
-        " or _denies_possession(tagged, index)",
+        " or denies_possession",
         "`has no message to include` is reported, though that is how plain prose says it",
         case="a negation denying that the subject has something",
     )
@@ -419,13 +410,13 @@ class TaggedTest(unittest.TestCase):
 
 
 @patch("tools.readability_check.nltk")
-@patch("tools.readability_check.PunktTokenizer")
+@patch("tools.readability_check.load_punkt_params")
 class InstallDataTest(unittest.TestCase):
     """Unit tests for fetching the nltk datasets ahead of a run that cannot fetch them itself."""
 
-    def test_both_datasets_are_fetched(self, tokenizer: Mock, nltk: Mock):
+    def test_both_datasets_are_fetched(self, load_punkt_params: Mock, nltk: Mock):
         """Test that a run given `--install-data` fetches the splitter and the tagger, and reports success."""
-        tokenizer.side_effect = [LookupError, Mock()]
+        load_punkt_params.side_effect = [LookupError, Mock()]
         nltk.pos_tag.side_effect = [LookupError, Mock()]
         with patch.object(sys, "argv", ["check", "--install-data"]):
             self.assertEqual(main(), 0)
@@ -434,25 +425,30 @@ class InstallDataTest(unittest.TestCase):
 
 
 @patch("tools.readability_check.nltk")
-@patch("tools.readability_check.PunktTokenizer")
+@patch("tools.readability_check.load_punkt_params")
+@patch("tools.readability_check.PunktSentenceTokenizer")
 class SentenceTokenizerTest(unittest.TestCase):
     """Unit tests for the sentence splitter the check measures with."""
 
-    def test_abbreviations_are_taught(self, punkt_tokenizer: Mock, nltk: Mock):
+    def test_abbreviations_are_taught(self, punkt_sentence_tokenizer: Mock, load_punkt_params: Mock, nltk: Mock):
         """Test that the splitter is taught the abbreviations that would otherwise end a sentence for it."""
-        tokenizer = punkt_tokenizer.return_value
-        self.assertIs(_sentence_tokenizer(), tokenizer)
-        tokenizer._params.abbrev_types.update.assert_called_once_with(_ABBREVIATIONS)
+        parameters = load_punkt_params.return_value
+        self.assertIs(_sentence_tokenizer(), punkt_sentence_tokenizer.return_value)
+        nltk.data.find.assert_called_once_with("tokenizers/punkt_tab/english/")
+        load_punkt_params.assert_called_once_with(nltk.data.find.return_value)
+        parameters.abbrev_types.update.assert_called_once_with(_ABBREVIATIONS)
+        punkt_sentence_tokenizer.assert_called_once_with(parameters)
         nltk.download.assert_not_called()  # The data was there, so nothing was fetched.
 
-    def test_missing_data_is_downloaded(self, punkt_tokenizer: Mock, nltk: Mock):
+    def test_missing_data_is_downloaded(self, punkt_sentence_tokenizer: Mock, load_punkt_params: Mock, nltk: Mock):
         """Test that missing punkt data is fetched into the directory the splitter searches."""
-        built = Mock()
-        punkt_tokenizer.side_effect = [LookupError, built]
-        self.assertIs(_sentence_tokenizer(), built)
+        loaded = Mock()
+        load_punkt_params.side_effect = [LookupError, loaded]
+        self.assertIs(_sentence_tokenizer(), punkt_sentence_tokenizer.return_value)
         nltk.data.path.append.assert_called_once_with(".nltk")
         nltk.download.assert_called_once_with("punkt_tab", quiet=True, download_dir=".nltk")
-        built._params.abbrev_types.update.assert_called_once_with(_ABBREVIATIONS)
+        loaded.abbrev_types.update.assert_called_once_with(_ABBREVIATIONS)
+        punkt_sentence_tokenizer.assert_called_once_with(loaded)
 
 
 class WhitelistedSentencesTest(unittest.TestCase):
@@ -473,7 +469,8 @@ class VerdictsTest(unittest.TestCase):
 
     def test_a_sentence_repeated_within_a_run_is_scored_once(self):
         """Test that a sentence the run meets twice, and the cache does not hold, is scored the first time alone."""
-        verdicts = _Verdicts({})
+        with patch.object(readability_check, "_cached_verdicts", return_value={}):
+            verdicts = _Verdicts(_cache_key(_RELAXED))
         with patch.object(readability_check, "_faults", return_value="complexity 9") as scored:
             faults = [verdicts.faults("A sentence.", _RELAXED) for _ in range(2)]
         self.assertEqual(faults, ["complexity 9", "complexity 9"])
@@ -490,6 +487,18 @@ class MainTest(unittest.TestCase):
     NESTED = r"A sentence (with asides (nested inside it))."
     WRAPPED = NESTED.replace("asides (", "asides\n(")
     ASIDE = r"Another sentence (with an aside (nested in it))."
+
+    def test_a_stale_whitelist_entry_is_reported(self, tokenizer: Mock, extract: Mock):
+        """Test that an entry of the file `--check-whitelist` names that the run does not match is reported."""
+        stale = r"A sentence the prose no longer holds."
+        whitelist = (self.NESTED, stale)  # The flagged sentence is held, so the stale entry is the only report.
+        exit_code, written = self.check(
+            tokenizer, extract, self.NESTED, whitelist=whitelist, option="--check-whitelist"
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertIn(
+            f"prose.txt holds a sentence the prose no longer has, run `just update-whitelists`:\n{stale}", written
+        )
 
     def check(  # noqa: PLR0913 — what the run reads
         self,
@@ -511,18 +520,6 @@ class MainTest(unittest.TestCase):
         written = io.StringIO()
         with redirect_stdout(written), patch.object(sys, "argv", argv), files.patched():
             return main(), written.getvalue()
-
-    def test_a_stale_whitelist_entry_is_reported(self, tokenizer: Mock, extract: Mock):
-        """Test that an entry of the file `--check-whitelist` names that the run does not match is reported."""
-        stale = r"A sentence the prose no longer holds."
-        whitelist = (self.NESTED, stale)  # The flagged sentence is held, so the stale entry is the only report.
-        exit_code, written = self.check(
-            tokenizer, extract, self.NESTED, whitelist=whitelist, option="--check-whitelist"
-        )
-        self.assertEqual(exit_code, 1)
-        self.assertIn(
-            f"prose.txt holds a sentence the prose no longer has, run `just update-whitelists`:\n{stale}", written
-        )
 
     def test_a_whitelist_entry_that_is_still_needed(self, tokenizer: Mock, extract: Mock):
         """Test that an entry matching a sentence the run flags is left unreported, and leaves the run passing."""
@@ -546,16 +543,14 @@ class MainTest(unittest.TestCase):
 
     def test_a_run_caches_the_verdict_of_each_sentence_it_saw_and_no_other(self, tokenizer: Mock, extract: Mock):
         """Test that a run leaves the cache holding a verdict for each sentence of the prose, flagged or not."""
+        files = FakeFiles({_CACHE: _cache_text({r"A sentence the prose no longer holds.": "complexity 9"})})
         short = "A short sentence."
-        stale = {r"A sentence the prose no longer holds.": "complexity 9"}
-        files = FakeFiles({_CACHE: _cache_text(stale)})
         self.check(tokenizer, extract, self.NESTED, short, files=files)
         verdicts = json.loads(files[_CACHE])["verdicts"]
         self.assertEqual(verdicts, {self.NESTED: _faults(self.NESTED, _Limits()), short: ""})
 
     def test_a_cache_written_under_another_key_counts_as_empty(self, tokenizer: Mock, extract: Mock):
         """Test that a cache another checker source, other limits, or another nltk wrote is passed over."""
-        sentence = "A short sentence."
         with patch.object(readability_check.inspect, "getsource", return_value="another checker"):
             another_checker = _cache_key(_Limits())
         with patch.object(readability_check.nltk, "__version__", "0.0"):
@@ -565,6 +560,7 @@ class MainTest(unittest.TestCase):
             "other limits": _cache_key(_Limits(complexity=99)),
             "another nltk": another_nltk,
         }
+        sentence = "A short sentence."
         for case, key in keys.items():
             with self.subTest(case=case):
                 exit_code, written = self.check(
@@ -577,12 +573,12 @@ class MainTest(unittest.TestCase):
 
     def test_a_cache_of_another_shape_counts_as_empty_and_says_why(self, tokenizer: Mock, extract: Mock):
         """Test that a cache that does not parse, or does not hold its mappings, is passed over and named."""
-        sentence = "A short sentence."
         caches = {
             "not JSON": "{",
             "not a mapping": "[]",
             "verdicts not a mapping": json.dumps({"key": _cache_key(_Limits()), "verdicts": []}),
         }
+        sentence = "A short sentence."
         for case, cache_file in caches.items():
             stderr = io.StringIO()
             with self.subTest(case=case):
@@ -653,6 +649,11 @@ class MainTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(written, "")
 
+    def test_making_the_whitelist(self, tokenizer: Mock, extract: Mock):
+        """Test that the file `--make-whitelist` names keeps a flagged sentence on one line only where it holds it."""
+        text = self.make_whitelist(tokenizer, extract, self.WRAPPED, self.ASIDE, whitelist=(self.NESTED,))
+        self.assertEqual(text, f"{self.NESTED}\n")
+
     def make_whitelist(self, tokenizer: Mock, extract: Mock, *texts: str, whitelist: tuple[str, ...]) -> str:
         """Make the whitelist from the given runs of prose, and return the text the run left in the whitelist file."""
         files = FakeFiles()
@@ -662,11 +663,6 @@ class MainTest(unittest.TestCase):
         self.assertEqual((exit_code, written), (0, ""))
         return files[Path("prose.txt")]
 
-    def test_making_the_whitelist(self, tokenizer: Mock, extract: Mock):
-        """Test that the file `--make-whitelist` names keeps a flagged sentence on one line only where it holds it."""
-        text = self.make_whitelist(tokenizer, extract, self.WRAPPED, self.ASIDE, whitelist=(self.NESTED,))
-        self.assertEqual(text, f"{self.NESTED}\n")
-
     def test_the_whitelist_holds_each_sentence_once(self, tokenizer: Mock, extract: Mock):
         """Test that a sentence two files hold is written once, and that the sentences come out sorted.
 
@@ -675,3 +671,8 @@ class MainTest(unittest.TestCase):
         texts = (self.ASIDE, self.NESTED, self.ASIDE)
         text = self.make_whitelist(tokenizer, extract, *texts, whitelist=(self.ASIDE, self.NESTED))
         self.assertEqual(text, f"{self.NESTED}\n{self.ASIDE}\n")
+
+
+def _cache_text(verdicts: dict[str, str], key: str = "") -> str:
+    """Return the text of a cache holding the verdicts under the key, or under the current key where none is given."""
+    return json.dumps({"key": key or _cache_key(_Limits()), "verdicts": verdicts})

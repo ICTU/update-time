@@ -2,13 +2,14 @@
 
 import os
 import unittest
+from typing import Final
 
 from update_time.primitives.environment import EnvVar
 
-from tests.helpers import patch_environ
+from tests.environment import patch_environ
 
-_INT_VAR: EnvVar[int] = EnvVar("_UPDATE_TIME_TEST_INT", default=7, parse=int)
-_BOOL_VAR: EnvVar[bool] = EnvVar(
+_INT_VAR: Final[EnvVar[int]] = EnvVar("_UPDATE_TIME_TEST_INT", default=7, parse=int)
+_BOOL_VAR: Final[EnvVar[bool]] = EnvVar(
     "_UPDATE_TIME_TEST_BOOL",
     default=False,
     parse=lambda value: value == "1",

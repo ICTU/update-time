@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import Mock
 
-from update_time.formats import toml
+from update_time.formats.toml import parse, read
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
 
 class ParseTest(unittest.TestCase):
@@ -13,7 +13,7 @@ class ParseTest(unittest.TestCase):
 
     def test_malformed(self):
         """Test that malformed TOML text parses as None instead of raising."""
-        self.assertIsNone(toml.parse("this is not = valid = toml"))
+        self.assertIsNone(parse("this is not = valid = toml"))
 
 
 class ReadTest(unittest.TestCase):
@@ -21,12 +21,12 @@ class ReadTest(unittest.TestCase):
 
     def test_valid(self):
         """Test that a valid TOML file is parsed into a dict."""
-        self.assertEqual(toml.read(mock_path('[project]\nname = "x"\n')), {"project": {"name": "x"}})
+        self.assertEqual(read(mock_path('[project]\nname = "x"\n')), {"project": {"name": "x"}})
 
     def test_malformed(self):
         """Test that a malformed TOML file reads back as None instead of raising."""
-        self.assertIsNone(toml.read(mock_path("this is not = valid = toml")))
+        self.assertIsNone(read(mock_path("this is not = valid = toml")))
 
     def test_missing(self):
         """Test that a missing/unreadable TOML file reads back as None instead of raising."""
-        self.assertIsNone(toml.read(Mock(read_text=Mock(side_effect=OSError))))
+        self.assertIsNone(read(Mock(read_text=Mock(side_effect=OSError))))

@@ -1,16 +1,17 @@
 """Unit tests for the pyproject.toml file format, with file I/O mocked."""
 
 import unittest
+from typing import Final
 
 from mutation_time.mutation import kills
-from update_time.formats import toml
+from update_time.formats.toml import _add_table, _expand_inline_tables, _last_table, _remove_root_key
 from update_time.manifests.pyproject_toml import PyprojectToml
 
-from tests.helpers import mock_path
+from tests.file_mocks import mock_path
 
 # The `[tool.uv]` table `SetToolKeyTest` writes, and a table for a file to declare after its tool tables.
-_UV_TABLE = '[tool.uv]\nexclude-newer = "7 days"\n'
-_NEXT_TABLE = '[dependency-groups]\ndev = ["a"]\n'
+_UV_TABLE: Final[str] = '[tool.uv]\nexclude-newer = "7 days"\n'
+_NEXT_TABLE: Final[str] = '[dependency-groups]\ndev = ["a"]\n'
 
 
 class ToolKeyTest(unittest.TestCase):
@@ -40,15 +41,15 @@ class ToolKeyTest(unittest.TestCase):
 class SetToolKeyTest(unittest.TestCase):
     """Unit tests for setting a `[tool.<table>]` key while preserving the rest of the file."""
 
+    def test_creates_tool_and_table_when_absent(self):
+        """Test that a `[tool.uv]` added to a file that does not have a `[tool]` section ends the file on its key."""
+        self.assertEqual(self.written('[project]\nname = "x"\n'), f'[project]\nname = "x"\n\n{_UV_TABLE}')
+
     def written(self, contents: str, *, comment: str = "") -> str:
         """Set `[tool.uv] exclude-newer = "7 days"` on the contents and return what was written back."""
         pyproject_file = mock_path(contents)
         self.assertTrue(PyprojectToml(pyproject_file).set_tool_key("uv", "exclude-newer", "7 days", comment=comment))
         return pyproject_file.write_text.call_args.args[0]
-
-    def test_creates_tool_and_table_when_absent(self):
-        """Test that a `[tool.uv]` added to a file that does not have a `[tool]` section ends the file on its key."""
-        self.assertEqual(self.written('[project]\nname = "x"\n'), f'[project]\nname = "x"\n\n{_UV_TABLE}')
 
     def test_creates_table_in_existing_tool(self):
         """Test that a `[tool.uv]` table is added alongside an existing, different tool table."""
@@ -63,7 +64,7 @@ class SetToolKeyTest(unittest.TestCase):
         self.assertEqual(written, f'[tool.uv]\n{other_key}exclude-newer = "7 days"\n\n{_NEXT_TABLE}')
 
     @kills.delete_statement(
-        toml._add_table,
+        _add_table,
         "table.add(tomlkit.nl())",
         "an inserted table runs into a next table the file wrote without a blank line",
     )
@@ -78,7 +79,7 @@ class SetToolKeyTest(unittest.TestCase):
         self.assertEqual(written, f"tool.ruff.x = 1\n\n{_UV_TABLE}\n{_NEXT_TABLE}")
 
     @kills.replace(
-        toml._add_table,
+        _add_table,
         'cast("tomlkit.items.Table", document.body[index][1])',
         "document[super_table]",
         "a table inserted between split tool tables goes through tomlkit's proxy, which does not have a body",
@@ -90,14 +91,14 @@ class SetToolKeyTest(unittest.TestCase):
         self.assertEqual(written, f"[tool.ruff]\nx = 1\n\n{_UV_TABLE}\n{_NEXT_TABLE}\n[tool.black]\ny = 2\n")
 
     @kills.replace(
-        toml._last_table,
+        _last_table,
         "table = last",
         "return last",
         "a comment above the next table ends up above a table inserted after a nested tool table",
         case="[tool.ruff.lint]",
     )
     @kills.delete_statement(
-        toml._last_table,
+        _last_table,
         "last = last.body[-1]",
         "a comment above the next table ends up above a table inserted after an array of tool tables",
         case="[[tool.foo]]",
@@ -110,19 +111,19 @@ class SetToolKeyTest(unittest.TestCase):
                 self.assertEqual(written, f"{header}\nx = 1\n\n{_UV_TABLE}\n# groups\n{_NEXT_TABLE}")
 
     @kills.delete_statement(
-        toml._remove_root_key,
+        _remove_root_key,
         "return",
         "removing an inline tool table drops the blank line between the root keys before it and the first table",
         case="inline tool after a root key",
     )
     @kills.delete(
-        toml._expand_inline_tables,
+        _expand_inline_tables,
         ", expanding=table",
         "an inline uv table inside an inline tool table stays inline",
         case="inline uv in inline tool",
     )
     @kills.replace(
-        toml._expand_inline_tables,
+        _expand_inline_tables,
         "del parent[table]\n        _add_table(document, super_table, table, _table_from(child))",
         "parent[table] = _table_from(child)",
         "an inline uv table turned into a table runs into the table after it",

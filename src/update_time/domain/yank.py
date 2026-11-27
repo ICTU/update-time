@@ -3,12 +3,12 @@
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import Yank
+from .dependency import Yank
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from update_time.domain.dependency import DependencyVersion, VersionString
+    from .dependency import DependencyVersion, VersionString
 
 
 def with_yank_state(

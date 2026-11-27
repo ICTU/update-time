@@ -20,7 +20,7 @@ from coverage import Coverage
 
 from mutation_time.mutation import CHECKS_OFF, KillsTestLoader, Mutation, Outcome, registered_mutations
 
-from tests.helpers import time_zone
+from tests.environment import time_zone
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -28,11 +28,8 @@ if TYPE_CHECKING:
 # Where the tests sit, and the directory their module names start from.
 _TESTS, _TOP_LEVEL = "tests", "."
 
-# The tests of the mutations themselves. They all run the checker, so they kill each other's mutations by design.
-_MUTATION_TESTS = "tests.mutation_time."
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Finding:
     """What the audit finds: a registration, its regression, and the other tests of its module killing its mutation."""
 
@@ -41,7 +38,7 @@ class _Finding:
     killers: list[str]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _SuiteRun:
     """The suite's run under coverage: the tests that ran each line of a file, and the test ids each of them names.
 
@@ -96,7 +93,7 @@ def _finding(test: str, mutation: Mutation, run: _SuiteRun, passes_unmutated: Ca
         for candidate in run.candidates(mutation.path, mutation.lines, test)
         if passes_unmutated(candidate) and unnamed.check(candidate).outcome is Outcome.KILLED
     )
-    return _Finding(test, mutation.regression, killers)
+    return _Finding(registered=test, regression=mutation.regression, killers=killers)
 
 
 def _passes_unmutated(test: str) -> bool:
@@ -130,7 +127,7 @@ def _suite_run(suite: unittest.TestSuite) -> _SuiteRun:
         unittest.TextTestRunner(stream=io.StringIO()).run(suite)
     finally:
         coverage.stop()
-    return _SuiteRun(coverage.get_data().contexts_by_lineno, ids_by_context)
+    return _SuiteRun(contexts_of=coverage.get_data().contexts_by_lineno, ids_by_context=ids_by_context)
 
 
 def _context(test: unittest.TestCase) -> str:
@@ -153,7 +150,9 @@ def main() -> int:
     with patch.dict(os.environ, {CHECKS_OFF: "1"}):
         run = _suite_run(suite)
     discovered = _tests(KillsTestLoader().discover(_TESTS, top_level_dir=_TOP_LEVEL))
-    registered = [test for test in discovered if not test.id().startswith(_MUTATION_TESTS)]
+    # The tests of the mutations themselves. They all run the checker, so they kill each other's mutations by design.
+    mutation_tests = "tests.mutation_time."
+    registered = [test for test in discovered if not test.id().startswith(mutation_tests)]
     # Each mutation is audited once per test that registers it, however many classes inherit a mixin's test.
     registrations = dict.fromkeys(
         (_context(test), mutation) for test in registered for mutation in registered_mutations(test)
@@ -165,5 +164,5 @@ def main() -> int:
     return 1 if findings else 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

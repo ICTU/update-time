@@ -1,37 +1,32 @@
 """Unit tests for generating the index of the log messages."""
 
 import unittest
+from typing import Final
 
-from tools import log_index as log_index_module
+from tools.log_index import _entry, _log_index, _stop_on_dead_links, _stop_unless_complete
 
 from mutation_time.mutation import kills
 
-_SAMPLE = "INFO New version available for humanize in docs/requirements.txt:12: 4.15.0 (new-version)"
+_SAMPLE: Final[str] = "INFO New version available for humanize in docs/requirements.txt:12: 4.15.0 (new-version)"
 
 
 class LogIndexTest(unittest.TestCase):
     """Unit tests for filling in the template of the index."""
 
-    def assert_stops(self, template: str, names: list[str], reason: str) -> None:
-        """Assert that generating the index from the template, with a sample of `new-version` alone, stops."""
-        with self.assertRaises(SystemExit) as raised:
-            log_index_module._log_index(template, {"new-version": _SAMPLE}, names)
-        self.assertEqual(str(raised.exception), reason)
-
     @kills.replace(
-        log_index_module._entry,
+        _entry,
         '\\n\\n```console\\n{sample}\\n```"',
         '\\n\\n{sample}"',
         "a sample is shown as prose rather than as console output, so Markdown reflows it",
     )
     def test_a_placeholder_becomes_the_heading_and_the_sample_of_its_message(self):
         """Test that a message's placeholder becomes a heading naming the message, and a console block of its sample."""
-        template = "@@new-version@@\n\nUpdate-time found a newer version.\n"
         expected = f"### new-version\n\n```console\n{_SAMPLE}\n```\n\nUpdate-time found a newer version.\n"
-        self.assertEqual(log_index_module._log_index(template, {"new-version": _SAMPLE}, ["new-version"]), expected)
+        template = "@@new-version@@\n\nUpdate-time found a newer version.\n"
+        self.assertEqual(_log_index(template, {"new-version": _SAMPLE}, ["new-version"]), expected)
 
     @kills.replace(
-        log_index_module._stop_unless_complete,
+        _stop_unless_complete,
         "names - placed.keys(),",
         "set() - placed.keys(),",
         "the index leaves out a log message without saying so",
@@ -44,8 +39,14 @@ class LogIndexTest(unittest.TestCase):
             "docs/log-messages.md.in has no placeholder for these log messages: pinned-to-hash, pinned-to-version",
         )
 
+    def assert_stops(self, template: str, names: list[str], reason: str) -> None:
+        """Assert that generating the index from the template, with a sample of `new-version` alone, stops."""
+        with self.assertRaises(SystemExit) as raised:
+            _log_index(template, {"new-version": _SAMPLE}, names)
+        self.assertEqual(str(raised.exception), reason)
+
     @kills.replace(
-        log_index_module._stop_unless_complete,
+        _stop_unless_complete,
         "count > 1",
         "count > 99",
         "a message gets two entries in the index, and the console links to the first alone",
@@ -67,7 +68,7 @@ class LogIndexTest(unittest.TestCase):
         )
 
     @kills.delete(
-        log_index_module._stop_on_dead_links,
+        _stop_on_dead_links,
         "_README_LINK.findall(template)",
         "the index links to a README section that a reworded heading took away, and nothing says so",
     )
@@ -75,7 +76,7 @@ class LogIndexTest(unittest.TestCase):
         """Test that the generator stops, naming each anchor the template links to that the README does not provide."""
         template = "See [a](../README.md#pinning), [b](../README.md#cooldown), and [c](../README.md#markers-1).\n"
         with self.assertRaises(SystemExit) as raised:
-            log_index_module._stop_on_dead_links(template, "## Pinning\n\n## Markers\n")
+            _stop_on_dead_links(template, "## Pinning\n\n## Markers\n")
         expected = "docs/log-messages.md.in links to README sections that do not exist: #cooldown, #markers-1"
         self.assertEqual(str(raised.exception), expected)
 
