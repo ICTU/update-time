@@ -2,7 +2,6 @@
 
 import contextlib
 import importlib
-import inspect
 import pkgutil
 import unittest
 from datetime import timedelta
@@ -87,7 +86,7 @@ def _package_modules(package: ModuleType) -> tuple[ModuleType, ...]:
 
 def module_values[Value](module: ModuleType, kind: type[Value]) -> list[Value]:
     """Return the values of the kind the module holds."""
-    return [value for _, value in inspect.getmembers(module) if isinstance(value, kind)]
+    return [value for value in module.__dict__.values() if isinstance(value, kind)]
 
 
 class CacheClearingTestCase(unittest.TestCase):
@@ -122,7 +121,7 @@ def cached_functions(module: ModuleType) -> list[_Cached]:
     """Return the cached functions the module defines, recognised by the `cache_clear` their decorator adds."""
     return [
         value
-        for _, value in inspect.getmembers(module)
+        for value in module.__dict__.values()
         if hasattr(value, "cache_clear") and getattr(value, "__module__", None) == module.__name__
     ]
 
@@ -133,10 +132,8 @@ def all_loggers(package: ModuleType) -> tuple[Logger, ...]:
 
     A module creates its loggers when it is imported, so the package's modules are scanned for them once.
     """
-    values = [value for module in _package_modules(package) for _, value in inspect.getmembers(module)]
-    attributes = [
-        attribute for value in values if isinstance(value, type) for _, attribute in inspect.getmembers_static(value)
-    ]
+    values = [value for module in _package_modules(package) for value in module.__dict__.values()]
+    attributes = [attribute for value in values if isinstance(value, type) for attribute in value.__dict__.values()]
     return tuple(value for value in values + attributes if isinstance(value, Logger))
 
 
