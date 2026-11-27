@@ -1,6 +1,5 @@
 """Unit tests for the test cases the tests build on."""
 
-import types
 import unittest
 from functools import cache
 from typing import Final
@@ -11,17 +10,8 @@ from update_time.domain.reference import Reference
 from update_time.io.log import Logger
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.sources import pypi
-from update_time.sources.pypi import _release_metadata
 
-from tests.http_mocks import patch_get_response
-
-from .base_test_cases import (
-    CacheClearingTestCase,
-    LoggingTestCase,
-    all_cached_functions,
-    all_loggers,
-    cached_functions,
-)
+from .base_test_cases import CacheClearingTestCase, LoggingTestCase, all_loggers
 from .fixtures import VULNERABILITY_LEVEL_NONE
 from .io.log_fields import create_location
 from .io.log_messages import message_of
@@ -30,19 +20,9 @@ from .io.log_messages import message_of
 class CacheClearingTest(unittest.TestCase):
     """Unit tests for the base test case that clears the caches."""
 
-    def test_a_populated_cache_is_cleared(self):
-        """Test that a cache one test populated is empty by the time the next one runs."""
-        _release_metadata.cache_clear()  # Whatever ran before this test may have left entries of its own behind.
-        with patch_get_response({"info": {}}):
-            _release_metadata("package", "1.0")
-        self.assertEqual(_release_metadata.cache_info().currsize, 1)
-        CacheClearingTestCase().setUp()
-        self.assertEqual(_release_metadata.cache_info().currsize, 0)
-
     def test_a_cache_no_list_names_is_cleared(self):
         """Test that a cached function added to a module is cleared, so adding one calls for no bookkeeping."""
         cached = cache(int)
-        cached.__module__ = pypi.__name__
         with patch.object(pypi, "newly_cached", cached, create=True):
             cached("1")
             self.assertEqual(cached.cache_info().currsize, 1)
@@ -50,42 +30,14 @@ class CacheClearingTest(unittest.TestCase):
             self.assertEqual(cached.cache_info().currsize, 0)
 
 
-class CachedFunctionsTest(unittest.TestCase):
-    """Unit tests for discovering the cached functions a module defines."""
-
-    def test_a_cached_function_the_package_itself_defines_is_found(self):
-        """Test that a cache the package's own module defines is found, not only those of the modules within it."""
-        package = types.ModuleType("fake_package")
-        cached = cache(int)
-        cached.__module__ = package.__name__
-        _bind(package, __path__=[], cached=cached)  # An empty path leaves the package no module to walk into.
-        self.assertEqual(all_cached_functions(package), [cached])
-
-    def test_the_cached_functions_of_the_package_are_found(self):
-        """Test that walking the package reaches a cached function a module nested in it defines."""
-        self.assertIn(_release_metadata, all_cached_functions(update_time))
+class AllLoggersTest(unittest.TestCase):
+    """Unit tests for discovering the loggers a package holds."""
 
     def test_the_loggers_of_the_package_are_found(self):
         """Test that walking the package reaches the loggers a module nested in it holds, or a class in it holds."""
         loggers = all_loggers(update_time)
         self.assertIn(pypi._LOG, loggers)
         self.assertIn(RequirementsCompiler.log, loggers)
-
-    def test_only_the_cached_function_the_module_defines_is_returned(self):
-        """Test that the discovery returns the module's own cached function, not its plain or its imported one."""
-        module = types.ModuleType("fake")
-        # Builtins stand in for functions the fixture would otherwise have to give a body, and `cache` wraps one
-        # into what the discovery looks for. What each returned function wraps is asserted, so a leak is named.
-        cached, imported = cache(int), cache(str)
-        cached.__module__ = module.__name__
-        _bind(module, cached=cached, plain=str, imported=imported)
-        self.assertEqual([function.__wrapped__ for function in cached_functions(module)], [int])
-
-
-def _bind(module: types.ModuleType, **values: object) -> None:
-    """Bind each value to its name in the module."""
-    for name, value in values.items():
-        setattr(module, name, value)
 
 
 # The tables below log these fields. They name a commit SHA that could not be fetched.

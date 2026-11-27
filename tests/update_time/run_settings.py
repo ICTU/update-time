@@ -11,8 +11,5 @@ if TYPE_CHECKING:
 
 
 def staleness_disabled() -> _patch_dict:
-    """Return a patch that switches the staleness check off, as `--stale-after 0` does.
-
-    The staleness check makes registry requests of its own.
-    """
+    """Return a patch that switches the staleness check off, as `--stale-after 0` does."""
     return patch_environ({STALE_AFTER.name: "0"})

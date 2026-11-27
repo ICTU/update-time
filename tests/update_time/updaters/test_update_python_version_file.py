@@ -66,18 +66,13 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         return version_file
 
     def test_update(self, mock_glob: Mock):
-        """Test that the entry is updated to the latest `python` release on Docker Hub."""
-        version_file = self.update_version_file(mock_glob)
-        version_file.write_text.assert_called_once_with("3.13.2\n")
-        self.assert_new_version_logged("python", docker_hub_version("3.13.2"), Location(version_file, 1))
-        self.assert_no_warnings_logged()
-
-    def test_pins_bare_entry_to_full_version(self, mock_glob: Mock):
-        """Test that a less precise entry (`3.12`) is pinned to the full latest version."""
-        version_file = self.update_version_file(mock_glob, "3.12\n")
-        version_file.write_text.assert_called_once_with("3.13.2\n")
-        self.assert_new_version_logged("python", docker_hub_version("3.13.2"), Location(version_file, 1))
-        self.assert_no_warnings_logged()
+        """Test that the entry is updated to the full latest `python` release on Docker Hub, however precise it is."""
+        for case, contents in (("a full version", "3.12.6\n"), ("a less precise entry", "3.12\n")):
+            with self.subTest(case=case):
+                version_file = self.update_version_file(mock_glob, contents)
+                version_file.write_text.assert_called_once_with("3.13.2\n")
+                self.assert_new_version_logged("python", docker_hub_version("3.13.2"), Location(version_file, 1))
+                self.assert_no_warnings_logged()
 
     def test_requires_python_bounds_the_update(self, mock_glob: Mock):
         """Test that the `requires-python` of the `pyproject.toml` beside the file bounds the entry's update."""
@@ -252,12 +247,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
                 self.files.read_errors[PYPROJECT_TOML] = error
                 version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
                 version_file.write_text.assert_called_once_with("3.15.1\n")
-                self.assert_logged(
-                    message_of(Logger.unreadable_file),
-                    content=FileContent.REQUIRES_PYTHON,
-                    location=Location(PYPROJECT_TOML),
-                    error=str(error),
-                )
+                self.assert_unreadable_file_logged(PYPROJECT_TOML, FileContent.REQUIRES_PYTHON, error)
 
     def test_a_pyproject_toml_whose_project_is_not_a_table_bounds_nothing(self, mock_glob: Mock):
         """Test that a `pyproject.toml` whose `project` is not a table leaves the entry to update as without it."""
@@ -305,20 +295,17 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_marker_ignore_holds_the_entry_back(self, mock_glob: Mock):
-        """Test that an `# update-time: ignore[update]` marker above an entry holds it back, despite a newer release."""
-        version_file = self.update_version_file(mock_glob, "# update-time: ignore[update]\n3.12.6\n")
-        version_file.write_text.assert_not_called()
-        self.assert_ignored_logged("python", Location(version_file, 2))
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
-
-    def test_inline_marker_ignore(self, mock_glob: Mock):
-        """Test that an inline `# update-time: ignore[update]` marker on the entry's own line holds it back too."""
-        version_file = self.update_version_file(mock_glob, "3.12.6  # update-time: ignore[update]\n")
-        version_file.write_text.assert_not_called()
-        self.assert_ignored_logged("python", Location(version_file, 1))
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        """Test that an `# update-time: ignore[update]` marker holds the entry back, above it or on its own line."""
+        for case, (contents, line) in {
+            "above the entry": ("# update-time: ignore[update]\n3.12.6\n", 2),
+            "on the entry's own line": ("3.12.6  # update-time: ignore[update]\n", 1),
+        }.items():
+            with self.subTest(case=case):
+                version_file = self.update_version_file(mock_glob, contents)
+                version_file.write_text.assert_not_called()
+                self.assert_ignored_logged("python", Location(version_file, line))
+                self.assert_no_new_version_logged()
+                self.assert_no_warnings_logged()
 
     def test_inline_marker_bound_preserves_comment(self, mock_glob: Mock):
         """Test that an inline bound is honoured and its comment is preserved when the version is rewritten."""

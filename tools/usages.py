@@ -1,7 +1,4 @@
-"""Report where a name is used, as the type checker's language server finds its usages.
-
-Usage: `uv run python -m tools.usages NAME`, which reports every usage this repository makes of the name.
-"""
+"""Report where a name is used, as the type checker's language server finds its usages."""
 
 import ast
 import json

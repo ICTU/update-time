@@ -3,23 +3,18 @@
 Check the catalogs of the pnpm-workspace.yaml and .yarnrc.yml files as well.
 """
 
-from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Final
 
 from update_time.domain.directive import Reason
 from update_time.domain.file_type import PACKAGE_JSON, PNPM_WORKSPACE_YAML, YARNRC_YML
 from update_time.io.filesystem import glob_for
-from update_time.io.log import FileContent, get_logger
+from update_time.io.log import FileContent, NotRunCause, get_logger
 from update_time.manifests.catalogs_yaml import CatalogsYaml
 from update_time.manifests.package_json import PackageJson
 from update_time.markers.report import report_marker
 from update_time.package_managers.node.manager_choice import SUPPORTED_MANAGERS, manager_choice
-from update_time.package_managers.node.marker_policy import (
-    MARKER_POLICY,
-    MORE_THAN_ONE_MANAGER_POLICY,
-    CheckedPackageJson,
-)
+from update_time.package_managers.node.marker_policy import MARKER_POLICY, CheckedFile
 from update_time.package_managers.node.pnpm_workspace import update_pnpm_workspace
 from update_time.package_managers.policy import report_markers
 from update_time.primitives.text import prose_list
@@ -27,6 +22,7 @@ from update_time.references.delegated import warn_about_delegated_checks, warn_a
 from update_time.sources.npmjs import SOURCE
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from update_time.io.log import Logger
@@ -40,14 +36,6 @@ _UNREADABLE_PACKAGE_JSON: Final[partial[None]] = partial(_LOG.unreadable_file, c
 _UNREADABLE_CATALOGS: Final[partial[None]] = partial(_LOG.unreadable_file, content=FileContent.CATALOGS)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _CheckedFile:
-    """The declarations of a file to check, and the policy their markers are judged by."""
-
-    declarations: list[Declaration]
-    policy: ManagerPolicy[Declaration]
-
-
 def _update_package_jsons() -> None:
     """Find all package.json files, update each with its package manager, and check them and the catalogs.
 
@@ -57,7 +45,7 @@ def _update_package_jsons() -> None:
     """
     # The run for a workspace root updates its members, so the roots go first, and a member is read as that run left it:
     catalog_policies = {path: update_pnpm_workspace(path) for path in glob_for(PNPM_WORKSPACE_YAML)}
-    supported: list[CheckedPackageJson] = []
+    supported: list[CheckedFile[PackageJson]] = []
     for package_json in sorted(glob_for(PACKAGE_JSON), key=lambda path: len(path.parts)):
         _LOG.path(package_json)
         if (file := PackageJson.readable(package_json, _UNREADABLE_PACKAGE_JSON)) is None:
@@ -67,42 +55,39 @@ def _update_package_jsons() -> None:
             _LOG.unsupported_package_manager(package_json, name, prose_list(SUPPORTED_MANAGERS))
             continue
         if not (file.declares_a_dependency() or manager.roots_a_workspace(file)):
-            _LOG.no_dependencies(package_json, name, "install")
-            checked_package_json: CheckedPackageJson | None = CheckedPackageJson(file, MARKER_POLICY)
+            _LOG.manager_not_run(package_json, name, NotRunCause.NO_DEPENDENCIES_TO_INSTALL)
+            checked_package_json: CheckedFile[PackageJson] | None = CheckedFile(file, MARKER_POLICY)
         elif choice.names_more_than_one_manager():
             _LOG.files_of_more_than_one_manager(package_json, choice.files)
-            checked_package_json = CheckedPackageJson(file, MORE_THAN_ONE_MANAGER_POLICY)
+            checked_package_json = CheckedFile(file, MARKER_POLICY.policy_for_more_than_one_manager)
         else:
             checked_package_json = manager.update_package_json(file)
         if checked_package_json is not None:
-            supported.append(
-                checked_package_json.judged_by(manager.checked_catalogs(checked_package_json.package_json))
-            )
+            supported.append(checked_package_json.judged_by(manager.checked_catalogs(checked_package_json.file)))
     catalog_policies |= _yarn_catalog_policies(supported)
-    files_to_check = [
-        _CheckedFile(declarations=list(each.package_json.declarations()), policy=each.policy) for each in supported
-    ]
-    _warn_about_dependencies(files_to_check + _checked_workspace_files(catalog_policies))
-    _report_undeclared_references([each.package_json for each in supported])
+    _warn_about_dependencies([*supported, *_checked_workspace_files(catalog_policies)])
+    _report_undeclared_references([each.file for each in supported])
 
 
-def _yarn_catalog_policies(checked: list[CheckedPackageJson]) -> dict[Path, ManagerPolicy[Declaration]]:
+def _yarn_catalog_policies(checked: list[CheckedFile[PackageJson]]) -> dict[Path, ManagerPolicy[Declaration]]:
     """Return the policy for the markers of each .yarnrc.yml: the policy of the package.json beside it, if checked."""
-    policies = {each.package_json.path.parent: each.policy for each in checked}
+    policies = {each.file.path.parent: each.policy for each in checked}
     return {path: policies.get(path.parent, MARKER_POLICY) for path in glob_for(YARNRC_YML)}
 
 
-def _checked_workspace_files(catalog_policies: dict[Path, ManagerPolicy[Declaration]]) -> list[_CheckedFile]:
+def _checked_workspace_files(
+    catalog_policies: dict[Path, ManagerPolicy[Declaration]],
+) -> list[CheckedFile[CatalogsYaml]]:
     """Return each file holding catalogs to check, with its policy, warning about each that cannot be read."""
-    files: list[_CheckedFile] = []
+    files: list[CheckedFile[CatalogsYaml]] = []
     for path, policy in catalog_policies.items():
         _LOG.path(path)
         if (workspace_file := CatalogsYaml.readable(path, _UNREADABLE_CATALOGS)) is not None:
-            files.append(_CheckedFile(declarations=list(workspace_file.declarations()), policy=policy))
+            files.append(CheckedFile(workspace_file, policy))
     return files
 
 
-def _warn_about_dependencies(files: list[_CheckedFile]) -> None:
+def _warn_about_dependencies(files: Sequence[CheckedFile[PackageJson] | CheckedFile[CatalogsYaml]]) -> None:
     """Report the marker of each dependency, and check the dependencies each file declares, by the file's policy."""
     for file in files:
         report_markers(file.declarations, _LOG, file.policy)

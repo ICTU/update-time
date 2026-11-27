@@ -142,8 +142,7 @@ class LevelBoundTest(unittest.TestCase):
         for candidate in ("3.12.9", "3.99.0", "4.0.0"):
             with self.subTest(candidate=candidate):
                 self.assertEqual(
-                    allow_minor.keeps(Version(candidate), "3.12.1"),
-                    ignore_major.keeps(Version(candidate), "3.12.1"),
+                    allow_minor.keeps(Version(candidate), "3.12.1"), ignore_major.keeps(Version(candidate), "3.12.1")
                 )
 
     def test_allow_major_keeps_every_update(self):

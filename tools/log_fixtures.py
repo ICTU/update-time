@@ -1,8 +1,4 @@
-"""The sample values both README generators use, so the quoted log lines and the screenshot agree.
-
-`log_samples` renders the log lines the README quotes and `generate_log_svg` the screenshot above them. Both show a
-run of Update-time, so a value one of them changed on its own would leave the two describing different runs.
-"""
+"""The sample values both README generators use, so the quoted log lines and the screenshot agree."""
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
@@ -31,12 +27,12 @@ def reference(dependency: str, location: Location, version: str = "", marker: Ma
 def resolved(
     dependency: str,
     location: Location,
-    release: DependencyVersion,
+    version: DependencyVersion,
     project: Project = NO_PROJECT,
     marker: Marker = NO_MARKER,
 ) -> ResolvedReference:
     """Return the resolved reference a sample warning reports on."""
-    return ResolvedReference(dependency, "", location, release=release, project=project, marker=marker)
+    return ResolvedReference(dependency, "", location, version=version, project=project, marker=marker)
 
 
 def stale_publication_date() -> datetime:

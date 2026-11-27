@@ -106,8 +106,8 @@ class FixturesTest(unittest.TestCase):
     def test_fixtures_do_not_depend_on_the_other_support_modules(self):
         """Test that the shared fixtures.py does not import a module of the tests, so the dependencies run towards it.
 
-        The support modules import the shared `fixtures.py`, so that one is a leaf. A package's own fixtures module
-        is not, and builds its values with the support modules beside it. The imports are read off the syntax tree,
+        A package's own fixtures module is not a leaf, and builds its values with the support modules beside it. The
+        imports are read off the syntax tree,
         since archunit resolves `update_time.domain` to the `tests/update_time/domain` package of the same name.
         """
         nodes = syntax_nodes(pathlib.Path(fixtures.__file__).read_text())
@@ -131,26 +131,10 @@ class FixturesTest(unittest.TestCase):
 class LayeringTest(unittest.TestCase):
     """Test the layered architecture, which `_RANKS` declares innermost to outermost.
 
-    A layer may use the ones before it. It may use neither a sibling sharing its rank nor a layer after it:
-    - `primitives` are project-agnostic building blocks, like a typed environment variable, that even the pure core may
-      reach for.
-    - `formats` read, write, and rewrite the text formats Update-time reads, such as the format of a manifest or a
-      changelog, knowing nothing of dependencies.
-    - `domain` is the pure, I/O-free core.
-    - `io` wraps file, process, log, network, and command-line I/O.
-    - `markers` parse the `# update-time:` language into the marker that `domain` defines, and warn about a directive
-      that decides nothing.
-    - `manifests` read, write, and parse the files that declare dependencies. They rank before `sources` because a
-      registry serves such a file too: Maven Central serves the pom an artefact was published with.
-    - `lock_files` read the files that record which versions a package manager resolved the dependencies to. They rank
-      after `manifests` because a compiled requirements file is written in the format of the manifest it was compiled
-      from.
-    - `sources` are the backends the outer layers ask about a dependency.
-    - `package_managers` drive the external managers, such as uv, npm, and Maven, using manifests and sources, and say
-      which directives a manager's dependencies can be steered by.
-    - `references` decide which version a pinned reference should update to, and rewrite the reference accordingly.
-      They rank after `package_managers` because the checks a manager's dependencies get follow its policy.
-    - `updaters` wire everything together.
+    `manifests` rank before `sources` because a registry serves such a file too: Maven Central serves the pom an
+    artefact was published with. `lock_files` rank after `manifests` because a compiled requirements file is written in
+    the format of the manifest it was compiled from. `references` rank after `package_managers` because the checks a
+    manager's dependencies get follow its policy.
     """
 
     def test_no_layer_uses_an_outer_layer(self):
@@ -315,7 +299,7 @@ class ConfigurationReadingTest(unittest.TestCase):
         Without this the rule above would pass just as well when the condition found nothing whatever a source does.
         A class member of the setting's name is not a read, so the file carrying one is left unreported. A setting
         `flag` builds counts as one too, and so does a function that reads a setting on its caller's behalf. The
-        logging setting is the exception: every module logs, so its reader says nothing about the module calling it.
+        logging setting is the exception.
         """
         files = {
             "settings.py": (

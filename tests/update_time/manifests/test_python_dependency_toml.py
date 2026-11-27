@@ -34,12 +34,7 @@ class RewriteDeclarationsTest(unittest.TestCase):
         """Test that a pin with a known newer version is rewritten."""
         self.assertEqual(self.rewrite('dependencies = ["pkg==1.0"]\n', {1: "1.1"}), 'dependencies = ["pkg==1.1"]\n')
 
-    def rewrite(
-        self,
-        contents: str,
-        versions: dict[int, str],
-        kind: type[PythonDependencyToml] = PyprojectToml,
-    ) -> str:
+    def rewrite(self, contents: str, versions: dict[int, str], kind: type[PythonDependencyToml] = PyprojectToml) -> str:
         """Return the contents with the declaration at each of the positions rewritten to the version given."""
         file = kind(mock_path(contents))
         declared = {declaration.position: declaration for declaration in file.declarations()}
@@ -59,10 +54,7 @@ class RewriteDeclarationsTest(unittest.TestCase):
         )
         contents = f"[project]\ndependencies = [\n{declarations.format('1.0', '2.0', '3.0')}]\n"
         rewritten = self.rewrite(contents, {1: "1.1", 2: "2.1", 3: "3.1"})
-        self.assertEqual(
-            rewritten,
-            f"[project]\ndependencies = [\n{declarations.format('1.1', '2.1', '3.1')}]\n",
-        )
+        self.assertEqual(rewritten, f"[project]\ndependencies = [\n{declarations.format('1.1', '2.1', '3.1')}]\n")
 
     def test_narrows_a_requirement_and_keeps_its_extra_and_environment_marker(self):
         """Test that the requirement uv locks keeps the extra and the environment marker of the declaration."""
@@ -91,10 +83,7 @@ class RewriteDeclarationsTest(unittest.TestCase):
         declaration = "    'pkg=={0}',  # keep\n"
         contents = f"[project]\ndependencies = [\n{declaration.format('1.0')}]\n\n# trailing note\n"
         rewritten = self.rewrite(contents, {1: "1.1"})
-        self.assertEqual(
-            rewritten,
-            f"[project]\ndependencies = [\n{declaration.format('1.1')}]\n\n# trailing note\n",
-        )
+        self.assertEqual(rewritten, f"[project]\ndependencies = [\n{declaration.format('1.1')}]\n\n# trailing note\n")
 
     def test_rewrites_a_block_that_is_never_closed_as_toml_throughout(self):
         """Test that a block without its closing `# ///` is rewritten as the TOML the file is, not as a block."""
@@ -109,10 +98,7 @@ class RewriteDeclarationsTest(unittest.TestCase):
         """Test that one declaration of a name is rewritten while another declaration of that name is left alone."""
         contents = '[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==1.0"]\n'
         rewritten = self.rewrite(contents, {2: "1.1"})
-        self.assertEqual(
-            rewritten,
-            '[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==1.1"]\n',
-        )
+        self.assertEqual(rewritten, '[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==1.1"]\n')
 
     def test_leaves_a_declaration_the_mapping_does_not_hold(self):
         """Test that a declaration is left alone where the mapping does not hold a version for it."""
@@ -234,11 +220,7 @@ class DeclarationsTest(unittest.TestCase):
         case="a source key with an underscore",
     )
     def test_a_uv_source_spelled_another_way_is_read(self):
-        """Test that a `sources` entry naming the dependency another way is matched, as uv matches it.
-
-        uv resolves a `sources` key to a dependency by the normalised name, so the two are matched whichever of
-        them spells the separator which way.
-        """
+        """Test that a `sources` entry naming the dependency another way is matched, as uv matches it."""
         for case, declared, sourced in (
             ("a source key with an underscore", "local-pkg", "local_pkg"),
             ("a dependency with an underscore", "local_pkg", "local-pkg"),
@@ -284,10 +266,7 @@ class DeclarationsTest(unittest.TestCase):
         )
 
     def test_reads_the_marker_of_a_declaration_below_a_line_separator(self):
-        """Test that a line separator earlier in the file does not shift the line a marker is read from.
-
-        TOML accepts U+2028 inside a string, and Python splits lines on it where a count of newlines does not.
-        """
+        """Test that a line separator earlier in the file does not shift the line a marker is read from."""
         contents = '[project]\nname = "a\u2028b"\ndependencies = ["pkg==1.0"]  # update-time: ignore[update]\n'
         self.assertEqual(self.markers(contents), [Marker(ignored_scopes=Scope.UPDATE)])
 
@@ -335,11 +314,7 @@ class PinnedDeclarationsTest(unittest.TestCase):
         """Test that a name pinned in two arrays is returned once per pin, so neither pin hides the other."""
         path = mock_path('[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==2.0"]\n')
         self.assertEqual(
-            self.pins(path),
-            [
-                declaration("pkg", "1.0", path, 2, 1),
-                declaration("pkg", "2.0", path, 4, 2),
-            ],
+            self.pins(path), [declaration("pkg", "1.0", path, 2, 1), declaration("pkg", "2.0", path, 4, 2)]
         )
 
     @kills.replace(
@@ -383,8 +358,7 @@ class PinnedDeclarationsTest(unittest.TestCase):
         )
         path = mock_path(contents)
         self.assertEqual(
-            self.pins(path),
-            [declaration("local", "1.0+local", path, 3, 1), declaration("epoch", "1!2.0", path, 4, 2)],
+            self.pins(path), [declaration("local", "1.0+local", path, 3, 1), declaration("epoch", "1!2.0", path, 4, 2)]
         )
 
     def test_a_pin_is_located_at_its_declaration(self):

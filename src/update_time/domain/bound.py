@@ -190,6 +190,15 @@ class VersionBound:
             probes.update((Version(base), Version(f"{base}.0.0.0.1")))
         return {version for version in probes if version > current}
 
+    def candidates(self, versions: Iterable[Version], current_version: VersionString) -> list[Version]:
+        """Return the releases among the versions that are newer than the current version and that the bound keeps."""
+        current = Version(current_version)
+        return [
+            version
+            for version in versions
+            if version > current and not version.is_prerelease and self.keeps(version, current_version)
+        ]
+
 
 # The absence of a bound, as a keep-all bound (an empty specifier matches every version), so `version_bound` is
 # never None. It is the default for an unmarked reference.

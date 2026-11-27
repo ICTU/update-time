@@ -1,17 +1,9 @@
-"""Resolve which version a pinned reference should update to, the decision shared by every reference kind.
-
-Given a reference's current version and its `# update-time:` marker, decide which version to update it to and
-report on the decision through a `Logger`. The source is injected as the record of its getters, so the decision is
-the same whatever registry the reference points at; a reference kind with extra concerns (a commit SHA to pin, a
-re-pushed digest to adopt) layers those on top of the version this decision resolves.
-
-A reference the run resolves no update for takes `report_project_checks` instead.
-"""
+"""Resolve which version a pinned reference should update to, the decision shared by every reference kind."""
 
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
-from update_time.domain.dependency import NO_PROJECT, NO_RELEASE, DependencyVersion, Project, Unserved
+from update_time.domain.dependency import NO_PROJECT, NO_VERSION, DependencyVersion, Project, Unserved
 from update_time.domain.directive import DIRECTIVES, Consequence, ImageNotLookedUpReason, Reason
 from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference, ResolvedReference
@@ -42,7 +34,7 @@ def latest_version(reference: Reference, source: Source, log: Logger) -> Depende
         project = _reported_project(latest, reference, source)
     if (fresh := latest.fresh_release) is not None:
         log.held_back_by_cooldown(reference, fresh, days, marker.cooldown_directive)
-    resolved = ResolvedReference.from_reference(reference, release=latest, project=project)
+    resolved = ResolvedReference.from_reference(reference, version=latest, project=project)
     _report_project(resolved, log)
     report_yank(resolved, log)
     never_floats = _why_the_pin_never_floats(latest, image_not_looked_up)
@@ -161,7 +153,7 @@ def report_yank(resolved: ResolvedReference, log: Logger) -> None:
 
     A source that did not say whether it yanked the version leaves nothing to report.
     """
-    if (yank := resolved.release.yank) is None:
+    if (yank := resolved.version.yank) is None:
         return
     directive = resolved.marker.directive_for(Scope.YANKED)
     if yank.yanked and directive:
@@ -169,7 +161,7 @@ def report_yank(resolved: ResolvedReference, log: Logger) -> None:
     elif yank.yanked:
         log.yanked_dependency(resolved)
     elif directive:
-        log.redundant_ignore(resolved, Scope.YANKED, directive, resolved.release.version)
+        log.redundant_ignore(resolved, Scope.YANKED, directive, resolved.version.version)
 
 
 def _why_the_pin_never_floats(
@@ -197,6 +189,6 @@ def report_project_checks(reference: Reference, log: Logger, get_project: Projec
     if not _project_is_checked(get_project, reference):
         return
     resolved = ResolvedReference.from_reference(
-        reference, release=NO_RELEASE, project=get_project(reference.dependency)
+        reference, version=NO_VERSION, project=get_project(reference.dependency)
     )
     _report_project(resolved, log)

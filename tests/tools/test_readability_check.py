@@ -54,10 +54,9 @@ class IsCodeTest(unittest.TestCase):
         "the check measures a snippet as prose when it does not parse on its own, so code reads as a sentence",
         case=_HEADER_ALONE,
     )
-    @kills.replace(
+    @kills.delete(
         readability_check._is_code,
-        r'\n{_INDENT}pass"',
-        r'\n"',
+        "{_INDENT}pass",
         "the block lacks the pass that gives a quoted header its body, so the header reads as prose",
         case=_HEADER_ALONE,
     )
@@ -75,10 +74,9 @@ class IsCodeTest(unittest.TestCase):
         "a snippet is tried by its first line alone, so a test case across lines reads as prose",
         case=_ACROSS_LINES,
     )
-    @kills.replace(
+    @kills.force_true(
         readability_check._is_code,
-        "return any(isinstance(node, ast.Call) for node in ast.walk(tree))",
-        "return True",
+        "any(isinstance(node, ast.Call) for node in ast.walk(tree))",
         "whatever parses counts as code, so a bare word in prose is left out of the measure",
         case="code",
     )
@@ -126,8 +124,7 @@ class ExtractProseFromPythonTest(unittest.TestCase):
             'announced = F"the upper-case f-string {name}"\n'
         )
         self.assertEqual(
-            self.prose(source_code),
-            ["the quoted string.", "the quoted f-string.", "the upper-case f-string."],
+            self.prose(source_code), ["the quoted string.", "the quoted f-string.", "the upper-case f-string."]
         )
 
     def test_f_string_keeps_its_literal_parts(self):
@@ -294,10 +291,9 @@ class FaultsTest(unittest.TestCase):
         "a subject `and` joins to the first reads as a clause wedged into it, so plain prose is reported",
         case="a comma lists three subjects",
     )
-    @kills.replace(
+    @kills.delete(
         readability_check,
-        'frozenset({"IN", "TO", "CC", ","})',
-        'frozenset({"IN", "TO", "CC"})',
+        ', ","',
         "the check reads a subject listed after a comma as a clause wedged into the first, so it reports plain prose",
         case="a comma lists three subjects",
     )
@@ -523,12 +519,8 @@ class MainTest(unittest.TestCase):
 
     def test_a_whitelist_entry_that_is_still_needed(self, tokenizer: Mock, extract: Mock):
         """Test that an entry matching a sentence the run flags is left unreported, and leaves the run passing."""
-        whitelist = (self.NESTED,)
-        exit_code, written = self.check(
-            tokenizer, extract, self.NESTED, whitelist=whitelist, option="--check-whitelist"
-        )
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(written, "")
+        result = self.check(tokenizer, extract, self.NESTED, whitelist=(self.NESTED,), option="--check-whitelist")
+        self.assertEqual(result, (0, ""))
 
     def test_a_sentence_the_cache_holds_a_verdict_for_is_reported_as_the_cache_says(
         self, tokenizer: Mock, extract: Mock
@@ -633,21 +625,15 @@ class MainTest(unittest.TestCase):
 
     def test_readable_sentence(self, tokenizer: Mock, extract: Mock):
         """Test that a sentence under every threshold is not written out, and leaves the run passing."""
-        exit_code, written = self.check(tokenizer, extract, "A plain sentence.")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(written, "")
+        self.assertEqual(self.check(tokenizer, extract, "A plain sentence."), (0, ""))
 
     def test_a_whitelisted_sentence(self, tokenizer: Mock, extract: Mock):
         """Test that the check passes over a sentence the whitelist holds, and leaves the run passing."""
-        exit_code, written = self.check(tokenizer, extract, self.NESTED, whitelist=(self.NESTED,))
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(written, "")
+        self.assertEqual(self.check(tokenizer, extract, self.NESTED, whitelist=(self.NESTED,)), (0, ""))
 
     def test_a_whitelisted_sentence_the_prose_wraps(self, tokenizer: Mock, extract: Mock):
         """Test that the whitelist holds a sentence however the prose wraps it, since it records the text alone."""
-        exit_code, written = self.check(tokenizer, extract, self.WRAPPED, whitelist=(self.NESTED,))
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(written, "")
+        self.assertEqual(self.check(tokenizer, extract, self.WRAPPED, whitelist=(self.NESTED,)), (0, ""))
 
     def test_making_the_whitelist(self, tokenizer: Mock, extract: Mock):
         """Test that the file `--make-whitelist` names keeps a flagged sentence on one line only where it holds it."""
@@ -664,10 +650,7 @@ class MainTest(unittest.TestCase):
         return files[Path("prose.txt")]
 
     def test_the_whitelist_holds_each_sentence_once(self, tokenizer: Mock, extract: Mock):
-        """Test that a sentence two files hold is written once, and that the sentences come out sorted.
-
-        Regenerating the whitelist then rewrites the lines that changed rather than reshuffling the whole file.
-        """
+        """Test that a sentence two files hold is written once, and that the sentences come out sorted."""
         texts = (self.ASIDE, self.NESTED, self.ASIDE)
         text = self.make_whitelist(tokenizer, extract, *texts, whitelist=(self.ASIDE, self.NESTED))
         self.assertEqual(text, f"{self.NESTED}\n{self.ASIDE}\n")

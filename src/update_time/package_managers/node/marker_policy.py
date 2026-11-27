@@ -1,6 +1,7 @@
-"""The policies for the markers of a package.json and of a file holding catalogs, and a package.json judged by one."""
+"""The policies for the markers of a package.json and of a file holding catalogs, and a file judged by one."""
 
 from dataclasses import dataclass, replace
+from functools import cached_property
 from typing import TYPE_CHECKING, Final
 
 from update_time.domain.directive import Reason
@@ -10,6 +11,7 @@ from update_time.package_managers.policy import ManagerPolicy
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from update_time.manifests.catalogs_yaml import CatalogsYaml
     from update_time.manifests.npm_declaration import Catalogs, Declaration
     from update_time.manifests.package_json import PackageJson
 
@@ -51,27 +53,20 @@ YARN_WITHOUT_A_COOLDOWN_POLICY: Final[ManagerPolicy[Declaration]] = MARKER_POLIC
     Reason.YARN_WITHOUT_A_COOLDOWN_LEFT, Reason.YARN_WITHOUT_A_COOLDOWN_KEPT
 )
 
-# The policy for the markers of a package.json whose project's files name more than one package manager.
-MORE_THAN_ONE_MANAGER_POLICY: Final[ManagerPolicy[Declaration]] = MARKER_POLICY.policy_for_files_left_as_they_are(
-    Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT
-)
-
-# The policy for the markers of a package.json whose workspace root lies outside the scan root.
-WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY: Final[ManagerPolicy[Declaration]] = (
-    MARKER_POLICY.policy_for_files_left_as_they_are(
-        Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
-    )
-)
-
 
 @dataclass(frozen=True)
-class CheckedPackageJson:
-    """A package.json to check, as its package manager left it, with the policy its markers are judged by."""
+class CheckedFile[FileT: PackageJson | CatalogsYaml]:
+    """A file to check, as its package manager left it, with the policy its markers are judged by."""
 
-    package_json: PackageJson
+    file: FileT
     policy: ManagerPolicy[Declaration]
 
-    def judged_by(self, catalogs: Catalogs) -> CheckedPackageJson:
+    @cached_property
+    def declarations(self) -> list[Declaration]:
+        """Return the dependencies the file declares, read once for every check."""
+        return list(self.file.declarations())
+
+    def judged_by(self, catalogs: Catalogs) -> CheckedFile[FileT]:
         """Return the package.json, with a policy checking a `catalog:` dependency where the catalogs hold its entry."""
         policy = self.policy
 
@@ -81,4 +76,4 @@ class CheckedPackageJson:
                 return ManagerPolicy.every_warning_scope(Reason.CATALOG_ENTRY_NOT_FOUND)
             return policy.unchecked_scopes(declaration)
 
-        return CheckedPackageJson(self.package_json, replace(policy, unchecked_scopes=unchecked_scopes))
+        return CheckedFile(self.file, replace(policy, unchecked_scopes=unchecked_scopes))

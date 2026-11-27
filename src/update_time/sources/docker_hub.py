@@ -4,10 +4,6 @@ The OCI protocol exposes no publish date. Its optional `org.opencontainers.image
 image's *build*, not the push of its tag. Reproducible builds commonly zero that annotation (`SOURCE_DATE_EPOCH`),
 so it is no substitute. Docker Hub's proprietary tags API is the only source of a real push date, so the
 cooldown can only be enforced for Docker Hub images, and only there can an image be dated for the staleness check.
-
-This module isolates everything Docker-Hub-specific. The generic OCI client in `oci` uses this module for those
-push dates, for the digests Docker Hub's listing gives, for a repository's archival, and for credentials, which raise
-the rate limit.
 """
 
 import os
@@ -58,9 +54,8 @@ _NO_PUSH_DATE: Final[str] = "Docker Hub did not report a push date"
 def tag_listing(repository: str, tag: str) -> LookedUp[_TagListing]:
     """Return a Docker Hub repository's tag listing, read until it holds every tag serving the tag's digest.
 
-    `repository` is the `namespace/repository` path (e.g. `library/python`). Reading stops after
-    `_MAX_TAG_LISTING_PAGES` pages, so a tag the listing lacks may sit on a later page. The listing is absent where
-    Docker Hub does not serve the repository.
+    Reading stops after `_MAX_TAG_LISTING_PAGES` pages, so a tag the listing lacks may sit on a later page. The
+    listing is absent where Docker Hub does not serve the repository.
     """
     url = _listing_url(repository)
     digests: dict[str, str] = {}
@@ -209,10 +204,7 @@ _ARCHIVED_STATUS: Final[str] = "archived"
 
 @cache
 def archival(repository: str) -> Archival | None:
-    """Return what Docker Hub declares about the repository: whether it is archived, or None where it can't be read.
-
-    `repository` is the `namespace/repository` path (e.g. `nginxinc/nginx-unprivileged`).
-    """
+    """Return what Docker Hub declares about the repository: whether it is archived, or None where it can't be read."""
     url = _repository_url(repository)
     found = fetch_json(
         url,
@@ -233,10 +225,7 @@ class _DockerHubRepositoryJSON(TypedDict):
 
 
 def last_pushed(repository: str, tag: str) -> LookedUp[datetime]:
-    """Return the push date of a Docker Hub tag.
-
-    `repository` is the `namespace/repository` path (e.g. `library/redis`).
-    """
+    """Return the push date of a Docker Hub tag."""
     found = fetch_json(f"{_tags_url(repository)}/{tag}", _LOG, body=_TagJSON, headers=_api_headers())
     if found.value is None:
         return found.failure()

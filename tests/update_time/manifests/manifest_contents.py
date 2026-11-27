@@ -148,12 +148,7 @@ def effective_dependency_element(
 
 
 def effective_plugin_element(
-    artefact: str,
-    version: str | None,
-    line: int,
-    *,
-    managed_at: tuple[str, int] | None = None,
-    elements: str = "",
+    artefact: str, version: str | None, line: int, *, managed_at: tuple[str, int] | None = None, elements: str = ""
 ) -> str:
     """Return a `<plugin>` of the effective pom, located in the scanned pom as a dependency is.
 

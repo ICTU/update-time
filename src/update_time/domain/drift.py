@@ -13,12 +13,7 @@ if TYPE_CHECKING:
 def report_drift(
     marker: Marker, warn: Callable[[], None], adopt: Callable[[str], None], past_cooldown: Callable[[], bool]
 ) -> bool:
-    """Report a drifted hash pin and return whether the reference adopts what it now points at.
-
-    A reference whose marker does not opt into adopting drift is warned about and left as it is. One that does adopts
-    the new value once it is older than the cooldown, as an update would. Callback-driven so `domain` stays free of
-    I/O.
-    """
+    """Report a drifted hash pin and return whether the reference adopts what it now points at."""
     if not (directive := marker.allow_directive(Scope.HASH_DRIFT)):
         warn()
         return False

@@ -129,19 +129,13 @@ def _project_metadata(package: str) -> _ProjectIndexJSON | None:
     return _index_metadata(normalized_python_name(package))
 
 
-def _project_metadata_or_empty(package: str) -> _ProjectIndexJSON:
-    """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be read."""
-    return _project_metadata(package) or {}
-
-
 @cache
 def _index_metadata(package: str) -> _ProjectIndexJSON | None:
     """Fetch the Index API response for the normalized package name, or None if it can't be read.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
-    available `versions` (PEP 700) and each distribution file's `upload-time` (PEP 700), so `_project_versions`
-    and `_newest_release` share this single request.
+    available `versions` (PEP 700) and each distribution file's `upload-time` (PEP 700).
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
     return fetch_json(f"{_PYPI}/simple/{package}/", _LOG, body=_ProjectIndexJSON, headers=headers).value
@@ -171,19 +165,10 @@ _ProjectIndexJSON = TypedDict(
 )
 
 
-def _project_versions(package: str) -> list[str]:
-    """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be read."""
-    return _project_metadata_or_empty(package).get("versions", [])
-
-
 def _versions(package: str) -> list[Version]:
-    """Return the package's releases the index lists under a version `packaging` can read."""
-    return [Version(release) for release in _project_versions(package) if is_valid(release)]
-
-
-def _stable_versions(package: str) -> list[Version]:
-    """Return the package's releases that are candidates to pin: the valid versions that are neither pre nor dev."""
-    return [version for version in _versions(package) if not version.is_prerelease and not version.is_devrelease]
+    """Return the releases the index lists under a version `packaging` can read, or none if the index is unreadable."""
+    releases = (_project_metadata(package) or {}).get("versions", [])
+    return [Version(release) for release in releases if is_valid(release)]
 
 
 def _newest_release(package: DependencyName) -> Release | None:
@@ -195,7 +180,7 @@ def _newest_release(package: DependencyName) -> Release | None:
     """
     return Release.newest(
         Release(version=str(version), published=published)
-        for file in _project_metadata_or_empty(package).get("files", [])
+        for file in (_project_metadata(package) or {}).get("files", [])
         if (published := parse_timestamp(file.get("upload-time"))) is not None
         and (version := _distribution_version(file.get("filename", ""))) is not None
     )
@@ -237,14 +222,8 @@ def _get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, c
     package, current_version = pinned.name, pinned.version
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
-    current = Version(current_version)
-    candidates = [
-        version
-        for version in _stable_versions(package)
-        if version > current and version_bound.keeps(version, current_version)
-    ]
     latest = first_eligible(
-        candidates,
+        version_bound.candidates(_versions(package), current_version),
         lambda version, walk: _eligible_release(package, version, current_version, walk),
         lambda _: False,
         current_version,
@@ -304,14 +283,7 @@ def _eligible_release(
 def _get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the PyPI package and version.
 
-    Since there's no standardized way that PyPI packages refer to a changelog, apply several heuristics to find it:
-    - Check the project URLs labelled as the changelog, fetching each as a changelog file.
-    - Check the GitHub releases of each project URL that points at GitHub, reading the URLs labelled as the
-      source repository before the rest.
-    - Check for a changelog in the package description.
-    - Check for a GitHub URL in the package description whose repository carries the package's name, and
-      use that to find GitHub releases.
-    - Check the root of each project URL that points at GitHub for a changelog file.
+    Since there's no standardized way that PyPI packages refer to a changelog, apply several heuristics to find it.
     """
     metadata = _release_metadata(package, version).value
     if metadata is None:
@@ -323,12 +295,12 @@ def _get_changes(package: str, version: str) -> Changes:
             return changelog
     repository_urls = [url for _, url in sorted(urls.items(), key=lambda item: _repository_rank(item[0]))]
     for url in repository_urls:
-        if changelog := _changelog_from_github_releases(url, package, version):
+        if changelog := changes_from_release(github_repository(url), package, version):
             return changelog
     if changelog := _changelog_from_description(info, package, version):
         return changelog
     for url in repository_urls:
-        if changelog := _changelog_from_repository_root(url, version):
+        if changelog := changes_from_changelog_file(github_repository(url), version):
             return changelog
     return NO_CHANGES
 
@@ -386,16 +358,6 @@ def _changelog_from_github_url_in_description(description: str, package: str, ve
 def _names_the_package(repository: GitHubRepository, package: str) -> bool:
     """Return whether the repository carries the package's name."""
     return normalized_python_name(repository.name) == normalized_python_name(package)
-
-
-def _changelog_from_github_releases(url: str, package: str, version: str) -> Changes:
-    """Get the changelog from the GitHub releases."""
-    return changes_from_release(github_repository(url), package, version)
-
-
-def _changelog_from_repository_root(url: str, version: str) -> Changes:
-    """Get the changelog from a changelog file in the root of the repository."""
-    return changes_from_changelog_file(github_repository(url), version)
 
 
 SOURCE: Final[Source] = Source(

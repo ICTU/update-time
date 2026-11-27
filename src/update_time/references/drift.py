@@ -16,12 +16,7 @@ if TYPE_CHECKING:
 
 
 def adopts_drift(
-    kind: DriftKind,
-    reference: Reference,
-    new_sha: str,
-    log: Logger,
-    *,
-    publication: Lookup[datetime],
+    kind: DriftKind, reference: Reference, new_sha: str, log: Logger, *, publication: Lookup[datetime]
 ) -> bool:
     """Report the drift to the new hash, and return whether the reference adopts it once older than the cooldown."""
     drifted = DriftedPin.from_reference(reference, kind=kind, new_sha=new_sha)

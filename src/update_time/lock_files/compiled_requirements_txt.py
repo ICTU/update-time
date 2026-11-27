@@ -155,10 +155,7 @@ class CompiledRequirementsTxt:
 
     @property
     def compile_directory(self) -> Path:
-        """Return the directory the file was compiled in: its path, less the output path the command records.
-
-        Where the command does not record an output that ends the file's path, the file's own directory is returned.
-        """
+        """Return the directory the file was compiled in: its path, less the output path the command records."""
         if output_parts := self._output_parts:
             return Path(*self.path.parts[: -len(output_parts)])
         return self.path.parent

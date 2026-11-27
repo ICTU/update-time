@@ -12,7 +12,7 @@ from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, PinnedDependency, Release, Yank
 from update_time.formats.markdown import is_file as is_markdown_file
-from update_time.io.log import Logger
+from update_time.io.log import _UNFETCHED_METADATA, Logger
 from update_time.sources import github
 from update_time.sources.github import (
     _changes_from_files,
@@ -47,7 +47,7 @@ from tests.http_mocks import (
 from tests.update_time.base_test_cases import CacheClearingTestCase, LoggingTestCase
 from tests.update_time.domain_objects import bound, days_ago
 from tests.update_time.fixtures import KILLS_GITHUB_UNCACHED
-from tests.update_time.io.log_messages import message_of
+from tests.update_time.io.log_messages import message_of, unknown_version_date
 from tests.update_time.updaters.fixtures import PYPI_RECENT_UPLOAD
 
 from .github_answers import (
@@ -92,12 +92,7 @@ class GetChangesTest(LoggingTestCase):
         status_code: int = HTTPStatus.OK,
         content_type: str | None = "text/text",
     ) -> None:
-        """Point the mock Session.get at one response whose successive `.json()` calls return the given payloads.
-
-        The changelog heuristics make several requests off one release (the PyPI metadata, then a changelog URL or
-        GitHub releases); the shared response returns the next JSON payload on each `.json()` and the same text and
-        status for all of them.
-        """
+        """Point the mock Session.get at one response whose successive `.json()` calls return the given payloads."""
         ok = status_code < HTTPStatus.BAD_REQUEST
         headers = {} if content_type is None else {"Content-Type": content_type}
         response = mock_response(text=text, status_code=status_code, ok=ok, headers=headers)
@@ -110,11 +105,7 @@ class GetChangesTest(LoggingTestCase):
         url = "https://github.com/owner/repo/blob/main/CHANGELOG.md"
         for key in ("changelog", "changes", "whatsnew", "history", "What's New"):
             with self.subTest(key=key):
-                self.create_mock_response(
-                    mock_get,
-                    {"info": {"description": "Package-foo description", "project_urls": {key: url}}},
-                    text=changelog,
-                )
+                self.create_mock_response(mock_get, _metadata({key: url}), text=changelog)
                 changes = _get_changes(f"package-2-{key}", "1.1")
                 self.assertEqual(changes, markdown_changes("1.1"))
                 self.assertEqual(changes.url, url)
@@ -128,10 +119,7 @@ class GetChangesTest(LoggingTestCase):
         """Test that a changelog URL served as Markdown is read as Markdown, whatever its name says."""
         urls = {"changelog": "https://changes"}
         self.create_mock_response(
-            mock_get,
-            {"info": {"description": "Package-foo description", "project_urls": urls}},
-            text=markdown_changelog("1.1"),
-            content_type="text/markdown",
+            mock_get, _metadata(urls), text=markdown_changelog("1.1"), content_type="text/markdown"
         )
         changes = _get_changes("package-served-as-markdown", "1.1")
         self.assertEqual(changes, markdown_changes("1.1"))
@@ -166,19 +154,11 @@ class GetChangesTest(LoggingTestCase):
     )
     def test_the_changelog_url_extension_says_whether_the_changes_are_markdown(self, mock_get: Mock):
         """Test that the extension of the changelog URL PyPI publishes says whether its changes are Markdown."""
-        names = {
-            "CHANGELOG.rst": False,
-            "CHANGELOG.md#unreleased": True,
-            "CHANGELOG.md?token=abc": True,
-        }
+        names = {"CHANGELOG.rst": False, "CHANGELOG.md#unreleased": True, "CHANGELOG.md?token=abc": True}
         for name, markdown in names.items():
             with self.subTest(name=name):
                 url = f"https://changes/{name}"
-                self.create_mock_response(
-                    mock_get,
-                    {"info": {"description": "Package-foo description", "project_urls": {"changelog": url}}},
-                    text=markdown_changelog("1.1"),
-                )
+                self.create_mock_response(mock_get, _metadata({"changelog": url}), text=markdown_changelog("1.1"))
                 changes = _get_changes(f"package-{name}", "1.1")
                 self.assertEqual(changes, markdown_changes("1.1"))
                 self.assertEqual(changes.markdown, markdown)
@@ -193,12 +173,15 @@ class GetChangesTest(LoggingTestCase):
     def test_changelog_url_without_content_type(self, mock_get: Mock):
         """Test that the changes are returned when the changelog URL's server sends no Content-Type header."""
         self.create_mock_response(
-            mock_get,
-            {"info": {"description": "Package-foo description", "project_urls": {"changelog": "https://changes"}}},
-            text=markdown_changelog("1.1"),
-            content_type=None,
+            mock_get, _metadata({"changelog": "https://changes"}), text=markdown_changelog("1.1"), content_type=None
         )
         self.assertEqual(_get_changes("humanize", "1.1"), markdown_changes("1.1"))
+
+    def test_changelog_url_serving_html_supplies_no_changes(self, mock_get: Mock):
+        """Test that a changelog URL answering with HTML gives empty changes, since a web page is not a changelog."""
+        metadata = _metadata({"changelog": "https://changes"})
+        self.create_mock_response(mock_get, metadata, text=markdown_changelog("1.1"), content_type="text/html")
+        self.assertEqual(_get_changes("package-served-as-html", "1.1"), "")
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that a changelog URL that gives an HTTP error doesn't stop the later heuristics."""
@@ -223,54 +206,43 @@ class GetChangesTest(LoggingTestCase):
                 # Each case names a repository of its own, since a GitHub API URL is fetched once per run.
                 repo = f"https://github.com/org/repo-{key.replace(' ', '-')}"
                 self.create_mock_response(
-                    mock_get,
-                    {"info": {"description": "Package-foo description", "project_urls": {"docs": docs, key: repo}}},
-                    [github_release_json("1.1", body=changelog)],
+                    mock_get, _metadata({"docs": docs, key: repo}), [github_release_json("1.1", body=changelog)]
                 )
                 self.assertEqual(_get_changes(f"package-4-{key}", "1.1"), changelog)
 
-    def test_github_project_url_under_another_label(self, mock_get: Mock):
-        """Test that a GitHub project URL is read as the repository, whatever label it carries."""
+    def test_which_project_url_is_read_as_the_repository(self, mock_get: Mock):
+        """Test which of a release's project URLs is read as the repository whose releases hold the changes."""
         changelog = markdown_changelog("1.1")
-        project_urls = {"Documentation": "https://idna.readthedocs.io", "Bug Tracker": "https://github.com/kjd/idna"}
-        self.create_mock_response(
-            mock_get,
-            {"info": {"description": "Package-foo description", "project_urls": project_urls}},
-            [github_release_json("1.1", body=changelog)],
-        )
-        self.assertEqual(_get_changes("idna", "1.1"), changelog)
-
-    def test_labelled_repository_url_is_read_first(self, mock_get: Mock):
-        """Test that a project URL labelled as the repository is read before a GitHub URL under another label."""
-        changelog = markdown_changelog("1.1")
-        project_urls = {"Funding": "https://github.com/aio-libs/.github", "Source": "https://github.com/aio-libs/yarl"}
-        self.create_mock_response(
-            mock_get,
-            {"info": {"description": "Package-foo description", "project_urls": project_urls}},
-            [github_release_json("1.1", body=changelog)],
-        )
-        self.assertEqual(_get_changes("yarl", "1.1"), changelog)
-        self.assert_releases_requested(mock_get, "aio-libs/yarl")
+        cases = {
+            "a GitHub URL under another label": (
+                {"Documentation": "https://idna.readthedocs.io", "Bug Tracker": "https://github.com/kjd/idna"},
+                "kjd/idna",
+            ),
+            "a URL labelled as the repository before a GitHub URL under another label": (
+                {"Funding": "https://github.com/aio-libs/.github", "Source": "https://github.com/aio-libs/yarl"},
+                "aio-libs/yarl",
+            ),
+            "a URL labelled as the source before the homepage": (
+                {
+                    "Homepage": "https://github.com/python/typing",
+                    "Source": "https://github.com/python/typing_extensions",
+                },
+                "python/typing_extensions",
+            ),
+        }
+        for case, (project_urls, repository) in cases.items():
+            with self.subTest(case=case):
+                mock_get.reset_mock()
+                self.create_mock_response(
+                    mock_get, _metadata(project_urls), [github_release_json("1.1", body=changelog)]
+                )
+                self.assertEqual(_get_changes(repository, "1.1"), changelog)
+                self.assert_releases_requested(mock_get, repository)
 
     def assert_releases_requested(self, mock_get: Mock, *repositories: str) -> None:
         """Assert that GitHub was asked for the releases of exactly these repositories, in this order."""
         requested = [url for url in requested_urls(mock_get) if "/releases" in url]
         self.assertEqual(requested, [releases_url(repository) for repository in repositories])
-
-    def test_source_url_is_read_before_the_homepage(self, mock_get: Mock):
-        """Test that a project URL labelled as the source is read before one labelled as the homepage."""
-        changelog = markdown_changelog("1.1")
-        project_urls = {
-            "Homepage": "https://github.com/python/typing",
-            "Source": "https://github.com/python/typing_extensions",
-        }
-        self.create_mock_response(
-            mock_get,
-            {"info": {"description": "Package-foo description", "project_urls": project_urls}},
-            [github_release_json("1.1", body=changelog)],
-        )
-        self.assertEqual(_get_changes("typing-extensions", "1.1"), changelog)
-        self.assert_releases_requested(mock_get, "python/typing_extensions")
 
     def test_changelog_in_description_links_the_release_page(self, mock_get: Mock):
         """Test that the description supplies the changes, linking the release's PyPI page, without project URLs."""
@@ -421,11 +393,7 @@ class GetChangesTest(LoggingTestCase):
     ) -> None:
         """Point the mock Session.get at the responses for packages whose metadata names one GitHub repository.
 
-        The repository's root lists an entry per name in `files`. A name mapped to a text is a file answering that
-        text. A name mapped to None is an entry with no file to fetch, as a directory is. A name mapped to a
-        mapping is a directory answering a recursive tree listing of the paths it maps. A path mapped to a text is
-        a file answering it, and a path mapped to None is a directory below the tree. The repository publishes no
-        releases. `extra` adds a response, or replaces one, under the URL it is keyed by.
+        The repository's root lists an entry per name in `files`. The repository publishes no releases.
         """
         info = {"description": description, "project_urls": {"Source": f"https://github.com/{repository}"}}
         entries = (files or {}).items()
@@ -596,7 +564,7 @@ class GetChangesTest(LoggingTestCase):
         _get_changes,
         "if changelog := _changelog_from_description(info, package, version):",
         "for url in repository_urls:\n"
-        "        if changelog := _changelog_from_repository_root(url, version):\n"
+        "        if changelog := changes_from_changelog_file(github_repository(url), version):\n"
         "            return changelog\n"
         "    ",
         "a package whose description holds the changes reports the repository file's instead, at a request extra",
@@ -643,10 +611,9 @@ class GetChangesTest(LoggingTestCase):
         "a repository naming its changelog file `history`, `news`, or `releases` does not report changes",
         case="history.txt",
     )
-    @kills.replace(
+    @kills.delete(
         github,
-        '{"changes", ',
-        "{",
+        '"changes", ',
         "a repository naming its changelog file `changes` does not report changes",
         case="CHANGES.rst",
     )
@@ -729,10 +696,7 @@ class GetChangesTest(LoggingTestCase):
     )
     def test_changelog_file_naming_no_version_is_passed_over(self, mock_get: Mock):
         """Test that a root holding a changelog file naming no version is searched on for one that names it."""
-        files = {
-            "CHANGELOG.md": "Changelog\n\n## 0.9\n\n- Fixed bar\n",
-            "CHANGES.rst": "1.1\n===\n\n- Fixed foo\n",
-        }
+        files = {"CHANGELOG.md": "Changelog\n\n## 0.9\n\n- Fixed bar\n", "CHANGES.rst": "1.1\n===\n\n- Fixed foo\n"}
         self.create_discovery_responses(mock_get, "cryptography", files=files, repository="pyca/cryptography")
         self.assertEqual(_get_changes("cryptography", "1.1"), "1.1\n===\n\n- Fixed foo")
 
@@ -778,6 +742,11 @@ class GetChangesTest(LoggingTestCase):
         mock_get.side_effect = requests.exceptions.Timeout
         self.assertEqual(_changelog_from_url("https://changes", "1.0"), "")
         self.assert_logged(message_of(Logger.request_failed), url="https://changes", failure="the request timed out")
+
+
+def _metadata(project_urls: dict[str, str]) -> dict[str, JSON]:
+    """Return the metadata PyPI serves for a release whose project lists the URLs."""
+    return {"info": {"description": "Package-foo description", "project_urls": project_urls}}
 
 
 class GetPublicationDateTimeTest(CacheClearingTestCase):
@@ -897,18 +866,12 @@ class ArchivalTest(LoggingTestCase):
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for getting the latest version from PyPI.
 
-    `get_latest_version` makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it:
-    first the Index API (the version list), then — newest-first — one per-version metadata request per candidate,
-    stopping at the first eligible release. A test supplies only as many responses as reaching its expected version
-    requires. The current version's yank state is read from that same Index API response.
+    `get_latest_version` makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it.
     """
 
     def test_invalid_current_version(self, mock_get: Mock):
         """Test that an invalid current version is returned unchanged without querying PyPI."""
-        self.assertEqual(
-            get_latest_version("package", "not a version").version,
-            "not a version",
-        )
+        self.assertEqual(get_latest_version("package", "not a version").version, "not a version")
         mock_get.assert_not_called()
 
     def test_which_listings_leave_the_pin_where_it_is(self, mock_get: Mock):
@@ -941,13 +904,10 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("1.0", "1.1", "1.2"), unavailable, unavailable]
         self.assertEqual(get_latest_version("unreachable", "1.0", cooldown_days=0).version, "1.0")
         self.assertEqual(mock_get.call_count, 2)  # The index and the newest release's metadata
-        self.assert_error_logged(
-            message_of(Logger.no_release_metadata),
-            dependency="unreachable",
-            candidate="1.2",
-            current="1.0",
-            reason="HTTP 503",
+        message, fields = unknown_version_date(
+            _UNFETCHED_METADATA, dependency="unreachable", candidate="1.2", current="1.0", reason="HTTP 503"
         )
+        self.assert_error_logged(message, **fields)
 
     def test_new_version(self, mock_get: Mock):
         """Test that the latest version is returned, with its publication date."""
@@ -995,10 +955,7 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_yanked_current_version_without_reason(self, mock_get: Mock):
         """Test that a yanked pin with no maintainer reason is flagged as yanked with an empty reason."""
         mock_get.side_effect = [pypi_index("1.0", files=[yanked_file("yanked_pin-1.0-py3-none-any.whl")])]
-        self.assertEqual(
-            get_latest_version("yanked_pin", "1.0").yank,
-            Yank(yanked=True),
-        )
+        self.assertEqual(get_latest_version("yanked_pin", "1.0").yank, Yank(yanked=True))
 
     def test_no_yank_when_the_update_moves_away(self, mock_get: Mock):
         """Test that a run updating away from a yanked pin reports no yank, since the pin no longer sits on one."""

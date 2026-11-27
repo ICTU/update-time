@@ -12,13 +12,7 @@ from update_time.io.fetch import fetch_json
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
 
-from .github import (
-    GITHUB,
-    GitHubRepository,
-    changes_from_changelog_file,
-    changes_from_release,
-    github_repository,
-)
+from .github import GITHUB, GitHubRepository, changes_from_changelog_file, changes_from_release, github_repository
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -71,15 +65,15 @@ def _expanded_shorthand(url: str) -> str:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _PackageSource:
-    """Where an npm version document says the package's source lives: a GitHub repository, and a directory in it."""
+class _PackageRepository:
+    """Where an npm version document says the package's code lives: a GitHub repository, and a directory in it."""
 
     repository: GitHubRepository | None = None
     directory: str = ""
 
     @classmethod
-    def from_metadata(cls, metadata: _VersionJSON) -> _PackageSource:
-        """Return the source the metadata names, the directory the repository builds the package from included."""
+    def from_metadata(cls, metadata: _VersionJSON) -> _PackageRepository:
+        """Return the repository the metadata names, the directory it builds the package from included."""
         repository = metadata.get("repository", "")
         if isinstance(repository, dict):
             url, directory = repository.get("url", ""), repository.get("directory", "")
@@ -95,9 +89,9 @@ def _get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the package and version, or empty string if it can't be fetched or found."""
     if (metadata := fetch_json(f"{_REGISTRY}/{package}/{version}", _LOG, body=_VersionJSON).value) is None:
         return NO_CHANGES
-    source = _PackageSource.from_metadata(metadata)
-    return changes_from_release(source.repository, package, version) or changes_from_changelog_file(
-        source.repository, version, source.directory
+    package_repository = _PackageRepository.from_metadata(metadata)
+    return changes_from_release(package_repository.repository, package, version) or changes_from_changelog_file(
+        package_repository.repository, version, package_repository.directory
     )
 
 
@@ -107,25 +101,20 @@ def _package_metadata(package: str) -> _PackageJSON | None:
     return fetch_json(f"{_REGISTRY}/{package}", _LOG, body=_PackageJSON).value
 
 
-def _package_metadata_or_empty(package: str) -> _PackageJSON:
-    """Get the npm registry's package document, or an empty document if it can't be fetched."""
-    return _package_metadata(package) or {}
-
-
 def get_publication_datetime(package: str, version: str) -> datetime | None:
     """Return the datetime the version was published, or None when the registry doesn't date it.
 
     The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it
     no longer serves — has no date to read.
     """
-    return parse_timestamp(_package_metadata_or_empty(package).get("time", {}).get(version))
+    return parse_timestamp((_package_metadata(package) or {}).get("time", {}).get(version))
 
 
 def deprecation(package: str, version: str) -> Yank | None:
     """Return the version's deprecation state as a yank (npm's counterpart to a PyPI yank), or None if unknown.
 
     Read from the registry document's per-version metadata, where a deprecated version carries a `deprecated`
-    message. The state is unknown where the document can't be fetched or doesn't list the version.
+    message.
     """
     if (metadata := _package_metadata(package)) is None:
         return None
@@ -146,7 +135,7 @@ def _newest_release(package: str) -> Release | None:
 
     The release is read from the registry document's `time` map, which dates every version the package published.
     """
-    times = _package_metadata_or_empty(package).get("time", {})
+    times = (_package_metadata(package) or {}).get("time", {})
     return Release.newest(
         Release(version=version, published=published)
         for version, time in times.items()

@@ -12,7 +12,6 @@ from update_time.manifests.pom_xml import (
     Declaration,
     declarations,
     fully_resolved,
-    one_per_artefact_and_line,
     pom_name,
     with_resolved_coordinates,
     without_versions_left_to,
@@ -24,6 +23,7 @@ from update_time.package_managers.maven.versions_plugin import (
     report_new_versions,
     report_options_the_pom_overrides,
 )
+from update_time.primitives.iterables import unique
 from update_time.references.delegated import warn_about_pinned_versions, warn_about_projects
 from update_time.sources import maven_central
 
@@ -69,7 +69,8 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor: Re
         # The two readings pair up declaration by declaration, which a reading of another length cannot do.
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
-    distinct = one_per_artefact_and_line(resolved)
+    # Two declarations of one artefact naming one property share that property's line, which makes them equal.
+    distinct = unique(resolved)
     pom_names_rules = names_rules_of_its_own(effective_pom)
     report_markers(distinct, pom_names_rules=pom_names_rules)
     report_new_versions(before, after, resolved)

@@ -41,8 +41,7 @@ def version_getter(filename: str) -> NewVersionGetter:
     """Return a new-version getter for the file a jsDelivr URL references.
 
     The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no
-    room for it, so each reference closes over its own. The integrity hash resolved has to be the hash of the file
-    the URL points at, not of the package's default entry point.
+    room for it, so each reference closes over its own.
     """
 
     def get_latest_version(
@@ -50,12 +49,8 @@ def version_getter(filename: str) -> NewVersionGetter:
     ) -> DependencyVersion:
         """Return the latest jsDelivr version published outside the cooldown, with the file's integrity hash.
 
-        Mirrors the pypi and oci sources: walk the available versions newest-first and pick the first one published
-        outside the cooldown. Pre-releases, invalid versions, versions the bound rules out, and versions the
-        npm registry has no publication date for (e.g. present on jsDelivr but not yet mirrored) are skipped.
-        Returns the current version unchanged when it is invalid, already the newest eligible version, or the
-        referenced file's integrity hash can't be resolved (updating the version without a matching hash would break
-        the Subresource Integrity check). An invalid version comes back as one npm does not serve, so nothing dates it.
+        The current version comes back unchanged where the referenced file's integrity hash can't be resolved, since
+        updating the version without a matching hash would break the Subresource Integrity check.
         """
         if not is_valid(pinned.version):
             return DependencyVersion(version=pinned.version, unserved=Unserved.VERSION)
@@ -77,13 +72,8 @@ def _candidate_versions(pinned: PinnedDependency, version_bound: VersionBound) -
     url = f"{_JSDELIVR_PACKAGE_API}/{pinned.name}"
     if (listing := fetch_json(url, _LOG, body=_PackageListingJSON, headers=_HEADERS).value) is None:
         return []
-    current_version = Version(pinned.version)
     versions = [Version(entry["version"]) for entry in listing.get("versions", []) if is_valid(entry["version"])]
-    return [
-        version
-        for version in versions
-        if version > current_version and not version.is_prerelease and version_bound.keeps(version, pinned.version)
-    ]
+    return version_bound.candidates(versions, pinned.version)
 
 
 class _PackageListingJSON(TypedDict):
@@ -118,7 +108,7 @@ def integrity_hash(dependency: DependencyName, version: VersionString, filename:
     """Return the Subresource Integrity hash of the referenced file at the version, or "" if it can't be read.
 
     The hash must match the file referenced in the URL, not the package's default entry point (which jsDelivr does
-    not always list as a hashable file). An empty string signals the caller to leave the reference unchanged.
+    not always list as a hashable file).
     """
     url = f"{_JSDELIVR_PACKAGE_API}/{dependency}@{version}?structure=flat"
     if (listing := fetch_json(url, _LOG, body=_FileListingJSON, headers=_HEADERS).value) is None:

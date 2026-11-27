@@ -32,8 +32,7 @@ class PyprojectToml(PythonDependencyToml):
     def tool_key(self, table: str, key: str) -> tuple[str, str] | None:
         """Return the (value, trailing-comment) of `[tool.<table>] <key>`, or None when it isn't set.
 
-        The trailing comment is returned verbatim (with its leading `#`, or empty when there is none), so a caller can
-        recognise a line it wrote itself.
+        The trailing comment is returned verbatim, with its leading `#`, or empty when there is none.
         """
         return nested_value(read_document(self.path), "tool", table, key)
 
@@ -50,7 +49,7 @@ class PyprojectToml(PythonDependencyToml):
 
     def requires_python(self) -> Reference | None:
         """Return the `requires-python` the file declares, as a reference to Python, or None if it declares none."""
-        text = self.read()
+        text = self.text()
         if (config := parse(text)) is None or config.requires_python is None:
             return None
         line = line_of(text, "project", "requires-python")

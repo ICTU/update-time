@@ -40,9 +40,7 @@ def log_moved_versions(
             log_new_version(log, pin.name, pin.version, locations[name])
 
 
-def by_package[ReferenceT: Reference](
-    declarations: Iterable[ReferenceT],
-) -> dict[DependencyName, list[ReferenceT]]:
+def by_package[ReferenceT: Reference](declarations: Iterable[ReferenceT]) -> dict[DependencyName, list[ReferenceT]]:
     """Return the declarations, each with its marker, grouped by the normalized name of their package.
 
     A name uv or PyPI reports finds every declaration of its package, whichever of the spellings that normalize to
@@ -62,7 +60,7 @@ def log_new_version(
     The package is named as the package manager reports it, so one package is named one way however each line spells it.
     The changelog and publication date are fetched once, whichever locations the version is reported at.
     """
-    dependency_version = SOURCE.release(package, version)
+    dependency_version = SOURCE.dependency_version(package, version)
     for location in locations:
         # This message renders no version the reference is pinned to, so the reference names none.
         log.new_version(Reference(package, "", location), dependency_version)

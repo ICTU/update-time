@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from update_time.formats.xml import read, read_document
-from update_time.io.log import ToolTask, get_logger
+from update_time.io.log import NotRunCause, ReactorCause, ToolFailure, ToolTask, get_logger
 from update_time.io.process import is_installed, run
 from update_time.manifests.pom_xml import (
     has_input_locations,
@@ -32,10 +32,6 @@ _LOG: Final[Logger] = get_logger("pom.xml")
 
 # `effective-pom` writes the pom as Maven builds it, before any other goal of the same run rewrites it.
 _EFFECTIVE_POM_GOAL: Final[str] = f"{HELP_PLUGIN}:effective-pom"
-
-# `verbose` writes the input location of each element of the effective pom after it: the pom and the line declaring
-# that element.
-_EFFECTIVE_POM_OPTION: Final[str] = "-Dverbose"
 
 # The help plugin reports in this line where it wrote the effective pom. A project that configures the plugin's
 # `<output>` overrides `-Doutput`, so the effective pom lands where that project says.
@@ -96,12 +92,12 @@ class Reactor:
         ship a wrapper and mvn is not on the path, each pom gets an error.
         """
         if (maven := _maven(self._root)) is None:
-            _LOG.tool_not_on_path(pom_xml, ToolTask.UPDATE, _MVN)
+            _LOG.tool_failed(pom_xml, ToolTask.UPDATE, _MVN, ToolFailure.NOT_ON_PATH)
             return None
         if self._readable is None:
             self._readable = self._every_pom_parses()
         if not self._readable:
-            _LOG.maven_not_run(pom_xml)
+            _LOG.manager_not_run(pom_xml, "Maven", NotRunCause.REACTOR_UNREADABLE)
             return None
         before = _lines(pom_xml)
         result, effective_pom = _ReactorModule(pom_xml=pom_xml, root=self._root, maven=maven).update()
@@ -120,7 +116,7 @@ class Reactor:
         """
         unparsable = next((pom_xml for pom_xml in self._pom_xmls if _lines(pom_xml) is None), None)
         if unparsable is not None:
-            _LOG.unparsable_reactor(self._root, unparsable, len(self._pom_xmls) - 1)
+            _LOG.unreadable_reactor(self._root, ReactorCause.UNPARSABLE_POM, len(self._pom_xmls) - 1, unparsable)
         return unparsable is None
 
     def _report_unreadable(self, pom_xml: Path) -> None:
@@ -132,11 +128,11 @@ class Reactor:
         """
         poms_left = len(self._pom_xmls_after(pom_xml))
         if self._changed_pom is not None:
-            _LOG.unreadable_reactor_since_update(self._root, self._changed_pom, poms_left)
+            _LOG.unreadable_reactor(self._root, ReactorCause.UPDATED_POM, poms_left, self._changed_pom)
         elif poms_left and self._first_run:
-            _LOG.unreadable_reactor_as_found(self._root, poms_left)
+            _LOG.unreadable_reactor(self._root, ReactorCause.AS_FOUND, poms_left)
         elif poms_left:
-            _LOG.unreadable_reactor(self._root, poms_left)
+            _LOG.unreadable_reactor(self._root, ReactorCause.READ_EARLIER, poms_left)
 
     def _pom_xmls_after(self, pom_xml: Path) -> list[Path]:
         """Return the reactor's poms that the scan reaches after the pom."""

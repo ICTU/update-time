@@ -22,10 +22,9 @@ def warn_about_pins(
 ) -> None:
     """Run every check over the dependencies PyPI serves a release for, and report every marker over them all.
 
-    Each file's declarations are read once and walked by every pass, so they are a list rather than a generator,
-    which the passes after the first would find empty. A dependency PyPI serves no release for takes no check, and
-    its marker is reported all the same, since a redundant directive is what the reader has to hear about. A file's
-    markers are judged by the policy `policies` holds for it, or else by uv's marker policy.
+    The declarations are read from the files rather than from uv, so no check needs uv to run. Each file's
+    declarations are read once and walked by every pass, so they are a list rather than a generator, which the
+    passes after the first would find empty.
     """
     declared: list[list[Declaration]] = []
     for file in files:

@@ -1,10 +1,6 @@
 """Find requirements files, bump the exact pins in them, and check the requirements that pin no exact version.
 
 A requirements file uv or pip-compile compiled is recompiled once the pins in its sources are updated.
-
-An exact pin is bumped to its latest version on PyPI, with the extras, environment markers and inline comments on its
-line preserved, since only the version substring is replaced. A requirement without an exact pin stays as it is.
-Update-time checks its project instead, and checks the version a compiled file pins for it.
 """
 
 from dataclasses import replace
@@ -14,7 +10,6 @@ from update_time.domain.dependency import normalized_python_name
 from update_time.domain.directive import WARNING_DIRECTIVES, Reason
 from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.marker import Scope
-from update_time.domain.reference import Reference
 from update_time.io.filesystem import glob_for, is_scanned
 from update_time.io.log import get_logger
 from update_time.lock_files.compiled_requirements_txt import CompiledBy, CompiledRequirementsTxt, is_compiled
@@ -29,7 +24,7 @@ from update_time.package_managers.pip_tools import PipCompile
 from update_time.package_managers.uv.uv import UvPipCompile
 from update_time.references.delegated import warn_about_pinned_versions
 from update_time.references.file import update_file
-from update_time.references.match import reference_matches
+from update_time.references.match import matched_references
 from update_time.references.resolve import report_project_checks
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.pypi import SOURCE, project
@@ -39,6 +34,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.domain.reference import Reference
     from update_time.io.log import Logger
     from update_time.package_managers.requirements_compiler import RequirementsCompiler
     from update_time.primitives.line import Line
@@ -78,8 +74,7 @@ def _check_loose_requirements(lines: list[Line], compiler: RequirementsCompiler 
     Such a requirement pins no version to resolve an update for, so it takes the project checks instead. The items of
     its marker that steer the update are reported here, whether or not those checks run.
     """
-    for line, match, marker in reference_matches(lines, LOOSE_REQUIREMENT_REFERENCE):
-        reference = Reference(match["dependency"], "", line.location, marker=marker)
+    for reference in matched_references(lines, LOOSE_REQUIREMENT_REFERENCE):
         # No pass before this one reads these lines, so their markers are reported here.
         report_marker(reference, _LOG, steers_the_update=compiler is not None)
         if names_an_archive(reference.dependency):
@@ -89,11 +84,7 @@ def _check_loose_requirements(lines: list[Line], compiler: RequirementsCompiler 
 
 
 def _sources(compiled: CompiledRequirementsTxt) -> tuple[list[Path], list[str]]:
-    """Log the sources of a compiled file the run cannot reach; return the ones it reaches and the missing ones' names.
-
-    A file with a compiled source is skipped, so none of its sources is returned. A file Update-time does not recompile
-    gets a line naming the sources whose pins are updated.
-    """
+    """Return the sources of the compiled file the run reaches, and the names of those it misses, which it logs."""
     if not compiled.sources:
         _LOG.compiled_file_without_a_source(compiled.path)
         return [], []
@@ -133,8 +124,7 @@ def _update_requirements_txts() -> None:
     """Find all requirements files, update the pins in them or in their sources, and recompile the compiled ones.
 
     A compiled file is recompiled, and its sources checked at the versions it pins, only where the run reaches every
-    source it names. The check for yanks and vulnerabilities runs once the recompile is done.
-    The run also checks the pins a compiled file holds for a missing source, at their lines in the compiled file.
+    source it names.
     """
     plain_files: dict[Path, None] = {}
     compiled_files: list[CompiledRequirementsTxt] = []
@@ -164,11 +154,7 @@ def _check_pinned_versions(
     compiled_files: Iterable[CompiledRequirementsTxt],
     pins_from_missing_sources: list[Reference],
 ) -> None:
-    """Check the versions compiled files pin for requirements without an exact pin, and the pins of missing sources.
-
-    Where a compiled file does not pin the requirement, the checks lack a version, and an item steering them is
-    redundant.
-    """
+    """Check the versions compiled files pin for requirements without an exact pin, and the pins of missing sources."""
     pins_of = _pins_by_source(compiled_files)
     batches = []
     for requirements_file in requirements_files:

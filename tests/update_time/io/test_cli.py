@@ -110,22 +110,56 @@ class CommandLineInterfaceTest(unittest.TestCase):
         file_types = list(dict.fromkeys(self.declared_file_types()))
         self.assertEqual(sorted(file_types, key=self.description_of_help().index), file_types)
 
-    def test_default_cooldown(self):
-        """Test that the cooldown defaults to the default cooldown period."""
-        self.assertEqual(COOLDOWN.default, self.parsed().cooldown)
+    def test_an_option_sets_its_value_and_takes_its_default_when_left_out(self):
+        """Test that each option sets the value it names, and takes its default where the command line leaves it out."""
+        vendor_and_legacy = [Path("vendor"), Path("packages/legacy")]
+        for case, (argv, attribute, expected) in {
+            "the default cooldown": ((), "cooldown", COOLDOWN.default),
+            "a cooldown": (("--cooldown", "14"), "cooldown", 14),
+            "the default path, the current directory": ((), "path", Path()),
+            "force off by default": ((), "force", False),
+            "force": (("--force",), "force", True),
+            "the default log level": ((), "log_level", LOG_LEVEL.default),
+            "a log level, upper-cased": (("--log-level", "debug"), "log_level", "DEBUG"),
+            "the default risk level": ((), "vulnerability_level", VULNERABILITY_LEVEL.default),
+            "a risk level, lower-cased": (("--vulnerability-level", "HIGH"), "vulnerability_level", "high"),
+            "no path excluded by default": ((), "exclude_path", []),
+            "comma-separated paths": (("--exclude-path", "vendor,packages/legacy"), "exclude_path", vendor_and_legacy),
+            "paths stripped of whitespace and trailing separators": (
+                ("--exclude-path", " vendor/ , packages/legacy/ "),
+                "exclude_path",
+                vendor_and_legacy,
+            ),
+            "a parent segment inside the scan root": (
+                ("--exclude-path", "packages/old/../legacy"),
+                "exclude_path",
+                [Path("packages/legacy")],
+            ),
+            "an empty entry": (("--exclude-path", "vendor,"), "exclude_path", [Path("vendor")]),
+        }.items():
+            with self.subTest(case=case):
+                self.assertEqual(getattr(self.parsed(*argv), attribute), expected)
 
     def parsed(self, *argv: str) -> argparse.Namespace:
         """Parse the given command-line arguments and return the resulting namespace."""
         with patch("sys.argv", ["update-time", *argv]):
             return parse_args()
 
-    def test_cooldown(self):
-        """Test that the --cooldown option sets the cooldown period."""
-        self.assertEqual(self.parsed("--cooldown", "14").cooldown, 14)
-
-    def test_negative_cooldown(self):
-        """Test that a negative --cooldown is rejected."""
-        self.assert_rejected(["--cooldown", "-1"], "-1 is not a non-negative integer")
+    def test_an_invalid_value_is_rejected(self):
+        """Test that an invalid option value is rejected with a message saying what is wrong with it."""
+        for case, (argv, message) in {
+            "a negative cooldown": (["--cooldown", "-1"], "-1 is not a non-negative integer"),
+            "a cooldown that is not a whole number": (["--cooldown", "abc"], "invalid days value: 'abc'"),
+            "a log level it does not know": (["--log-level", "verbose"], "invalid choice"),
+            "a risk level it does not know": (["--vulnerability-level", "hgih"], "invalid choice"),
+            "an absolute excluded path": (["--exclude-path", "/etc"], "/etc is not a relative path"),
+            "an excluded path outside the scan root": (
+                ["--exclude-path", "../sibling"],
+                "../sibling is outside the scan root",
+            ),
+        }.items():
+            with self.subTest(case=case):
+                self.assert_rejected(argv, message)
 
     def assert_rejected(self, argv: list[str], expected_message: str) -> None:
         """Assert that parsing the given arguments exits with status 2 and the expected message on standard error."""
@@ -139,14 +173,6 @@ class CommandLineInterfaceTest(unittest.TestCase):
         self.assertEqual(cm.exception.code, 2)
         self.assertIn(expected_message, stderr.getvalue())
 
-    def test_non_integer_cooldown(self):
-        """Test that a non-integer --cooldown is rejected with a user-facing message."""
-        self.assert_rejected(["--cooldown", "abc"], "invalid days value: 'abc'")
-
-    def test_default_path(self):
-        """Test that the path defaults to the current directory."""
-        self.assertEqual(Path(), self.parsed().path)
-
     @patch_pathlib_path(is_dir=True)
     def test_path(self):
         """Test that a positional path argument is parsed as a directory."""
@@ -156,14 +182,6 @@ class CommandLineInterfaceTest(unittest.TestCase):
     def test_path_that_is_not_a_directory(self):
         """Test that a path that is not an existing directory is rejected with a user-facing message."""
         self.assert_rejected(["no-such-directory"], "no-such-directory is not an existing directory")
-
-    def test_default_force(self):
-        """Test that --force is off by default."""
-        self.assertFalse(self.parsed().force)
-
-    def test_force(self):
-        """Test that --force turns on forcing the run outside a git repository."""
-        self.assertTrue(self.parsed("--force").force)
 
     @patch_pathlib_path(is_dir=True)
     @patch("update_time.io.cli.inside_git_repository", Mock(return_value=False))
@@ -177,62 +195,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
         """Test that --force lets a PATH that is not inside a git repository through instead of rejecting it."""
         self.assertTrue(self.parsed("--force", "some-directory").force)
 
-    def test_default_log_level(self):
-        """Test that the log level defaults to the default log level."""
-        self.assertEqual(LOG_LEVEL.default, self.parsed().log_level)
-
-    def test_log_level(self):
-        """Test that the --log-level option sets the log level, upper-casing the value."""
-        self.assertEqual(self.parsed("--log-level", "debug").log_level, "DEBUG")
-
-    def test_invalid_log_level(self):
-        """Test that an invalid --log-level is rejected."""
-        self.assert_rejected(["--log-level", "verbose"], "invalid choice")
-
-    def test_default_vulnerability_level(self):
-        """Test that the risk level to warn from defaults to the default vulnerability level."""
-        self.assertEqual(VULNERABILITY_LEVEL.default, self.parsed().vulnerability_level)
-
-    def test_vulnerability_level(self):
-        """Test that the --vulnerability-level option sets the risk level to warn from, lower-casing the value."""
-        self.assertEqual(self.parsed("--vulnerability-level", "HIGH").vulnerability_level, "high")
-
-    def test_invalid_vulnerability_level(self):
-        """Test that an invalid --vulnerability-level is rejected."""
-        self.assert_rejected(["--vulnerability-level", "hgih"], "invalid choice")
-
     def test_help_enumerates_the_vulnerability_levels(self):
         """Test that the help names every value --vulnerability-level accepts."""
         levels = ",".join(RISK_LEVELS)
         self.assertIn(f"--vulnerability-level {{{levels}}}", self.stdout_of("--help"))
-
-    def test_default_exclude_path(self):
-        """Test that no paths are excluded by default."""
-        self.assertEqual(self.parsed().exclude_path, [])
-
-    def test_exclude_path(self):
-        """Test that a comma-separated --exclude-path is parsed into a list of relative paths."""
-        excluded = self.parsed("--exclude-path", "vendor,packages/legacy").exclude_path
-        self.assertEqual(excluded, [Path("vendor"), Path("packages/legacy")])
-
-    def test_exclude_path_normalises_entries(self):
-        """Test that --exclude-path entries are stripped of surrounding whitespace and trailing separators."""
-        excluded = self.parsed("--exclude-path", " vendor/ , packages/legacy/ ").exclude_path
-        self.assertEqual(excluded, [Path("vendor"), Path("packages/legacy")])
-
-    def test_exclude_path_collapses_interior_parent_segments(self):
-        """Test that a `..` that stays inside the scan root is collapsed (normalised, not just stripped)."""
-        excluded = self.parsed("--exclude-path", "packages/old/../legacy").exclude_path
-        self.assertEqual(excluded, [Path("packages/legacy")])
-
-    def test_exclude_path_ignores_empty_entries(self):
-        """Test that empty entries in --exclude-path (e.g. from a trailing comma) are dropped."""
-        self.assertEqual(self.parsed("--exclude-path", "vendor,").exclude_path, [Path("vendor")])
-
-    def test_absolute_exclude_path_is_rejected(self):
-        """Test that an absolute --exclude-path is rejected: the option narrows the tree, it can't redirect it."""
-        self.assert_rejected(["--exclude-path", "/etc"], "/etc is not a relative path")
-
-    def test_escaping_exclude_path_is_rejected(self):
-        """Test that a --exclude-path escaping the scan root (../…) is rejected."""
-        self.assert_rejected(["--exclude-path", "../sibling"], "../sibling is outside the scan root")

@@ -79,19 +79,26 @@ def _anchor_problems(markdown: str) -> list[str]:
 
 def _tables(markdown: str) -> dict[str, list[tuple[str, str]]]:
     """Return each table's rows as a dependency type and the answer given for it, keyed by the column's question."""
-    tables: dict[str, list[tuple[str, str]]] = {}
-    header = None
+    return {
+        header.split("|")[2].strip(): [(cells[1], cells[2]) for cells in rows]
+        for header, rows in _tables_of(markdown, "| Dependency type |")
+    }
+
+
+def _tables_of(markdown: str, header_prefix: str) -> list[tuple[str, list[list[str]]]]:
+    """Return each table whose header starts with the prefix, as its header and the stripped cells of each row."""
+    tables: list[tuple[str, list[list[str]]]] = []
+    rows: list[list[str]] | None = None
     for line in without_code_blocks(markdown).splitlines():
-        if line.startswith("| Dependency type |"):
-            header = line.split("|")[2].strip()
-            tables[header] = []
-        elif header is not None and line.startswith("|"):
-            cells = line.split("|")
-            # The separator row holds nothing but dashes, alignment colons, and spaces, so it is no dependency type.
-            if set(row := cells[1].strip()) - set("-: "):
-                tables[header].append((row, cells[2].strip()))
+        if line.startswith(header_prefix):
+            tables.append((line, rows := []))
+        elif rows is not None and line.startswith("|"):
+            cells = [cell.strip() for cell in line.split("|")]
+            # The separator row holds only dashes, alignment colons, and spaces, so it is left out.
+            if set(cells[1]) - set("-: "):
+                rows.append(cells)
         else:
-            header = None
+            rows = None
     return tables
 
 
@@ -143,11 +150,7 @@ def _files_problems(markdown: str) -> list[str]:
 
 
 def _table_problems(markdown: str) -> list[str]:
-    """Return a message for each way a dependency type table differs from the declared dependency types.
-
-    The tables answer one question each about every dependency type, so a type left out of one of them is an
-    answer nobody wrote down, which reads as an omission rather than as a deliberate blank.
-    """
+    """Return a message for each way a dependency type table differs from the declared dependency types."""
     return [
         problem
         for header, rows in _tables(markdown).items()
@@ -195,20 +198,7 @@ def _type_section_problems(markdown: str) -> list[str]:
 
 def _file_rows(body: str) -> list[list[str]]:
     """Return the files each table in the section lists, one list per table whose first column names files."""
-    tables: list[list[str]] = []
-    rows: list[str] | None = None
-    # The header of a table whose rows name the files a dependency type is declared in.
-    files_column = "| Files |"
-    for line in without_code_blocks(body).splitlines():
-        if line.startswith(files_column):
-            tables.append(rows := [])
-        elif rows is not None and line.startswith("|"):
-            # The separator row holds nothing but dashes, alignment colons, and spaces, so it names no file.
-            if set(file := line.split("|")[1].strip()) - set("-: "):
-                rows.append(file)
-        else:
-            rows = None
-    return tables
+    return [[cells[1] for cells in rows] for _, rows in _tables_of(body, "| Files |")]
 
 
 def _file_type_problems(markdown: str) -> list[str]:

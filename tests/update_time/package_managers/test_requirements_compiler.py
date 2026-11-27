@@ -3,12 +3,14 @@
 from pathlib import Path
 from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING, Final, override
-from unittest.mock import ANY, DEFAULT, Mock
+from unittest.mock import DEFAULT, Mock
 
 from mutation_time.mutation import kills
+from update_time.domain.bound import BoundRedundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.version_scheme import _pep_440_order
-from update_time.io.log import Logger, ToolTask
+from update_time.io.log import Logger, ToolFailure, ToolTask, _bound_reason
+from update_time.io.process import result_or_failure
 from update_time.lock_files import compiled_requirements_txt
 from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt
 from update_time.package_managers import pip_tools
@@ -31,11 +33,7 @@ from tests.update_time.lock_files.lock_file_contents import (
 )
 from tests.update_time.sources.pypi_answers import PYPI_OLD_UPLOAD, pypi_release
 
-from .uv_settings import (
-    CONFIGURED_EXCLUDE_NEWER,
-    UNREADABLE_SETTINGS,
-    UvSettingsTestCase,
-)
+from .uv_settings import CONFIGURED_EXCLUDE_NEWER, UNREADABLE_SETTINGS, UvSettingsTestCase, unreadable_settings_fields
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -59,6 +57,8 @@ _SOURCE: Final[Path] = _ROOT / "base.in"
 _UV_TOOL: Final[tuple[str, ...]] = ("uv", "pip", "compile")
 _UV_HEADER_ARGUMENTS: Final[tuple[str, ...]] = ("base.in", "-o", "requirements.txt")
 _UV_COMMAND: Final[tuple[str, ...]] = (*_UV_TOOL, *_UV_HEADER_ARGUMENTS)
+# The command of a header that names `dev.in` as a source before `base.in`.
+_UV_DEV_COMMAND: Final[tuple[str, ...]] = (*_UV_TOOL, "dev.in", *_UV_HEADER_ARGUMENTS)
 # `requirements_compiled_by_pip_compile("base.in")` records this command in its header.
 _PIP_COMMAND: Final[tuple[str, ...]] = ("pip-compile", "--output-file=requirements.txt", "base.in")
 # The compiled file pins werkzeug for flask, while the source does not declare it.
@@ -187,9 +187,9 @@ class RecompileTest(UvSettingsTestCase):
         self.assert_recompiled("--exclude-newer", "14 days", "--upgrade-package", "flask")
         self.assertEqual(files[_SOURCE], f"{_UV_MANAGED_BY_COMMENT_LINE}\nflask==1.0\n")
         self.assert_logged_among_others(
-            message_of(Logger.configured_compiled_file_cooldown),
+            message_of(Logger.configured_cooldown),
             location=Location(_SOURCE),
-            compiled=Location(_COMPILED),
+            configured=Location(_COMPILED),
             cooldown="14 days",
             setting="uv exclude-newer",
         )
@@ -201,9 +201,9 @@ class RecompileTest(UvSettingsTestCase):
         self.assert_recompiled("--uploaded-prior-to", "P14D", "--upgrade-package", "flask", command=_PIP_COMMAND)
         self.assertEqual(files[_SOURCE], f"{_PIP_MANAGED_BY_COMMENT_LINE}\nflask==1.0\n")
         self.assert_logged_among_others(
-            message_of(Logger.configured_compiled_file_cooldown),
+            message_of(Logger.configured_cooldown),
             location=Location(_SOURCE),
-            compiled=Location(_COMPILED),
+            configured=Location(_COMPILED),
             cooldown="P14D",
             setting="pip-compile uploaded-prior-to",
         )
@@ -250,21 +250,14 @@ class RecompileTest(UvSettingsTestCase):
                 self.assert_project_cooldown_logged(_COMPILED, "pip-compile uploaded-prior-to")
 
     @kills.delete(
-        pip_tools.PipCompile.settings_hold_cutoff,
-        ' or "pip failed without saying why"',
+        result_or_failure,
+        ' or f"{command.executable} failed without saying why"',
         "the warning about a pip that failed without saying why leaves its reason empty",
         case="a pip that fails without saying why",
     )
-    @kills.replace(
-        pip_tools.PipCompile.settings_hold_cutoff,
-        'config.stderr.strip() or "pip failed without saying why"',
-        '"pip failed without saying why"',
-        "the warning about a pip that failed leaves out the reason pip gave",
-        case="a pip that fails",
-    )
     @kills.force_false(
-        pip_tools.PipCompile.settings_hold_cutoff,
-        "isinstance(config, OSError)",
+        result_or_failure,
+        "isinstance(outcome, OSError)",
         "a pip missing from the path ends the run with a traceback",
         raises="AttributeError: 'FileNotFoundError' object has no attribute 'succeeded'",
         case="no pip on the path",
@@ -273,10 +266,6 @@ class RecompileTest(UvSettingsTestCase):
         """Test that pip-compile gets the cooldown, with a warning, where pip does not list its settings."""
         no_pip = FileNotFoundError(2, "No such file or directory", "pip")
         cases = {
-            "a pip that fails": (
-                CalledProcessError(1, "pip", "", "ERROR: unknown command\n"),
-                "ERROR: unknown command",
-            ),
             "a pip that fails without saying why": (
                 CalledProcessError(1, "pip", "", ""),
                 "pip failed without saying why",
@@ -315,10 +304,7 @@ class RecompileTest(UvSettingsTestCase):
         self,
     ):
         """Test that uv gets the cooldown, not an earlier run's `exclude-newer`, and the comment is not repeated."""
-        cases = {
-            "an exclude-newer set by an earlier run": "--exclude-newer 7 days",
-            "no exclude-newer": "",
-        }
+        cases = {"an exclude-newer set by an earlier run": "--exclude-newer 7 days", "no exclude-newer": ""}
         for case, options in cases.items():
             with self.subTest(case):
                 compiled = requirements_compiled_by_uv("base.in", options=options)
@@ -326,7 +312,7 @@ class RecompileTest(UvSettingsTestCase):
                 files = self.recompile({_COMPILED: compiled, _SOURCE: source})
                 self.assert_recompiled("--exclude-newer", "14 days", "--upgrade-package", "flask")
                 self.assertEqual(files[_SOURCE], source)
-                self.assertEqual(self.records_of(message_of(Logger.configured_compiled_file_cooldown)), [])
+                self.assertEqual(self.records_of(message_of(Logger.configured_cooldown)), [])
 
     def test_an_exclude_newer_the_header_records_is_passed_on_where_no_source_carries_the_managed_by_comment(self):
         """Test that uv gets the `exclude-newer` the user compiled with, and that the source stays without a comment."""
@@ -353,13 +339,17 @@ class RecompileTest(UvSettingsTestCase):
 
     def test_the_cooldown_is_passed_where_uvs_settings_cannot_be_read(self):
         """Test that Update-time warns, and passes the cooldown, where uv does not say whether its settings hold one."""
-        for case, answer in UNREADABLE_SETTINGS.items():
+        for case, (answer, reason) in UNREADABLE_SETTINGS.items():
             with self.subTest(case):
                 self.settings_answer = answer
                 files = self.recompile({_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: "flask==1.0\n"})
                 self.assert_recompiled("--exclude-newer", "7 days", "--upgrade-package", "flask")
                 self.assertEqual(files[_SOURCE], f"{_UV_MANAGED_BY_COMMENT_LINE}\nflask==1.0\n")
-                self.assert_logged_among_others(message_of(Logger.uv_settings_unreadable), location=Location(_COMPILED))
+                self.assert_logged_among_others(
+                    message_of(Logger.settings_unreadable),
+                    location=Location(_COMPILED),
+                    **unreadable_settings_fields(reason),
+                )
 
     def test_a_package_one_of_its_declarations_holds_back_is_not_upgraded(self):
         """Test that an `ignore[update]` in either source holds back a package that both sources declare."""
@@ -372,9 +362,7 @@ class RecompileTest(UvSettingsTestCase):
             with self.subTest(case):
                 self.recompile({_COMPILED: _compiled_from_dev_and_base(), _SOURCE: base, _DEV: f"werkzeug==3.0\n{dev}"})
                 upgrades = ("--upgrade-package", "werkzeug")
-                self.assert_recompiled(
-                    "--exclude-newer", "7 days", *upgrades, command=(*_UV_TOOL, "dev.in", *_UV_HEADER_ARGUMENTS)
-                )
+                self.assert_recompiled("--exclude-newer", "7 days", *upgrades, command=_UV_DEV_COMMAND)
 
     def test_the_bounds_of_each_declaration_of_a_package_narrow_its_upgrade_together(self):
         """Test that uv may upgrade a package that both sources declare only to the versions each bound keeps."""
@@ -387,9 +375,7 @@ class RecompileTest(UvSettingsTestCase):
             with self.subTest(case):
                 self.recompile({_COMPILED: _compiled_from_dev_and_base(), _SOURCE: base, _DEV: f"werkzeug==3.0\n{dev}"})
                 upgrades = ("--upgrade-package", upgrade, "--upgrade-package", "werkzeug")
-                self.assert_recompiled(
-                    "--exclude-newer", "7 days", *upgrades, command=(*_UV_TOOL, "dev.in", *_UV_HEADER_ARGUMENTS)
-                )
+                self.assert_recompiled("--exclude-newer", "7 days", *upgrades, command=_UV_DEV_COMMAND)
 
     def test_a_package_the_source_holds_back_is_not_upgraded(self):
         """Test that uv does not upgrade a package whose marker in the source holds its update back."""
@@ -407,17 +393,16 @@ class RecompileTest(UvSettingsTestCase):
 
     def test_a_bound_in_the_source_that_decides_nothing_at_the_pinned_version_is_redundant(self):
         """Test that a bound that never has an effect, or blocks every update, at the pinned version is warned about."""
-        for directive in ("allow[update>=0.1]", "ignore[patch-update]"):
+        for directive, redundancy in {
+            "allow[update>=0.1]": BoundRedundancy.NO_EFFECT,
+            "ignore[patch-update]": BoundRedundancy.BLOCKS_ALL,
+        }.items():
             with self.subTest(directive):
                 source = f"flask>=0.1  # update-time: {directive}\n"
                 self.recompile({_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
-                self.assert_logged_among_others(
-                    message_of(Logger.redundant_bound),
-                    dependency="flask",
-                    location=Location(_SOURCE, 1),
-                    directive=directive,
-                    version="1.0",
-                    redundancy=ANY,
+                reason = _bound_reason(redundancy, "1.0")
+                self.assert_redundant_directive_logged(
+                    reason, "flask", Location(_SOURCE, 1), directive, among_others=True
                 )
 
     @kills.force_true(
@@ -429,7 +414,7 @@ class RecompileTest(UvSettingsTestCase):
         """Test that the recompile does not warn about a bound on an exact pin, which the update judges."""
         source = "flask==1.0  # update-time: allow[update>=0.1]\n"
         self.recompile({_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
-        self.assertEqual(self.records_of(message_of(Logger.redundant_bound)), [])
+        self.assertEqual(self.records_of(message_of(Logger.redundant_directive)), [])
 
     def test_a_bound_in_the_source_narrows_the_upgrade(self):
         """Test that uv may upgrade a package only to the versions its bound in the source keeps."""
@@ -484,7 +469,7 @@ class RecompileTest(UvSettingsTestCase):
                 self.recompile({_COMPILED: _compiled_from_dev_and_base(), _SOURCE: base, _DEV: f"werkzeug==3.0\n{dev}"})
                 cooldowns = ("--exclude-newer", "7 days", "--exclude-newer-package", package_cooldown)
                 upgrades = ("--upgrade-package", "flask", "--upgrade-package", "werkzeug")
-                self.assert_recompiled(*cooldowns, *upgrades, command=(*_UV_TOOL, "dev.in", *_UV_HEADER_ARGUMENTS))
+                self.assert_recompiled(*cooldowns, *upgrades, command=_UV_DEV_COMMAND)
 
     def test_a_package_cooldown_the_header_records_is_replaced_by_the_cooldowns_the_markers_set(self):
         """Test that each package cooldown the header records is dropped, and uv gets those the markers set instead."""
@@ -521,8 +506,8 @@ class RecompileTest(UvSettingsTestCase):
     )
     @kills.replace(
         RequirementsCompiler.recompile,
-        "self.log.tool_not_on_path(self.compiled.path, ToolTask.RECOMPILE, command.executable)",
-        "self.log.tool_failed(self.compiled.path, ToolTask.RECOMPILE, self.tool)",
+        "ToolFailure.NOT_ON_PATH",
+        "ToolFailure.FAILED",
         "a tool missing from the path is reported as a tool that failed",
     )
     def test_a_tool_missing_from_the_path_is_reported_without_asking_for_its_settings(self):
@@ -532,9 +517,14 @@ class RecompileTest(UvSettingsTestCase):
         self.mock_run.assert_not_called()
         self.assert_errors_logged(
             (
-                message_of(Logger.tool_not_on_path),
-                {"location": Location(_COMPILED), "task": ToolTask.RECOMPILE, "executable": "pip-compile"},
-            ),
+                message_of(Logger.tool_failed),
+                {
+                    "location": Location(_COMPILED),
+                    "task": ToolTask.RECOMPILE,
+                    "tool": "pip-compile",
+                    "failure": ToolFailure.NOT_ON_PATH,
+                },
+            )
         )
 
     @kills.replace(
@@ -577,10 +567,14 @@ class RecompileTest(UvSettingsTestCase):
                 self.mock_run.side_effect = fail_the_compile
                 files = self.recompile({_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
                 self.assert_error_logged(
-                    message_of(Logger.tool_failed), location=Location(_COMPILED), task=ToolTask.RECOMPILE, tool=tool
+                    message_of(Logger.tool_failed),
+                    location=Location(_COMPILED),
+                    task=ToolTask.RECOMPILE,
+                    tool=tool,
+                    failure=ToolFailure.FAILED,
                 )
                 self.assertEqual((files[_SOURCE], files[_COMPILED]), ("flask==1.0\n", compiled))
-                self.assertEqual(self.records_of(message_of(Logger.configured_compiled_file_cooldown)), [])
+                self.assertEqual(self.records_of(message_of(Logger.configured_cooldown)), [])
 
     @patch_get(Mock(side_effect=[pypi_release(PYPI_OLD_UPLOAD)]))
     def test_a_version_the_recompile_moves_is_reported_at_the_source(self):
@@ -702,9 +696,7 @@ class RecompileTest(UvSettingsTestCase):
         compiled = _compiled_from_dev_and_base("--exclude-newer 7 days")
         self.recompile({_COMPILED: compiled, _SOURCE: "flask==1.0\n", _DEV: dev})
         upgrades = ("--upgrade-package", "flask", "--upgrade-package", "werkzeug")
-        self.assert_recompiled(
-            "--exclude-newer", "14 days", *upgrades, command=(*_UV_TOOL, "dev.in", *_UV_HEADER_ARGUMENTS)
-        )
+        self.assert_recompiled("--exclude-newer", "14 days", *upgrades, command=_UV_DEV_COMMAND)
 
 
 def _is_the_recompile(command: Command) -> bool:

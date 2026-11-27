@@ -108,10 +108,9 @@ class LockedVersionsTest(unittest.TestCase):
         "a bun.lock holding merge conflict markers reads as a lock that records nothing",
         case="a merge conflict",
     )
-    @kills.replace(
+    @kills.delete(
         locked_versions,
-        'if document is None or "lockfileVersion"',
-        'if "lockfileVersion"',
+        "document is None or ",
         "a bun.lock that does not parse ends the run with a traceback",
         raises="TypeError: argument of type 'NoneType' is not a container or iterable",
         case="not JSON",

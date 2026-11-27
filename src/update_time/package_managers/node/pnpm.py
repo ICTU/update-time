@@ -12,13 +12,7 @@ from update_time.manifests.package_json import DEPENDENCY_SECTIONS
 from update_time.primitives.command import Command
 from update_time.primitives.timestamp import MINUTES_PER_DAY
 
-from .package_manager import (
-    ConfiguredCooldown,
-    CooldownArguments,
-    ManagerCooldown,
-    PackageManager,
-    catalogs_of,
-)
+from .package_manager import ConfiguredCooldown, CooldownArguments, ManagerCooldown, PackageManager, catalogs_of
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, VersionString

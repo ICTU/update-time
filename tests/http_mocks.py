@@ -27,10 +27,7 @@ def unparsable_response(**kwargs: object) -> Mock:
 
 
 def mock_response(json: Mapping | list | str | None = None, **kwargs: object) -> Mock:
-    """Return a mock requests Response whose .json() returns the given value.
-
-    Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
-    """
+    """Return a mock requests Response whose .json() returns the given value."""
     # A real response always carries a mapping of headers; default to none, override per test.
     # requests parses the Link header into `.links`; default to none, override per test.
     response = Mock(json=Mock(return_value=json), header={}, links={})
@@ -39,10 +36,7 @@ def mock_response(json: Mapping | list | str | None = None, **kwargs: object) ->
 
 
 def patch_get_response(json: Mapping | list | None = None, **kwargs: object) -> _patch:
-    """Patch Session.get to return a mock requests Response whose .json() returns the given value.
-
-    Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
-    """
+    """Patch Session.get to return a mock requests Response whose .json() returns the given value."""
     return patch_get(Mock(return_value=mock_response(json, **kwargs)))
 
 
@@ -51,10 +45,7 @@ def patch_get(
     *,
     return_value: object = DEFAULT,  # simplint: ignore[imprecise-annotation] # `patch` takes any value
 ) -> _patch:
-    """Patch Session.get with `new`, or, as `patch` does, with a mock the decorated test receives.
-
-    The return value configures that mock.
-    """
+    """Patch Session.get with `new`, or, as `patch` does, with a mock the decorated test receives."""
     # Where the tests intercept the HTTP requests Update-time makes.
     session_get = "requests.Session.get"
     if new is DEFAULT:
@@ -63,10 +54,7 @@ def patch_get(
 
 
 def patch_post_response(json: Mapping | list | None = None, **kwargs: object) -> _patch:
-    """Patch Session.post to return a mock requests Response whose .json() returns the given value.
-
-    Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
-    """
+    """Patch Session.post to return a mock requests Response whose .json() returns the given value."""
     return patch_post(Mock(return_value=mock_response(json, **kwargs)))
 
 

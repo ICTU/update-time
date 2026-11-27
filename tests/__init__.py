@@ -11,9 +11,11 @@ assertion about a mocked request would print them.
 """
 
 import os
-import socket
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    import socket
 
 # Where a test tried to reach the network: a socket address, or the host name a lookup resolves.
 type _Address = str | bytes | tuple[str | int, ...] | None
@@ -36,17 +38,9 @@ def _refuse_resolution(host: _Address, *_args: object, **_kwargs: object) -> NoR
 
 # A request to a host name is refused at the lookup, before it reaches the resolver; one to a literal address needs
 # no lookup and is refused at the socket. Neither patch is ever stopped: no test may lift the refusal.
-#
-# This module runs again whenever the package is dropped from `sys.modules` and imported afresh, and would then
-# start a second pair of patches that nothing stops. The refusal already installed is what says whether to install
-# one: the socket's own `connect` is a C method descriptor named for the socket, so only a refusal answers to this
-# name.
-if socket.socket.connect.__name__ != _refuse_connection.__name__:
-    patch("socket.socket.connect", _refuse_connection).start()
-    patch("socket.getaddrinfo", _refuse_resolution).start()
+patch("socket.socket.connect", _refuse_connection).start()
+patch("socket.getaddrinfo", _refuse_resolution).start()
 
 # Docker Hub's username only travels together with its token, so scrubbing every variable whose name holds TOKEN
-# takes that pair with it. The patch is never stopped: no test may put a credential back. Running this again finds
-# nothing left to scrub, so the patch it then starts changes nothing, and needs no guard of the kind the refusal
-# above has.
+# takes that pair with it. The patch is never stopped: no test may put a credential back.
 patch.dict("os.environ", {name: value for name, value in os.environ.items() if "TOKEN" not in name}, clear=True).start()

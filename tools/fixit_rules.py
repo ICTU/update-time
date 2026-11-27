@@ -14,9 +14,7 @@ def _compares_actual_to_expected(assert_method_name: str) -> bool:
     """Return whether the `unittest.TestCase` assertion method compares an actual value against an expected one.
 
     These assertions are recognisable by their symmetric parameter names: either `first` and `second` (such as
-    `assertEqual`) or a numbered pair (such as `list1` and `list2` of `assertListEqual`). Order-sensitive
-    comparisons such as `assertGreaterEqual` (`a` and `b`) and asymmetric assertions such as `assertIn`
-    (`member` and `container`) don't follow this naming pattern.
+    `assertEqual`) or a numbered pair (such as `list1` and `list2` of `assertListEqual`).
     """
     parameters = list(inspect.signature(getattr(unittest.TestCase, assert_method_name)).parameters)[1:3]
     return parameters == ["first", "second"] or tuple(parameter[-1] for parameter in parameters) == ("1", "2")
@@ -71,8 +69,7 @@ class AssertEqualActualFirst(LintRule):
     ]
     INVALID = [
         Invalid(
-            'self.assertEqual("expected", function())',
-            expected_replacement='self.assertEqual(function(), "expected")',
+            'self.assertEqual("expected", function())', expected_replacement='self.assertEqual(function(), "expected")'
         ),
         Invalid(
             "self.assertEqual([1, 2], function(), 'message')",
@@ -198,9 +195,7 @@ class SubTestPerCase(LintRule):
             )
         ),
     ]
-    INVALID = [
-        Invalid(_test_method("for name in names:", "    self.assertTrue(matches(name))")),
-    ]
+    INVALID = [Invalid(_test_method("for name in names:", "    self.assertTrue(matches(name))"))]
 
     def visit_For(self, node: libcst.For) -> None:
         """Report a loop that asserts somewhere inside it without calling `subTest` anywhere inside it.
@@ -342,11 +337,7 @@ class RenamedNameInDocstring(LintRule):
             self._report_renamed(node)
 
     def _report_renamed(self, node: libcst.Module | libcst.FunctionDef | libcst.ClassDef) -> None:
-        """Report each name the docstring quotes that the code mentions only under the opposite visibility.
-
-        A word the module's strings spell out is data it works with, whatever the code binds beside it, so a
-        docstring quoting that word is left alone.
-        """
+        """Report each name the docstring quotes that the code mentions only under the opposite visibility."""
         for name in _BACKTICKED_NAME.findall(node.get_docstring(clean=False) or ""):
             if name in self._quoted_words:
                 continue
@@ -376,7 +367,7 @@ class SubTestOutsideLoop(LintRule):
             "    for layer in layers:\n"
             "        with self.subTest(layer=layer):\n"
             "            self.assertTrue(depends_on(layer))\n"
-        ),
+        )
     ]
     INVALID = [
         # A helper asserting one case must raise, rather than record the failure and let its caller continue.
@@ -384,7 +375,7 @@ class SubTestOutsideLoop(LintRule):
             "def assert_invalid_item(self, item):\n"
             "    with self.subTest(item=item):\n"
             "        self.assertTrue(reported(item))\n"
-        ),
+        )
     ]
 
     def visit_FunctionDef(self, node: libcst.FunctionDef) -> None:

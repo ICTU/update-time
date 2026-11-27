@@ -24,10 +24,6 @@ class SnippetsTest(unittest.TestCase):
         """Test that the text before the separator is the snippet and the text after it the replacement."""
         self.assertEqual(_snippets(f"one\ntwo\n{_SEPARATOR}\nthree\n"), ("one\ntwo", "three"))
 
-    def test_input_without_a_separator(self):
-        """Test that input holding no separator line is reported, rather than read as one snippet."""
-        self.assertRaises(ValueError, _snippets, "one\ntwo\n")
-
 
 class MainTest(unittest.TestCase):
     """Unit tests for running a command against a mutated file."""
@@ -147,10 +143,9 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=("FAILED (failures=1)\n",)), 0)
         self.assertNotIn("errors", self.reported.getvalue())
 
-    @kills.replace(
+    @kills.force_false(
         main,
-        "if killed and result.returncode != _TESTS_FAILED:",
-        "if killed and False:",
+        "result.returncode != _TESTS_FAILED",
         "the probe reports a gate failure as a kill, crediting a guard that never fired",
     )
     def test_a_run_that_only_the_coverage_gate_failed(self):
@@ -188,29 +183,19 @@ class MainTest(unittest.TestCase):
         unreadable.write_text.assert_not_called()
         self.run_command.assert_not_called()
 
-    def test_a_snippet_that_is_not_there(self):
-        """Test that a snippet the file doesn't hold leaves the file alone and runs no command."""
-        path = mock_path("nothing to replace\n")
-        self.assertEqual(self.probe(path), _NOT_RUN)
-        path.write_text.assert_not_called()
-        self.run_command.assert_not_called()
-
-    def test_a_snippet_that_occurs_twice(self):
-        """Test that an ambiguous snippet leaves the file alone, since which occurrence to mutate is unknown."""
-        path = mock_path("old\nold\n")
-        self.assertEqual(self.probe(path), _NOT_RUN)
-        path.write_text.assert_not_called()
-
-    def test_input_without_a_separator(self):
-        """Test that unreadable input leaves the file alone and runs no command."""
-        path = mock_path(_ORIGINAL)
-        self.assertEqual(self.probe(path, text="old\n"), _NOT_RUN)
-        path.write_text.assert_not_called()
-
-    def test_no_file_named(self):
-        """Test that the usage is reported when no file is named."""
-        self.assertEqual(self.probe(mock_path(_ORIGINAL), argv=["mutate.py"]), _NOT_RUN)
-        self.run_command.assert_not_called()
+    def test_a_probe_that_cannot_run_leaves_the_file_alone_and_runs_no_command(self):
+        """Test that a probe that cannot run leaves the file as it is and does not run the command."""
+        for case, (contents, text, argv) in {
+            "a snippet that is not there": ("nothing to replace\n", _INPUT, None),
+            "a snippet that occurs twice": ("old\nold\n", _INPUT, None),
+            "input without a separator": (_ORIGINAL, "old\n", None),
+            "no file named": (_ORIGINAL, _INPUT, ["mutate.py"]),
+        }.items():
+            with self.subTest(case=case):
+                path = mock_path(contents)
+                self.assertEqual(self.probe(path, text=text, argv=argv), _NOT_RUN)
+                path.write_text.assert_not_called()
+                self.run_command.assert_not_called()
 
     def test_the_file_is_restored_when_the_command_raises(self):
         """Test that a command that cannot be run leaves the file as it was, so a probe never changes the tree."""

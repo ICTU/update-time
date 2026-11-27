@@ -357,8 +357,7 @@ vale: (py-check "vale" f"{{ uv_run }} vale sync || echo 'vale sync failed, so va
 
 # Run yamllint to lint YAML files such as workflow definitions.
 [private]
-yamllint: install-py-dependencies
-    {{ start_capture() }} {{ uv_run }} yamllint --strict -c tools/yamllint.yml -f {{ when_color("colored", "auto") }} . {{ end_capture("yamllint") }}
+yamllint: (py-check "yamllint" f"{{ uv_run }} yamllint --strict -c tools/yamllint.yml -f {{ when_color('colored', 'auto') }} .")
 
 # Run zizmor to audit GitHub Action workflows.
 [private]
@@ -380,13 +379,11 @@ check-architecture-is-up-to-date: (py-check "check-architecture-is-up-to-date" f
 
 # Check that the README documents every dependency type the same way, and that its internal links resolve.
 [private]
-check-readme-structure: install-py-dependencies
-    {{ start_capture() }} {{ python_m }} tools.readme_structure_check docs/README.md.in {{ end_capture("check-readme-structure") }}
+check-readme-structure: (py-check "check-readme-structure" f"{{ python_m }} tools.readme_structure_check docs/README.md.in")
 
 # Check the readability of the prose in the code and the documentation.
 [private]
-check-readability: install-nltk-data
-    {{ start_capture() }} {{ python_m }} tools.readability_check --check-whitelist {{ prose_whitelist }} {{ code }} {{ prose }} {{ end_capture("check-readability") }}
+check-readability: install-nltk-data (py-check "check-readability" f"{{ python_m }} tools.readability_check --check-whitelist {{ prose_whitelist }} {{ code }} {{ prose }}")
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]

@@ -1,6 +1,5 @@
 """Find pyproject.toml files, check their dependencies, and update those of the files uv runs for."""
 
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 from update_time.domain.file_type import PYPROJECT_TOML
@@ -11,13 +10,7 @@ from update_time.manifests import pyproject_toml as pyproject_toml_manifest
 from update_time.manifests.pyproject_config import from_table
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers.uv.lock import update_workspaces
-from update_time.package_managers.uv.marker_policy import (
-    MARKER_POLICY,
-    MORE_THAN_ONE_MANAGER_POLICY,
-    UNMANAGED_FILE_POLICY,
-    WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY,
-    report_file_markers,
-)
+from update_time.package_managers.uv.marker_policy import MARKER_POLICY, UNMANAGED_FILE_POLICY, report_file_markers
 from update_time.package_managers.uv.uv import Decision, decision
 from update_time.updaters.uv_pins import warn_about_pins
 
@@ -27,16 +20,6 @@ if TYPE_CHECKING:
     from update_time.package_managers.policy import ManagerPolicy
 
 _LOG: Final[Logger] = get_logger("pyproject.toml")
-# The policy for the markers of a pyproject.toml, by why uv does not run for it, or None where uv runs for it.
-_POLICIES: Final[MappingProxyType[Decision, ManagerPolicy[Declaration] | None]] = MappingProxyType(
-    {
-        Decision.RUN: None,
-        Decision.UNMANAGED: UNMANAGED_FILE_POLICY,
-        Decision.SEVERAL_MANAGERS: MORE_THAN_ONE_MANAGER_POLICY,
-        Decision.NOTHING_TO_RESOLVE: MARKER_POLICY,
-        Decision.ROOT_OUTSIDE_THE_SCAN: WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY,
-    }
-)
 
 
 def _update_pyproject_tomls() -> None:
@@ -56,7 +39,7 @@ def _update_pyproject_tomls() -> None:
         else:
             pyproject_toml = PyprojectToml(path)
             pyproject_tomls.append(pyproject_toml)
-            if (policy := _POLICIES[decision(path, config)]) is None:
+            if (policy := _policy(decision(path, config))) is None:
                 projects_for_uv.append(pyproject_toml)
             else:
                 projects_left_as_they_are[pyproject_toml] = policy
@@ -68,3 +51,14 @@ def _update_pyproject_tomls() -> None:
 
 if __name__ == "__main__":
     _update_pyproject_tomls()
+
+
+def _policy(why: Decision) -> ManagerPolicy[Declaration] | None:
+    """Return the policy for the markers of a pyproject.toml, by why uv does not run for it, or None where uv runs."""
+    return {
+        Decision.RUN: None,
+        Decision.UNMANAGED: UNMANAGED_FILE_POLICY,
+        Decision.SEVERAL_MANAGERS: MARKER_POLICY.policy_for_more_than_one_manager,
+        Decision.NOTHING_TO_RESOLVE: MARKER_POLICY,
+        Decision.ROOT_OUTSIDE_THE_SCAN: MARKER_POLICY.policy_for_a_workspace_root_outside_the_scan,
+    }[why]

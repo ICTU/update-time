@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from update_time.formats.yaml import FORMAT, read
 from update_time.io.file import rewrite_file
 from update_time.io.filesystem import glob_for
-from update_time.sources.oci import ImagesNotPulled, TagGetter
+from update_time.sources.oci import ImagesNotPulled, image_source
 
 from .rewrite import update_references_in_lines
 
@@ -36,8 +36,8 @@ def update_yaml_files(
         if (document := read(path)) is None:
             logger.invalid_file(path, FORMAT)
         else:
-            get_new_version = TagGetter(ImagesNotPulled(find_images(document), reason))
-            update_file(path, regexp, source=get_new_version.source, logger=logger)
+            tag_source = image_source(ImagesNotPulled(find_images(document), reason))
+            update_file(path, regexp, source=tag_source, logger=logger)
 
 
 def update_file(
@@ -51,20 +51,12 @@ def update_file(
     """Update the references in the file, write it back if the new lines differ from the old ones, and return them.
 
     Multiple regexps are applied in turn to the same content, so a file that pins more than one kind of reference (a
-    devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp. A regexp that
-    captures no `dependency` group — a `.python-version` entry is a bare version — names it in `dependency`. Where a
-    format cannot hold a comment beside its reference, it names the marker elsewhere and passes the reference in
-    `declared`, carrying that marker. The pass then rewrites that reference alone.
+    devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp.
     """
     return rewrite_file(
         path,
         lambda lines: update_references_in_lines(
-            lines,
-            *regexps,
-            source=source,
-            logger=logger,
-            dependency=dependency,
-            declared=declared,
+            lines, *regexps, source=source, logger=logger, dependency=dependency, declared=declared
         ),
         logger,
     )

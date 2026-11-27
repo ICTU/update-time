@@ -46,10 +46,10 @@ class PythonDependencyToml:
 
     def write_if_changed(self, contents: str) -> None:
         """Write the contents to the file, where it holds other contents."""
-        if self.read() != contents:
+        if self.text() != contents:
             self.write(contents)
 
-    def read(self) -> str:
+    def text(self) -> str:
         """Return the file's contents."""
         return self.path.read_text()
 
@@ -64,7 +64,7 @@ class PythonDependencyToml:
         another declaration spells identically, and one TOML spells with an escape, are each located at their own line
         too. A spec that does not parse is left out, without shifting the positions of the declarations after it.
         """
-        contents = self.read()
+        contents = self.text()
         specs: dict[_DeclarationPosition, str] = {}
 
         def place(position: _DeclarationPosition, spec: str) -> str:
@@ -79,6 +79,7 @@ class PythonDependencyToml:
         requirements = {
             position: requirement for position, spec in specs.items() if (requirement := _requirement(spec)) is not None
         }
+        # TOML allows U+2028 inside a string, where `str.splitlines` would break a line and shift the markers below it.
         lines = located_lines(self.path, self.toml(placed).split("\n"))
         locations = {
             position: Location(self.path, line_number(placed, placed.index(_placeholder(position))))
@@ -179,11 +180,7 @@ def _placeholder(position: _DeclarationPosition) -> str:
 
 
 def _requirement(spec: str) -> Requirement | None:
-    """Return the requirement the spec declares, or None when the spec does not parse as one.
-
-    A spec with a typo in it — `pkg=1.0`, say — reads back as None, which keeps one bad declaration from aborting
-    the run.
-    """
+    """Return the requirement the spec declares, or None when the spec does not parse as one."""
     try:
         return Requirement(spec)
     except InvalidRequirement:

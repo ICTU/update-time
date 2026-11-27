@@ -80,11 +80,7 @@ class MainTest(unittest.TestCase):
         argv = _argv("--inputs", str(_UV_LOCK))
         for case, lock in (("parses as Python", "version = 1\n"), ("does not parse as Python", "lock-version = 1\n")):
             files = FakeFiles({_UV_LOCK: lock})
-            with (
-                self.subTest(case),
-                patch.object(sys, "argv", argv),
-                _patched(_files_listed([_UV_LOCK]), files),
-            ):
+            with self.subTest(case), patch.object(sys, "argv", argv), _patched(_files_listed([_UV_LOCK]), files):
                 main()
                 self.assertEqual(main(), _SKIPPED)
                 files[_UV_LOCK] = f"{lock}# A comment.\n"
@@ -111,8 +107,7 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(main(), 0)
         self.assertEqual(_commands_run(run), [_COMMAND, _COMMAND])
         self.assertEqual(
-            sorted(files),
-            [Path("build/audit-fingerprints.json"), Path("build/lint-fingerprints.json"), _ANSWER],
+            sorted(files), [Path("build/audit-fingerprints.json"), Path("build/lint-fingerprints.json"), _ANSWER]
         )
 
     def test_the_command_is_passed_the_files_that_changed_among_those_it_lints(self):
@@ -132,10 +127,7 @@ class MainTest(unittest.TestCase):
     def test_with_whole_files_an_edit_to_a_comment_alone_runs_the_command(self):
         """Test that `--whole-files` fingerprints a Python file whole, so an edit to a comment runs the command."""
         files = FakeFiles({_ANSWER: _MODULE})
-        with (
-            patch.object(sys, "argv", _argv("--whole-files")),
-            _patched(_files_listed([_ANSWER]), files),
-        ):
+        with patch.object(sys, "argv", _argv("--whole-files")), _patched(_files_listed([_ANSWER]), files):
             main()
             files[_ANSWER] = _MODULE.replace("return 42", "return 42  # nosec")
             self.assertEqual(main(), 0)
@@ -192,10 +184,9 @@ class MainTest(unittest.TestCase):
         "a failing run leaves its fingerprint, so the next run skips the command although it still fails",
         case="another status",
     )
-    @kills.replace(
+    @kills.delete(
         main,
-        "return 1 if status == arguments.skipped_status else status",
-        "return status",
+        "1 if status == arguments.skipped_status else ",
         "a command exiting with the skip status reads as skipped, so its failure passes unseen",
         case="the skip status",
     )
@@ -272,10 +263,7 @@ class MainTest(unittest.TestCase):
     def test_a_python_file_that_does_not_parse_is_a_code_change_and_says_so(self):
         """Test that a file that does not parse is reported as a code change, and that stderr names it."""
         files = FakeFiles({_ANSWER: "def answer(:\n"})
-        with (
-            _patched(_files_listed([_ANSWER]), files),
-            contextlib.redirect_stderr(io.StringIO()) as stderr,
-        ):
+        with _patched(_files_listed([_ANSWER]), files), contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(main(), 0)
         self.assertIn(str(_ANSWER), stderr.getvalue())
         self.assertNotIn(_RECORD_FILE, files)
@@ -291,10 +279,7 @@ class MainTest(unittest.TestCase):
     def test_a_fingerprint_that_does_not_parse_runs_the_command_and_says_so(self):
         """Test that a fingerprint that is not JSON runs the command, and that stderr names the fingerprint."""
         files = FakeFiles({_ANSWER: _MODULE, _RECORD_FILE: "{"})
-        with (
-            _patched(_files_listed([_ANSWER]), files),
-            contextlib.redirect_stderr(io.StringIO()) as stderr,
-        ):
+        with _patched(_files_listed([_ANSWER]), files), contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(main(), 0)
         self.assertIn(str(_RECORD_FILE), stderr.getvalue())
 

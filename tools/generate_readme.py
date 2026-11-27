@@ -1,19 +1,4 @@
-"""Generate README.md from the docs/README.md.in template, the log-output screenshot, and the index of the log messages.
-
-The template's placeholders are substituted so the machine-generated parts of the README:
-
-- `@@TABLE_OF_CONTENTS@@` — the table of contents chapter, linking to each of the template's chapters.
-- `@@HELP_OUTPUT@@` — the output of `update-time -h`, wrapped to 80 columns.
-- `@@DOCKER_IMAGE_FILES_TABLE@@` — the files the Docker images type is declared in, and the globs finding them.
-- `@@LOG_OUTPUT@@`  — the sample log output as text, from `generate_log_svg`, which also renders the screenshot
-  embedded above that fallback.
-- the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
-
-The index of the log messages, docs/log-messages.md, takes the sample of each name from them too (see `log_index`).
-
-Regenerate the README, the screenshot, and the index with `just readme`. Run with `--check` to report the generated
-files that are out of date.
-"""
+"""Generate README.md from its template, the log-output screenshot, and the index of the log messages."""
 
 import contextlib
 import io

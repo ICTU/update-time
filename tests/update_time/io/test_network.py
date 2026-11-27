@@ -34,10 +34,9 @@ class ReportNetworkSettingsTest(unittest.TestCase):
         "a SOCKS proxy is logged as an HTTP one",
         case="another scheme",
     )
-    @kills.replace(
+    @kills.delete(
         _redacted_url,
-        'urlsplit(url if "://" in url else f"http://{url}")',
-        "urlsplit(url)",
+        ' if "://" in url else f"http://{url}"',
         "a proxy written without a scheme is logged with its host as the scheme",
         case="no scheme",
     )

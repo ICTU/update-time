@@ -81,10 +81,10 @@ class VersionAnchorTest(unittest.TestCase):
     )
     @kills.each(
         _SPEC_ADORNMENT_CHARACTERS,
-        lambda adornment: kills.replace(
+        lambda adornment: kills.append(
             restructured_text,
             "_ADORNMENT_CHARACTERS: Final[frozenset[str]] = frozenset(string.punctuation)",
-            f"_ADORNMENT_CHARACTERS: Final[frozenset[str]] = frozenset(string.punctuation) - {{{adornment!r}}}",
+            f" - {{{adornment!r}}}",
             f"a changelog underlining its headings with {adornment} reports the changes from where a newer entry's "
             "prose names the version, though reStructuredText allows that underline",
             case=adornment,

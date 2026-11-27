@@ -45,10 +45,9 @@ class SourceNamesTest(unittest.TestCase):
         "Update-time misses the source that the command of an old pip-compile file names",
         case="a header naming a source, without annotations",
     )
-    @kills.replace(
+    @kills.delete(
         compiled_requirements_txt,
-        r'_ANNOTATION: Final[re.Pattern[str]] = re.compile(r"#\s*(via\b.*|-r\s.*)")',
-        r'_ANNOTATION: Final[re.Pattern[str]] = re.compile(r"#\s*(via\b.*)")',
+        "|-r\\s.*",
         "Update-time leaves out the sources that a block of annotations lists below its `via`",
         case="a block of annotations",
     )
@@ -132,10 +131,9 @@ class OutputNameTest(unittest.TestCase):
         "the output uv's short option names goes unread, so the file is recompiled to standard output",
         case="uv's short option",
     )
-    @kills.replace(
+    @kills.delete(
         compiled_requirements_txt,
-        "(?:-o|--output-file)",
-        "(?:-o)",
+        "|--output-file",
         "the output uv's long option names goes unread, so the file is recompiled to standard output",
         case="uv's long option",
     )

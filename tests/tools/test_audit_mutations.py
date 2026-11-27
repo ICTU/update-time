@@ -265,11 +265,8 @@ class MainTest(unittest.TestCase):
         _registrations, run = self.audited.call_args.args
         updaters = "tests.update_time.updaters"
         expected = [
-            f"{updaters}.test_update_circle_ci_config.UpdateCircleCIConfigTest.test_bumped",
-            f"{updaters}.test_update_devcontainer.UpdateDevcontainerTest.test_bumped",
+            f"{updaters}.test_update_container_images.UpdateContainerImagesTest.test_bumped",
             f"{updaters}.test_update_dockerfile_base_image.UpdateDockerfileTest.test_bumped",
-            f"{updaters}.test_update_gitlab_ci_config.UpdateGitLabCIConfigTest.test_bumped",
-            f"{updaters}.test_update_manifest_images.UpdateManifestImagesTest.test_bumped",
         ]
         self.assertEqual(sorted(run.ids_by_context[f"{_IMAGE_UPDATER_MIXIN}.test_bumped"]), expected)
 
@@ -278,7 +275,6 @@ class MainTest(unittest.TestCase):
         self.report([])
         registered = [test for test, _mutation in self.audited.call_args.args[0]]
         drift_test = "test_drift_inside_the_cooldown_is_held_back_silently"
-        self.assertEqual(registered.count(f"{_IMAGE_UPDATER_MIXIN}.{drift_test}"), 1)
         self.assertEqual(
             [test for test in registered if test.endswith(f".{drift_test}")], [f"{_IMAGE_UPDATER_MIXIN}.{drift_test}"]
         )

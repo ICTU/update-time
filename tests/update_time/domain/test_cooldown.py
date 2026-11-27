@@ -6,13 +6,7 @@ from typing import TYPE_CHECKING
 
 from mutation_time.mutation import kills
 from update_time.domain import cooldown
-from update_time.domain.cooldown import (
-    COOLDOWN,
-    CooldownWalk,
-    cooldown_cutoff,
-    first_eligible,
-    within_cooldown,
-)
+from update_time.domain.cooldown import COOLDOWN, CooldownWalk, cooldown_cutoff, first_eligible, within_cooldown
 from update_time.domain.dependency import DependencyVersion, Release
 
 from tests.update_time.domain_objects import days_ago

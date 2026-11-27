@@ -120,8 +120,7 @@ def _stale_mentions(name: str, files: Iterable[Path]) -> list[str]:
     """Return where the files mention the name in backticks, which a rename leaves as it found them.
 
     A rename resolves the name against each module's scopes, so prose about it is left alone — rightly, since the
-    same word is a parameter or a local elsewhere and means something else there. The mentions are reported rather
-    than rewritten, for a reader who can tell the two apart.
+    same word is a parameter or a local elsewhere and means something else there.
     """
     return [f"{path}:{line}" for path in files for line in _mentioned_lines(name, _prose(path))]
 
@@ -218,6 +217,16 @@ class _AttributeRenamer(libcst.CSTTransformer):
         """Remember the name to rename, and what to rename it to."""
         super().__init__()
         self._old, self._new = old, new
+
+    @override
+    def visit_Import(self, node: libcst.Import) -> bool:
+        """Leave an import as it is, since the dotted names it holds are modules rather than attributes."""
+        return False
+
+    @override
+    def visit_ImportFrom(self, node: libcst.ImportFrom) -> bool:
+        """Leave a `from` import as it is, since the dotted name it holds is a module rather than an attribute."""
+        return False
 
     @override
     def leave_Attribute(self, original_node: libcst.Attribute, updated_node: libcst.Attribute) -> libcst.Attribute:
@@ -362,10 +371,7 @@ def _renamed_sources(sources: dict[str, str], rename: Callable[[str, str], str])
 
 
 def _survivors_message(name: str, left: list[str], changed: dict[str, str]) -> str:
-    """Return what a rename a file is left holding the name after reports: where it survives, and what it left.
-
-    Naming the files a rename that lands writes tells the reader what the run they are about to repeat touches.
-    """
+    """Return what a rename a file is left holding the name after reports: where it survives, and what it left."""
     return (
         f"{name} survives at {', '.join(left)}; name every file that uses it, and use the fully qualified name "
         f"for a name defined in another module\nNo file was written; a rename that lands writes {', '.join(changed)}"

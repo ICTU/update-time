@@ -1,9 +1,6 @@
 """A typed process-environment variable, bundling a setting's read and write sides so they cannot drift apart.
 
-Update-time runs its updaters as subprocesses, so the CLI passes each parsed option down through the environment —
-a private `_UPDATE_TIME_*` channel, not a user-facing setting. Each option is one `EnvVar`, owning the variable
-name, the value to fall back on when it is unset, and how the typed value is parsed from and serialised to the
-string the environment stores.
+The variables are a private `_UPDATE_TIME_*` channel to the updater subprocesses, not user-facing settings.
 """
 
 import os

@@ -16,6 +16,16 @@ if TYPE_CHECKING:
     from unittest.mock import Mock
 
 
+class ReadTest(unittest.TestCase):
+    """Unit tests for reading a package.json."""
+
+    def test_read(self):
+        """Test that a package.json is read as its text and the contents parsed from that text."""
+        contents = '{"name": "x", "version": "1.0"}'
+        path = mock_path(contents)
+        self.assertEqual(PackageJson.read(path), PackageJson(path, contents, {"name": "x", "version": "1.0"}))
+
+
 class NodeEngineTest(unittest.TestCase):
     """Unit tests for where a package.json declares its Node engine."""
 
@@ -67,10 +77,7 @@ class DependencyLocationsTest(unittest.TestCase):
     def test_the_line_each_dependency_is_declared_on(self):
         """Test that each dependency is located at the line its entry sits on."""
         path = mock_path('{\n  "dependencies": {\n    "react": "^18.0.0",\n    "left-pad": "1.3.0"\n  }\n}\n')
-        self.assertEqual(
-            self.locations(path),
-            {"react": [Location(path, 3, 4)], "left-pad": [Location(path, 4, 4)]},
-        )
+        self.assertEqual(self.locations(path), {"react": [Location(path, 3, 4)], "left-pad": [Location(path, 4, 4)]})
 
     def test_a_name_declared_in_a_section_that_is_not_installed_from(self):
         """Test that a dependency is located in the section declaring it, not at a key of the same name elsewhere."""
@@ -81,10 +88,7 @@ class DependencyLocationsTest(unittest.TestCase):
             '  "dependencies": {\n    "react": "^18.0.0",\n    "left-pad": "^1.0.0"\n  }\n'
             "}\n"
         )
-        self.assertEqual(
-            self.locations(path),
-            {"react": [Location(path, 9, 4)], "left-pad": [Location(path, 10, 4)]},
-        )
+        self.assertEqual(self.locations(path), {"react": [Location(path, 9, 4)], "left-pad": [Location(path, 10, 4)]})
 
     def test_non_registry_specs_skipped(self):
         """Test that git, file, workspace and github-shorthand specs are skipped (only registry ranges kept)."""

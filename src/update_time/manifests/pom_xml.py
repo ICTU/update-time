@@ -1,8 +1,4 @@
-"""Read the dependencies, plugins, plugin settings, markers, properties, parent, and source repository of a pom.xml.
-
-This module owns what a pom's elements mean, whether Update-time scans the pom or a registry serves it. Reading the
-XML itself is the formats layer's concern.
-"""
+"""Read the dependencies, plugins, plugin settings, markers, properties, parent, and source repository of a pom.xml."""
 
 import os
 import re
@@ -15,7 +11,6 @@ from update_time.domain.dependency import PinnedDependency
 from update_time.domain.reference import Reference
 from update_time.formats.xml import read, read_document
 from update_time.markers.parser import parse_marker
-from update_time.primitives.iterables import unique
 from update_time.primitives.line import Line
 from update_time.primitives.location import Location
 
@@ -284,14 +279,6 @@ def _effective_pom_name(effective_pom: XmlElement) -> str:
     A project never inherits its own `<artifactId>`, so the input location of that element names the scanned pom.
     """
     return _input_location(effective_pom.child("artifactId")).pom_name
-
-
-def one_per_artefact_and_line(declared: list[Declaration]) -> list[Declaration]:
-    """Return one declaration of each artefact at each line.
-
-    Two declarations of one artefact naming one property share that property's line, which makes them equal.
-    """
-    return unique(declared)
 
 
 def with_resolved_coordinates(declared: list[Declaration]) -> list[Declaration]:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.domain.reference import combined_marker
-from update_time.io.log import ToolTask, get_logger
+from update_time.io.log import ToolFailure, ToolTask, get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files import compiled_requirements_txt
 from update_time.manifests.requirements_txt import declarations, holds_line, prepend_line
@@ -48,9 +48,9 @@ class RequirementsCompiler(ABC):
         if not (command := self.compiled.recompile_command):
             return
         if not is_installed(command.executable):
-            self.log.tool_not_on_path(self.compiled.path, ToolTask.RECOMPILE, command.executable)
+            self.log.tool_failed(self.compiled.path, ToolTask.RECOMPILE, command.executable, ToolFailure.NOT_ON_PATH)
         elif not self._recompiled(command):
-            self.log.tool_failed(self.compiled.path, ToolTask.RECOMPILE, self.tool)
+            self.log.tool_failed(self.compiled.path, ToolTask.RECOMPILE, self.tool, ToolFailure.FAILED)
 
     def _recompiled(self, command: Command) -> bool:
         """Recompile the file with the command, and return whether the tool succeeded."""
@@ -74,7 +74,7 @@ class RequirementsCompiler(ABC):
             compiled.path.write_text(result.stdout)
         if cooldown and not commented:
             prepend_line(compiled.first_source, line)
-            self.log.configured_compiled_file_cooldown(compiled.first_source, compiled.path, cooldown, self.setting)
+            self.log.configured_cooldown(compiled.path, compiled.first_source, cooldown, self.setting)
         self._report_moved_versions(command.executable, references)
         return True
 

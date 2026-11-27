@@ -471,11 +471,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
         effective_junit = effective_dependency_element("junit:junit", "4.13.2", line=4, managed_at=managed_at)
         guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=10, managed_at=managed_at)
         effective_managed = dependency_management_element(effective_guava + effective_junit)
-        expected = [
-            (GUAVA, "33.7.1-jre", 4),
-            ("junit:junit", "4.13.2", 4),
-            (GUAVA, "33.7.1-jre", 8),
-        ]
+        expected = [(GUAVA, "33.7.1-jre", 4), ("junit:junit", "4.13.2", 4), (GUAVA, "33.7.1-jre", 8)]
         self.assertEqual(_resolved(pom, effective_pom_declaring(guava, managed=effective_managed)), expected)
 
     def test_an_entry_whose_input_location_lacks_a_line_is_skipped(self):

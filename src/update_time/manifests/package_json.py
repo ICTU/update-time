@@ -3,11 +3,11 @@
 import json
 import re
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Self, override
 
 from update_time.domain.marker import Marker
 from update_time.domain.reference import Reference
-from update_time.formats.json import JSON, JsonFile, entry_offset
+from update_time.formats.json import JSON, entry_offset
 from update_time.io.file import File
 from update_time.markers.parser import parse_directives
 from update_time.primitives.location import Location
@@ -17,6 +17,7 @@ from .npm_declaration import CatalogEntry, Catalogs, catalog_name, declaration, 
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
+    from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
 
@@ -50,8 +51,26 @@ NODE_ENGINE_REFERENCE: Final[re.Pattern[str]] = re.compile(rf'"(?P<dependency>{N
 
 
 @dataclass(frozen=True)
-class PackageJson(JsonFile, File):
-    """A package.json: its dependency entries, its Node engine, and the markers its `update-time` field names."""
+class PackageJson(File):
+    """A package.json: its dependency entries, its Node engine, and the markers its `update-time` field names.
+
+    The file is read once. Finding an entry reads its text and reading a value its parsed contents.
+    """
+
+    path: Path
+    text: str
+    contents: dict
+
+    @override
+    @classmethod
+    def read(cls, path: Path) -> Self:
+        """Return the package.json at the path, raising a `ValueError` where its JSON is not an object."""
+        text = path.read_text()
+        # Why a package.json holding valid JSON other than an object, such as `[]`, cannot be read as one.
+        not_an_object: str = "the JSON is not an object"
+        if not isinstance(contents := json.loads(text), dict):
+            raise ValueError(not_an_object)  # noqa: TRY004 — the error JSON that does not parse raises too
+        return cls(path, text, contents)
 
     def node_engine(self) -> Reference:
         """Return the reference to the entry declaring the Node engine, steered by the marker the package.json names.

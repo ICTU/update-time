@@ -24,7 +24,7 @@ _LOG: Final[Logger] = get_logger("package.json")
 
 
 @dataclass(frozen=True)
-class ProjectSnapshot:
+class ProjectBeforeUpdate:
     """The package.json and the locked versions of a project, as they were before the update."""
 
     listed: Path
@@ -35,14 +35,14 @@ class ProjectSnapshot:
 
 @dataclass(frozen=True)
 class ProjectUpdate:
-    """The snapshot of a project from before the update, with its package.json and locked versions after it."""
+    """A project as it was before the update, with its package.json and locked versions after it."""
 
-    before: ProjectSnapshot
+    before: ProjectBeforeUpdate
     after: PackageJson | None
     locked_after: dict[DependencyName, VersionString]
 
     @classmethod
-    def of(cls, before: ProjectSnapshot, listed_after: LockedVersions) -> ProjectUpdate:
+    def of(cls, before: ProjectBeforeUpdate, listed_after: LockedVersions) -> ProjectUpdate:
         """Return the update of the project, reading its package.json again where the update needs it.
 
         A project that was unreadable before the update, and whose versions did not move, is not read again.
@@ -72,9 +72,11 @@ class ProjectUpdate:
                 for reference in moved:
                     _LOG.version_moved_back(manager, reference, new_version)
                 continue
-            releases = {name: SOURCE.release(name, new_version) for name in {each.dependency for each in moved}}
+            versions = {
+                name: SOURCE.dependency_version(name, new_version) for name in {each.dependency for each in moved}
+            }
             for reference in moved:
-                _LOG.new_version(reference, releases[reference.dependency])
+                _LOG.new_version(reference, versions[reference.dependency])
 
     @property
     def moved_versions(self) -> dict[DependencyName, VersionString]:

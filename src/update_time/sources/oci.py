@@ -36,7 +36,7 @@ from update_time.domain.dependency import (
     tag_of,
 )
 from update_time.domain.reference import VARIABLE
-from update_time.domain.source import Source
+from update_time.domain.source import Source, every_image_looked_up
 from update_time.io.fetch import fetch, fetch_json, json_body, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import DeferredLookup, LookedUp
@@ -147,11 +147,7 @@ class _Tag:
 
     @property
     def sortable_version(self) -> Version:
-        """Return the tag's version, or the lowest sentinel when it has none, for ordering and comparison.
-
-        Unlike `version` this is never None, so tags (and, via `_suffix_tag`, their suffixes) compare and sort
-        uniformly; a tag without a valid version sorts and compares as the lowest.
-        """
+        """Return the tag's version, or the lowest sentinel when it has none, for ordering and comparison."""
         return self.version or LOWEST_VERSION
 
     @cached_property
@@ -176,37 +172,24 @@ class _Tag:
 
     @property
     def sortable_suffix_version(self) -> Version:
-        """Return the embedded suffix version, or the lowest sentinel when the suffix has none, for ordering.
-
-        The suffix is a tag in its own right, so this is simply its `sortable_version`.
-        """
+        """Return the embedded suffix version, or the lowest sentinel when the suffix has none, for ordering."""
         return self._suffix_tag.sortable_version
 
     @cached_property
     def _suffix_tag(self) -> _Tag:
         """Parse the suffix as a tag in its own right: it has the same shape (a label, a version, a remainder).
 
-        This gives the suffix a second, independent version axis, e.g. the `3.23` in `alpine3.23`. Only the parsed
-        parts (its `prefix`, `version`, and `suffix`) are used; the nested tag's digest and push date are never
-        resolved, because a suffix is not a pullable image.
+        This gives the suffix a second, independent version axis, e.g. the `3.23` in `alpine3.23`.
         """
         return _Tag(name=self.suffix)
 
     @property
     def suffix(self) -> str:
-        """Return the non-version suffix of the tag (e.g., 'slim' in '3.12-slim'), or empty string if none.
-
-        Only meaningful for a tag that has a version (it's compared between a candidate and the current tag, both of
-        which have one); a tag without a version doesn't match and the suffix is reported as empty.
-        """
+        """Return the non-version suffix of the tag (e.g., 'slim' in '3.12-slim'), or empty string if none."""
         return self._match.group("suffix") if self._match else ""
 
     def is_candidate_for(self, current: _Tag) -> bool:
-        """Return whether this tag (known by name only) is a possible update of the current tag.
-
-        These are the checks that can be made from the tag name alone, used to narrow the set of tags whose
-        metadata (digest and push date) is worth fetching.
-        """
+        """Return whether this tag (known by name only) is a possible update of the current tag."""
         if self.version is None:
             return False  # Ignore tags if the version is not valid
         if self.version.is_prerelease:
@@ -266,10 +249,7 @@ class _Tag:
     def is_newer_or_equal(self, tag: _Tag) -> bool:
         """Return whether this tag is at least as new as `tag` on every version axis.
 
-        A tag's version axes are its main version and, recursively, the version embedded in its suffix (`alpine3.23`),
-        so this compares `sortable_version` at each level and descends into the suffix until neither side has one.
-        Equal counts (a tag is always at least as new as itself). Labels are compared separately by `is_candidate_for`;
-        matching labels already pin any deeper suffix remainder, so the levels below the embedded version are equal.
+        A tag's version axes are its main version and, recursively, the version embedded in its suffix (`alpine3.23`).
         """
         if tag.sortable_version > self.sortable_version:
             return False  # This version axis would go down.
@@ -284,8 +264,7 @@ def _split_domain(image: str) -> tuple[str | None, str]:
     Following the rule Docker's reference parser uses to split the registry domain from the image name
     (`splitDockerDomain` in https://github.com/distribution/reference/blob/main/normalize.go), the first path
     component is a registry host when it contains a `.` or `:`, equals `localhost`, or contains an uppercase
-    character (repository namespaces must be lowercase). When there is no such host the image is on Docker Hub
-    (under the implicit `library/` namespace) and the host is returned as None with the full reference as the path.
+    character (repository namespaces must be lowercase).
     So `registry.gitlab.com/group/image` -> (`registry.gitlab.com`, `group/image`) and `cimg/go` -> (None, `cimg/go`).
     """
     first, _, remainder = image.partition("/")
@@ -318,9 +297,8 @@ def _is_on_docker_hub(pinned: PinnedDependency) -> bool:
 def get_latest_tag(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
     """Return the tag to pin the reference to.
 
-    Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). The digest comes
-    back even when the current version is already the latest, so an unpinned reference can be pinned without
-    bumping its version.
+    The digest comes back even when the current version is already the latest, so an unpinned reference can be
+    pinned without bumping its version.
     """
     return _resolved_tag(pinned.name, pinned.version, version_bound, cooldown_days)
 
@@ -374,38 +352,25 @@ def _is_another_spelling(candidate: _Tag, current: _Tag) -> bool:
     return candidate.name != current.name and current.is_newer_or_equal(candidate)
 
 
-def _pulled(_pinned: PinnedDependency) -> ImageNotLookedUp | None:
-    """Return no reason, for a file format that pulls every image it names."""
-    return None
+def image_source(
+    image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None] = every_image_looked_up,
+) -> Source:
+    """Return the source that resolves image tags, and does not look up the images a file does not pull."""
+    return Source(
+        project=_project,
+        new_version=get_latest_tag,
+        dates_versions_of=_is_on_docker_hub,
+        why_image_not_looked_up=partial(_image_not_looked_up, image_not_pulled),
+    )
 
 
-@dataclass(eq=False)
-class TagGetter:
-    """A getter that resolves image tags, and says which images it does not look up."""
-
-    image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None] = _pulled
-
-    def __call__(
-        self, pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /
-    ) -> DependencyVersion:
-        """Return the tag to pin the reference to."""
-        return get_latest_tag(pinned, version_bound, cooldown_days)
-
-    @property
-    def source(self) -> Source:
-        """Return the source that resolves image tags through this getter."""
-        return Source(
-            project=_project,
-            new_version=self,
-            dates_versions_of=_is_on_docker_hub,
-            why_image_not_looked_up=self._image_not_looked_up,
-        )
-
-    def _image_not_looked_up(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
-        """Return why no registry is asked about the pinned image, or None when one is."""
-        if re.search(VARIABLE, f"{pinned.name}:{pinned.version}"):
-            return ImageNotLookedUp.THROUGH_A_VARIABLE
-        return self.image_not_pulled(pinned)
+def _image_not_looked_up(
+    image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None], pinned: PinnedDependency
+) -> ImageNotLookedUp | None:
+    """Return why no registry is asked about the pinned image, or None when one is."""
+    if re.search(VARIABLE, f"{pinned.name}:{pinned.version}"):
+        return ImageNotLookedUp.THROUGH_A_VARIABLE
+    return image_not_pulled(pinned)
 
 
 @dataclass(frozen=True)
@@ -429,7 +394,7 @@ def _resolved_floating_tag(image: DependencyName, current: _Tag) -> DependencyVe
     """Return the concrete tag a floating tag serves, with its digest, or the floating tag unchanged.
 
     What a floating tag serves is decided by its digest, so its aliases — the tags sharing that digest — are the
-    candidates `_pinned_alias` picks between. Docker Hub lists the digest of every tag, so one listing gives them
+    candidates `_ranked_aliases` ranks. Docker Hub lists the digest of every tag, so one listing gives them
     all; another registry lists names only, so `_walked_floating_tag` asks it tag by tag instead.
     """
     if not _is_docker_hub_image(image):
@@ -443,9 +408,9 @@ def _resolved_floating_tag(image: DependencyName, current: _Tag) -> DependencyVe
         return _unpinned_floating_tag(current, reason_no_version_was_pinned)
     pushed = listing.pushed(current.name)
     aliases = [_Tag(name=name) for name, tag_digest in listing.digests.items() if tag_digest == digest]
-    if (alias := _pinned_alias(current, aliases)) is None:
+    if not (ranked := _ranked_aliases(current, aliases)):
         return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG, digest, pushed)
-    return DependencyVersion(version=alias.name, sha=digest, publication=pushed, floating=FloatingPin.RESOLVED)
+    return DependencyVersion(version=ranked[0].name, sha=digest, publication=pushed, floating=FloatingPin.RESOLVED)
 
 
 # How many tags the walk asks for a manifest at most, so that a repository whose tags the floating tag's image
@@ -458,10 +423,8 @@ def _walked_floating_tag(image: DependencyName, current: _Tag) -> DependencyVers
     """Return the concrete tag serving the floating tag's digest, found by asking the registry tag by tag.
 
     A registry other than Docker Hub lists tag names without their digests, so each candidate costs a manifest
-    request. The candidates are walked in the order `_pinned_alias` would pick between them, and the first one
-    serving the same digest is the tag to pin, which keeps the common case to a handful of requests. The walk stops
-    at `_MAX_FLOATING_TAG_PROBES` candidates, and says whether it examined them all or gave up. The tag names are
-    listed first, since the registry refuses that listing for a repository it does not serve.
+    request. The walk stops at `_MAX_FLOATING_TAG_PROBES` candidates. The tag names are listed first, since the
+    registry refuses that listing for a repository it does not serve.
     """
     names = _tag_names(image)
     if names.absent:
@@ -469,9 +432,7 @@ def _walked_floating_tag(image: DependencyName, current: _Tag) -> DependencyVers
     digest = _manifest_digest(image, current.name)
     if not digest:
         return _unpinned_floating_tag(current, FloatingPin.NO_MANIFEST)
-    candidates = _concrete_tags(current, [_Tag(name=name) for name in names.value or []])
-    labels = _variant_labels(current, candidates)
-    ordered = sorted(candidates, key=lambda tag: _alias_rank(tag, labels), reverse=True)
+    ordered = _ranked_aliases(current, [_Tag(name=name) for name in names.value or []])
     for candidate in ordered[:_MAX_FLOATING_TAG_PROBES]:
         if _manifest_digest(image, candidate.name) == digest:
             return DependencyVersion(version=candidate.name, sha=digest, floating=FloatingPin.RESOLVED)
@@ -498,36 +459,33 @@ def _unpinned_floating_tag(
     return DependencyVersion(version=current.name, sha=digest, publication=pushed, floating=reason, unserved=unserved)
 
 
-def _pinned_alias(current: _Tag, aliases: list[_Tag]) -> _Tag | None:
-    """Return the alias to pin the reference to, or None when none of them names a version of it.
+def _ranked_aliases(current: _Tag, aliases: list[_Tag]) -> list[_Tag]:
+    """Return the aliases naming a version of the image, the one to pin the reference to first.
 
-    What is left after `_concrete_tags` is ranked by `_alias_rank`, and the highest of them is the tag to pin.
-    """
-    concrete = _concrete_tags(current, aliases)
-    if not concrete:
-        return None
-    labels = _variant_labels(current, concrete)
-    return max(concrete, key=lambda alias: _alias_rank(alias, labels))
-
-
-def _concrete_tags(current: _Tag, tags: list[_Tag]) -> list[_Tag]:
-    """Return the tags naming a version of the image the floating tag names.
-
-    A tag whose label prefix differs names a version of something the image bundles rather than of the image —
+    An alias whose label prefix differs names a version of something the image bundles rather than of the image —
     `php8.3` and `jdk25` are the PHP and JDK the build carries — so it is passed over, as `is_candidate_for` passes
     over such a tag when updating a version pin.
+
+    `_alias_rank` ranks the rest by the labels of the floating tag that name a variant of the image, rather than a
+    channel it follows. A label no alias carries names a channel, and requiring it would leave no alias to pick from,
+    so it is left out. A label in `_CHANNEL_LABELS` is left out even where an alias carries it: keeping it would pin
+    the reference to a tag that floats on, `node:lts-alpine` landing on the `24-lts` that follows whichever 24
+    release is the LTS one instead of on `24-alpine`. Aliases that rank alike keep their order.
     """
-    return [tag for tag in tags if tag.version is not None and tag.prefix == current.prefix]
+    concrete = [alias for alias in aliases if alias.version is not None and alias.prefix == current.prefix]
+    labels = [
+        label.name
+        for label in _labels(current)
+        if label.name not in _CHANNEL_LABELS and any(_carries(alias, label.name) for alias in concrete)
+    ]
+    return sorted(concrete, key=lambda alias: _alias_rank(alias, labels), reverse=True)
 
 
 def _alias_rank(alias: _Tag, labels: list[str]) -> tuple[int, _AliasKey]:
     """Return what ranks the aliases of one digest: the variant labels the alias carries, then `_alias_key`.
 
     A floating tag's labels are kept where an alias carries them, so an alias carrying more of them outranks one
-    carrying fewer, and a tag whose labels no single alias carries together still lands on one carrying some. Both
-    ways of resolving a floating tag rank their candidates this way, so the two cannot come to disagree: Docker Hub
-    picks the highest of the aliases its listing gives, and another registry walks them in this order until one
-    serves the digest.
+    carrying fewer, and a tag whose labels no single alias carries together still lands on one carrying some.
     """
     return sum(_carries(alias, label) for label in labels), _alias_key(alias, labels)
 
@@ -546,21 +504,6 @@ def _variant_version(tag: _Tag, label: str) -> Version:
     """Return the version the tag attaches to the label, or the lowest sentinel when it attaches none."""
     versions = [part.version for part in _labels(tag) if part.prefix == label and part.version is not None]
     return max(versions, default=LOWEST_VERSION)
-
-
-def _variant_labels(current: _Tag, concrete: list[_Tag]) -> list[str]:
-    """Return the labels of a floating tag that name a variant of the image, rather than a channel it follows.
-
-    A label no alias carries names a channel, and requiring it would leave no alias to pick from, so it is left
-    out. A label in `_CHANNEL_LABELS` is left out even where an alias carries it: keeping it would pin the
-    reference to a tag that floats on, `node:lts-alpine` landing on the `24-lts` that follows whichever 24 release
-    is the LTS one instead of on `24-alpine`.
-    """
-    return [
-        label.name
-        for label in _labels(current)
-        if label.name not in _CHANNEL_LABELS and any(_carries(alias, label.name) for alias in concrete)
-    ]
 
 
 def _carries(tag: _Tag, label: str) -> bool:
@@ -648,14 +591,6 @@ def _repository(image: str) -> str:
     return path
 
 
-def _credentials(image: str) -> tuple[str, str] | None:
-    """Return Docker Hub credentials (for a higher rate limit) when the image is on Docker Hub, else None.
-
-    Docker Hub is currently the only registry we hold credentials for; all other registries are queried anonymously.
-    """
-    return credentials() if _is_docker_hub_image(image) else None
-
-
 @cache
 def _tag_names(image: str) -> LookedUp[list[str]]:
     """Fetch all tag names for an image from its OCI registry's names-only listing.
@@ -663,10 +598,8 @@ def _tag_names(image: str) -> LookedUp[list[str]]:
     Where the registry refuses the repository, the names are absent. Any other failure is logged, and leaves the
     names listed until then.
     """
-    host = _registry_host(image)
-    repository = _repository(image)
-    headers = _auth_headers(host, repository, _credentials(image))
-    url: str | None = f"https://{host}/v2/{repository}/tags/list?n={_TAGS_PAGE_SIZE}"
+    headers = _auth_headers(image)
+    url: str | None = _registry_url(image, f"tags/list?n={_TAGS_PAGE_SIZE}")
     names: list[str] = []
     while url:
         response = fetch(url, _LOG, headers=headers, require_ok=False)
@@ -720,20 +653,24 @@ def _manifest_digest(image: str, tag: str) -> str:
 
     A `HEAD` on the manifest returns the canonical digest in the `Docker-Content-Digest` header (the multi-arch
     index digest when the Accept header offers the index/list media types). This works on every OCI registry.
-    Cached, so a tag named more than once by the same run is read once.
     """
-    host = _registry_host(image)
-    repository = _repository(image)
-    headers = {"Accept": ", ".join(_MANIFEST_MEDIA_TYPES), **_auth_headers(host, repository, _credentials(image))}
-    response = fetch(f"https://{host}/v2/{repository}/manifests/{tag}", _LOG, method="head", headers=headers)
+    headers = {"Accept": ", ".join(_MANIFEST_MEDIA_TYPES), **_auth_headers(image)}
+    response = fetch(_registry_url(image, f"manifests/{tag}"), _LOG, method="head", headers=headers)
     if response is None:
         return ""
     return response.headers.get("Docker-Content-Digest", "")
 
 
-def _auth_headers(host: str, repository: str, credentials: tuple[str, str] | None) -> dict[str, str]:
+def _registry_url(image: str, path: str) -> str:
+    """Return the URL of the path under the image's repository on its registry."""
+    return f"https://{_registry_host(image)}/v2/{_repository(image)}/{path}"
+
+
+def _auth_headers(image: str) -> dict[str, str]:
     """Return the Authorization header for pulling from the registry, or no header for anonymous access."""
-    token = _registry_token(host, repository, credentials)
+    # Docker Hub is the only registry Update-time holds credentials for, which raise its rate limit.
+    docker_hub_credentials = credentials() if _is_docker_hub_image(image) else None
+    token = _registry_token(_registry_host(image), _repository(image), docker_hub_credentials)
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
@@ -761,12 +698,7 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
     found = fetch_json(
-        realm,
-        _LOG,
-        body=_TokenJSON,
-        statuses_meaning_absent=(HTTPStatus.FORBIDDEN,),
-        params=params,
-        auth=credentials,
+        realm, _LOG, body=_TokenJSON, statuses_meaning_absent=(HTTPStatus.FORBIDDEN,), params=params, auth=credentials
     )
     if (token := found.value) is None:
         return None
@@ -780,4 +712,4 @@ class _TokenJSON(TypedDict):
     access_token: NotRequired[str]
 
 
-SOURCE: Final[Source] = Source(project=_project, new_version=get_latest_tag, dates_versions_of=_is_on_docker_hub)
+SOURCE: Final[Source] = image_source()

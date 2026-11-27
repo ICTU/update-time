@@ -33,7 +33,7 @@ def _no_dependency(_pinned: PinnedDependency) -> bool:
     return False
 
 
-def _looked_up(_pinned: PinnedDependency) -> ImageNotLookedUp | None:
+def every_image_looked_up(_pinned: PinnedDependency) -> ImageNotLookedUp | None:
     """Return why the source does not look the dependency's image up, which it does for every dependency."""
     return None
 
@@ -54,7 +54,7 @@ class Source:
     ecosystem: Ecosystem | None = None
     new_version: NewVersionGetter | None = None
     dates_versions_of: Callable[[PinnedDependency], bool] = _no_dependency
-    why_image_not_looked_up: Callable[[PinnedDependency], ImageNotLookedUp | None] = _looked_up
+    why_image_not_looked_up: Callable[[PinnedDependency], ImageNotLookedUp | None] = every_image_looked_up
     adopts_hash_drift: bool = True
 
     def reports_yanks(self, _pinned: PinnedDependency) -> bool:
@@ -85,7 +85,7 @@ class Source:
         why = self.why_image_not_looked_up(pinned)
         return None if why is ImageNotLookedUp.ARGUMENT_SHARED_WITH_ANOTHER_FROM_LINE else why
 
-    def release(self, dependency: DependencyName, version: VersionString) -> DependencyVersion:
+    def dependency_version(self, dependency: DependencyName, version: VersionString) -> DependencyVersion:
         """Return the version, with the changes and the publication date the source reports for it."""
         changes = NO_CHANGES if self.changes is None else self.changes(dependency, version)
         published = None if self.publication_date is None else self.publication_date(dependency, version)

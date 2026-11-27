@@ -36,7 +36,7 @@ def run(command: Command, cwd: Path | None = None, environment: Mapping[str, str
         directory = Path.cwd() if cwd is None else cwd
         _log_version(command.executable, directory)
         _LOG.command_run(command, directory, variables)
-    outcome = run_unlogged(command, cwd, variables)
+    outcome = _run_unlogged(command, cwd, variables)
     if isinstance(outcome, OSError):
         _report_unrunnable(command, outcome)
         return Result("", "", succeeded=False)
@@ -62,7 +62,7 @@ def _tool_version(executable: str, directory: Path) -> str | OSError | None:
     Warn why the version is unknown where the executable runs. The query runs without colour, which a tool such as
     yarn prints into a pipe as well, so the version and the reason why it is unknown are plain text.
     """
-    outcome = run_unlogged(Command(executable, "--version"), directory, {"NO_COLOR": "1"})
+    outcome = _run_unlogged(Command(executable, "--version"), directory, {"NO_COLOR": "1"})
     if isinstance(outcome, OSError):
         return outcome
     if not outcome.succeeded:
@@ -75,7 +75,7 @@ def _tool_version(executable: str, directory: Path) -> str | OSError | None:
     return None
 
 
-def run_unlogged(command: Command, cwd: Path | None, environment: Mapping[str, str] | None = None) -> Result | OSError:
+def _run_unlogged(command: Command, cwd: Path | None, environment: Mapping[str, str] | None = None) -> Result | OSError:
     """Run a command with the variables added to its environment, and return its result or the error stopping it."""
     env = os.environ | dict(environment) if environment else None
     try:
@@ -90,11 +90,22 @@ def run_unlogged(command: Command, cwd: Path | None, environment: Mapping[str, s
 
 
 def _report_unrunnable(command: Command, error: OSError) -> None:
-    """Report the error that kept the system from running the command."""
-    if isinstance(error, FileNotFoundError):
-        _LOG.command_not_found(command)
-    else:
-        _LOG.command_error(command, error)
+    """Report the error that kept the system from running the command, asking whether a missing executable is installed.
+
+    A missing working directory raises the same error as a missing executable, so the error's file tells them apart.
+    """
+    missing_executable = isinstance(error, FileNotFoundError) and error.filename == command.executable
+    _LOG.command_not_run(command, f"is {command.executable} installed?" if missing_executable else str(error))
+
+
+def result_or_failure(command: Command, cwd: Path) -> Result | str:
+    """Run the command without logging it, and return its result where it succeeds, or else why it failed."""
+    outcome = _run_unlogged(command, cwd)
+    if isinstance(outcome, OSError):
+        return str(outcome)
+    if not outcome.succeeded:
+        return outcome.stderr.strip() or f"{command.executable} failed without saying why"
+    return outcome
 
 
 def tool_version(executable: str, directory: Path) -> str | None:

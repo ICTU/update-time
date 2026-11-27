@@ -14,7 +14,7 @@ from unittest.mock import Mock, call, patch
 from mutation_time.mutation import kills
 from update_time.io import process
 from update_time.io.log import Logger
-from update_time.io.process import Processes, _tool_version, run, tool_version
+from update_time.io.process import Processes, _report_unrunnable, _tool_version, run, tool_version
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 
@@ -31,15 +31,18 @@ _PROJECT: Final[Path] = Path("/project")
 class RunTests(LoggingTestCase):
     """Unit tests for the run function and its Result."""
 
-    def test_stdout_is_returned(self, mock_run: Mock):
-        """Test that the stdout of a successful command is captured."""
-        mock_run.return_value = Mock(stdout="output", stderr="")
-        self.assertEqual(run(Command("tool", "--version")).stdout, "output")
-
-    def test_captured_stderr_loses_its_trailing_newline(self, mock_run: Mock):
-        """Test that a result holds its captured stderr without the newline the command ended it with."""
-        mock_run.return_value = Mock(stdout="", stderr="boom\n")
-        self.assertEqual(run(Command("uv", "lock")).stderr, "boom")
+    def test_the_result_of_a_clean_exit_holds_what_the_command_wrote(self, mock_run: Mock):
+        """Test that a clean exit is ok, and that its result holds the command's stdout, stderr, and JSON output."""
+        for case, (stdout, stderr, attribute, expected) in {
+            "the stdout": ("output", "", "stdout", "output"),
+            "the stderr without its trailing newline": ("", "boom\n", "stderr", "boom"),
+            "the stdout parsed as JSON": ('{"a": 1}', "", "json", {"a": 1}),
+            "no output parsed as an empty dict": ("", "", "json", {}),
+            "an ok result without output": ("", "", "ok", True),
+        }.items():
+            with self.subTest(case=case):
+                mock_run.return_value = Mock(stdout=stdout, stderr=stderr)
+                self.assertEqual(getattr(run(Command("tool", "list")), attribute), expected)
 
     def test_command_and_cwd_are_passed(self, mock_run: Mock):
         """Test that the command and working directory are passed to the subprocess."""
@@ -62,21 +65,6 @@ class RunTests(LoggingTestCase):
             self.assertEqual(mock_run.call_args.kwargs["env"], (os.environ | {"YARN_NPM_MINIMAL_AGE_GATE": "10080"}))
             run(Command("yarn", "up"))
         self.assertIsNone(mock_run.call_args.kwargs["env"])
-
-    def test_json_is_parsed(self, mock_run: Mock):
-        """Test that stdout is parsed as JSON on demand."""
-        mock_run.return_value = Mock(stdout='{"a": 1}', stderr="")
-        self.assertEqual(run(Command("npm", "list")).json, {"a": 1})
-
-    def test_empty_output_parses_to_an_empty_dict(self, mock_run: Mock):
-        """Test that a command with no output parses to an empty dict rather than crashing."""
-        mock_run.return_value = Mock(stdout="", stderr="")
-        self.assertEqual(run(Command("npm", "list")).json, {})
-
-    def test_clean_exit_is_ok(self, mock_run: Mock):
-        """Test that a command that exits cleanly is ok, even with no output."""
-        mock_run.return_value = Mock(stdout="", stderr="")
-        self.assertTrue(run(Command("uv", "lock")).ok)
 
     def test_non_zero_exit_with_output_is_ok_without_warning(self, mock_run: Mock):
         """Test that a non-zero exit is ok as long as output was produced, and isn't logged even with stderr chatter."""
@@ -109,17 +97,31 @@ class RunTests(LoggingTestCase):
         self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
         self.assert_error_logged(
-            message_of(Logger.command_error), command=Command("./mvnw", "--version"), error=refused
+            message_of(Logger.command_not_run), command=Command("./mvnw", "--version"), reason=str(refused)
         )
 
     def test_missing_executable_is_logged(self, mock_run: Mock):
         """Test that a missing executable is logged and a failed, empty result returned rather than crashing."""
-        mock_run.side_effect = FileNotFoundError
+        mock_run.side_effect = FileNotFoundError(2, "No such file or directory", "npm")
         result = run(Command("npm", "outdated"))
         self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
         self.assert_error_logged(
-            message_of(Logger.command_not_found), command=Command("npm", "outdated"), executable="npm"
+            message_of(Logger.command_not_run), command=Command("npm", "outdated"), reason="is npm installed?"
+        )
+
+    @kills.delete(
+        _report_unrunnable,
+        " and error.filename == command.executable",
+        "a missing working directory is reported as a tool that may not be installed",
+    )
+    def test_a_missing_directory_is_reported_by_the_error_naming_it(self, mock_run: Mock):
+        """Test that a missing working directory is reported by the error naming it, not as a missing executable."""
+        missing_directory = FileNotFoundError(2, "No such file or directory", str(_PROJECT))
+        mock_run.side_effect = missing_directory
+        run(Command("npm", "outdated"), cwd=_PROJECT)
+        self.assert_error_logged(
+            message_of(Logger.command_not_run), command=Command("npm", "outdated"), reason=str(missing_directory)
         )
 
 
@@ -162,10 +164,7 @@ class DebugLogTests(LoggingTestCase):
         mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
         run(Command("npm", "outdated"), cwd=_PROJECT)
         self.assert_logged_among_others(
-            message_of(Logger.tool_version),
-            executable="npm",
-            directory=Location(_PROJECT),
-            version="11.19.1",
+            message_of(Logger.tool_version), executable="npm", directory=Location(_PROJECT), version="11.19.1"
         )
 
     def test_version_of_a_command_run_in_no_directory_names_the_scan_root(self, mock_run: Mock):
@@ -173,10 +172,7 @@ class DebugLogTests(LoggingTestCase):
         mock_run.return_value = Mock(stdout="uv 0.13.1\n", stderr="")
         run(Command("uv", "lock"))
         self.assert_logged_among_others(
-            message_of(Logger.tool_version),
-            executable="uv",
-            directory=Location(Path.cwd()),
-            version="uv 0.13.1",
+            message_of(Logger.tool_version), executable="uv", directory=Location(Path.cwd()), version="uv 0.13.1"
         )
 
     def test_version_is_asked_once_per_executable_and_directory(self, mock_run: Mock):
@@ -263,9 +259,9 @@ class DebugLogTests(LoggingTestCase):
     def test_a_tool_that_cannot_run_is_reported_once(self, mock_run: Mock):
         """Test that a tool the system cannot run is reported by its command alone, not by its version query too."""
         refused = PermissionError(13, "Permission denied")
-        for case, error, message, fields in (
-            ("not installed", FileNotFoundError(), message_of(Logger.command_not_found), {"executable": "pnpm"}),
-            ("refused", refused, message_of(Logger.command_error), {"error": refused}),
+        for case, error, reason in (
+            ("not installed", FileNotFoundError(2, "No such file or directory", "pnpm"), "is pnpm installed?"),
+            ("refused", refused, str(refused)),
         ):
             with self.subTest(case):
                 mock_run.reset_mock()
@@ -273,7 +269,9 @@ class DebugLogTests(LoggingTestCase):
                 run(Command("pnpm", "outdated"), cwd=_PROJECT)
                 self.assertEqual(mock_run.call_count, 2)
                 self.assert_no_warnings_logged()
-                self.assert_error_logged(message, command=Command("pnpm", "outdated"), **fields)
+                self.assert_error_logged(
+                    message_of(Logger.command_not_run), command=Command("pnpm", "outdated"), reason=reason
+                )
 
 
 @patch("subprocess.Popen")

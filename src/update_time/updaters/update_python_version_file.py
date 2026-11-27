@@ -16,7 +16,7 @@ from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_version import PYTHON, PYTHON_VERSION_REFERENCE
 from update_time.package_managers.uv.uv import workspace_pyproject_tomls
 from update_time.references.file import update_file
-from update_time.references.match import matched_reference, reference_matches
+from update_time.references.match import matched_references
 from update_time.sources.oci import SOURCE, get_latest_tag
 
 if TYPE_CHECKING:
@@ -79,8 +79,7 @@ def _requires_python(pyproject_toml: Path) -> Reference | None:
 def _report_requires_python(lines: list[Line], requires_python: Reference) -> None:
     """Warn about each entry the run leaves outside the `requires-python`, and log each one it holds back."""
     bound = _python_bound(requires_python)
-    for line, match, marker in reference_matches(lines, PYTHON_VERSION_REFERENCE):
-        reference = matched_reference(match, line.location, PYTHON, marker=marker)
+    for reference in matched_references(lines, PYTHON_VERSION_REFERENCE, PYTHON):
         version = reference.current_version
         if not bound.keeps(Version(version), version):
             _LOG.python_version_outside_requires_python(reference, requires_python)

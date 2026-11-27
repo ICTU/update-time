@@ -25,19 +25,11 @@ def utc_date_and_time(timestamp: datetime) -> str:
 
 
 def newest_timestamp(timestamps: Iterable[str | None]) -> datetime | None:
-    """Return the most recent of the ISO-8601 timestamps, or None if none of them is there.
-
-    A timestamp that isn't there is skipped rather than raising, so a mixture of present and absent ones still
-    yields the newest present one.
-    """
+    """Return the most recent of the ISO-8601 timestamps there are, or None if none of them is there."""
     parsed = (parse_timestamp(timestamp) for timestamp in timestamps)
     return max((timestamp for timestamp in parsed if timestamp is not None), default=None)
 
 
 def parse_timestamp(timestamp: str | None) -> datetime | None:
-    """Return the ISO-8601 timestamp parsed, or None when there is none to parse.
-
-    An absent timestamp yields None rather than raising, so a caller that has nothing to parse is left with an
-    unknown date to decide about.
-    """
+    """Return the ISO-8601 timestamp parsed, or None when there is none to parse."""
     return datetime.fromisoformat(timestamp) if timestamp else None

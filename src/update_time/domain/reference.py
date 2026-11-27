@@ -92,13 +92,13 @@ type ReferenceResolver[ReferenceT: Reference, ResolvedT: ResolvedReference] = Ca
 
 @dataclass(frozen=True, kw_only=True)
 class ResolvedReference(Reference):
-    """A resolved reference carries the release and the project a source resolved for it.
+    """A resolved reference carries the version and the project a source resolved for it.
 
-    The release is the version the run leaves the reference on. That is the new version when the run updated
-    the reference, and the current version otherwise.
+    The version is the one the run leaves the reference on. That is the new version when the run updated the
+    reference, and the current version otherwise.
     """
 
-    release: DependencyVersion
+    version: DependencyVersion
     project: Project = NO_PROJECT
 
 
@@ -143,14 +143,19 @@ class DriftKind(Enum):
     REF = RefKind.REF
 
     @property
-    def ref(self) -> RefKind | None:
-        """Return the kind of the ref whose move drifts the pin, or None for a digest."""
-        return self.value
-
-    @property
     def separator(self) -> str:
         """Return the separator before the version that the drifted reference names."""
         return ":" if self is DriftKind.DIGEST else "@"
+
+    @property
+    def noun(self) -> str:
+        """Return the word naming the kind of drift: the kind of ref that moved, or the digest."""
+        return self.ref or "digest"
+
+    @property
+    def ref(self) -> RefKind | None:
+        """Return the kind of the ref whose move drifts the pin, or None for a digest."""
+        return self.value
 
 
 def hash_drifted(resolved: str, pinned: str) -> bool:

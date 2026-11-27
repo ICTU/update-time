@@ -2,18 +2,13 @@
 
 import posixpath
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from update_time.io.process import run
 from update_time.lock_files.locked_versions import ROOT_PROJECT, listed_versions
 from update_time.primitives.command import Command
 
-from .package_manager import (
-    ConfiguredCooldown,
-    CooldownArguments,
-    ManagerCooldown,
-    PackageManager,
-)
+from .package_manager import ConfiguredCooldown, CooldownArguments, ManagerCooldown, PackageManager
 
 if TYPE_CHECKING:
     from update_time.lock_files.locked_versions import LockedVersions
@@ -30,8 +25,8 @@ def _npm_locked_versions(directory: Path) -> LockedVersions:
     entry. The entry resolves the member to its directory, relative to the folder holding the member's link: the
     root's `node_modules`, or `node_modules/@scope` for a member named `@scope/b`.
     """
-    listed = run(_NPM_LIST, directory).json
-    dependencies = listed.get("dependencies", {}) if isinstance(listed, dict) else {}
+    listed = cast("dict", run(_NPM_LIST, directory).json)  # npm prints an object, an error included
+    dependencies = listed.get("dependencies", {})
     projects = {ROOT_PROJECT: listed_versions(dependencies)}
     for name, info in dependencies.items():
         if (resolved := info.get("resolved", "")).startswith("file:"):

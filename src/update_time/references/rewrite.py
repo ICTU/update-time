@@ -1,15 +1,7 @@
-"""Rewrite pinned version references in text, line by line.
-
-The updaters that edit files line by line share this engine: Dockerfiles, CI configs, manifests, requirements,
-workflows, and the rest. Given a regexp that captures a reference and a function that returns its new version, it
-rewrites each matched reference in place, touching only the captured spans and skipping any reference whose update
-an `# update-time: ignore[update]` marker holds back. Which version a reference should update to is
-`resolve.latest_version`'s decision; this module owns the text surgery around it, reporting what it changed through
-a `Logger`.
-"""
+"""Rewrite pinned version references in text, line by line, touching only the spans the regexp captures."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import FloatingPin, Unserved
@@ -50,10 +42,7 @@ def update_references_in_lines(
 ) -> list[str]:
     """Return the lines with each unpinned reference updated to its new version (and digest).
 
-    Several regexps are applied in turn, each to the result of the previous, so a file that pins more than one kind
-    of reference (a devcontainer.json's base `image` and its `features`) is rewritten in one pass over its content.
-    Each pass locates the lines afresh, so the text a marker is read from is the text the pass before it left; the
-    file they belong to is the one they already record, so no path has to be passed alongside them.
+    The regexps are applied in turn, and each pass reads its markers from the text the pass before it left.
     """
     if not lines:
         return []
@@ -85,13 +74,7 @@ class _Rewriter:
         return self.source.why_never_updated(reference.pinned) is None
 
     def update_line(self, match: re.Match[str], reference: Reference) -> str:
-        """Update the matched reference's line with the new version (and digest) if any, or return it unchanged.
-
-        Which version to update to — honouring the reference's `# update-time:` marker — is `latest_version`'s
-        decision, or None to leave the line unchanged. A pin that floats is replaced by the version and digest its
-        tag serves. Digest drift is checked for every reference the source resolved, unless it moves to a newer
-        version.
-        """
+        """Update the matched reference's line with the new version (and digest) if any, or return it unchanged."""
         latest = latest_version(reference, self.source, self.logger)
         if latest is None or self._report_why_the_source_left_it(reference, latest):
             return match.string
@@ -101,16 +84,16 @@ class _Rewriter:
             return self._pin_floating_reference(match, latest, reference)
         pin_unpinned = _lacks_a_hash_pin(reference) and bool(latest.sha)
         if latest.version == reference.current_version and not pin_unpinned:
-            return self._handle_drift(match, latest, reference)
+            return self._drifted_pin(match, latest, reference) if _drifted(reference, latest) else match.string
         return self._apply_update(match, latest, reference, pin_unpinned=pin_unpinned)
 
     def _report_why_the_source_left_it(self, reference: Reference, latest: DependencyVersion) -> bool:
         """Log why the source left the reference as it is, and return whether it did."""
         if (image_not_looked_up := self.source.why_image_not_looked_up(reference.pinned)) is not None:
-            self.logger.image_not_looked_up(reference, image_not_looked_up)
+            self.logger.reference_left_as_is(reference, image_not_looked_up)
             return True
         if latest.unserved is Unserved.REPOSITORY:
-            self.logger.repository_not_served(reference)
+            self.logger.reference_left_as_is(reference, Unserved.REPOSITORY)
             return True
         return False
 
@@ -123,19 +106,6 @@ class _Rewriter:
         self.logger.unpinned_floating_tag(reference, latest, reason)
         return match.string
 
-    def _drifted_pin(self, match: re.Match[str], latest: DependencyVersion, reference: Reference) -> str:
-        """Return the line for a reference whose digest has drifted, adopting what its tag serves now or not.
-
-        The digest alone is replaced, so the reference keeps the tag it names.
-        """
-        if self._adopts_drift(latest, reference):
-            return rewrite_string(match, {"sha": latest.sha})
-        return match.string
-
-    def _adopts_drift(self, latest: DependencyVersion, reference: Reference) -> bool:
-        """Report the reference's digest as drifted and return whether the digest the registry serves is adopted."""
-        return adopts_drift(DriftKind.DIGEST, reference, latest.sha, self.logger, publication=latest.publication)
-
     def _pin_floating_reference(self, match: re.Match[str], latest: DependencyVersion, reference: Reference) -> str:
         """Return the line for a reference whose pin floats, pinned to the version and digest its tag serves.
 
@@ -147,21 +117,24 @@ class _Rewriter:
         if directive := reference.marker.allow_directive(Scope.FLOATING_PIN):
             if drifted:
                 return self._drifted_pin(match, latest, reference)
-            self.logger.keeping_floating_tag(reference, latest, directive)
+            self.logger.keeping_floating_pin(reference, latest, directive)
             return match.string
         if drifted and not self._adopts_drift(latest, reference):
             return match.string
         return self._apply_update(match, latest, reference, pin_unpinned=_lacks_a_hash_pin(reference))
 
-    def _handle_drift(self, match: re.Match[str], latest: DependencyVersion, reference: Reference) -> str:
-        """Return the line for a reference that keeps its tag, adopting or warning about a re-pushed digest.
+    def _adopts_drift(self, latest: DependencyVersion, reference: Reference) -> bool:
+        """Report the reference's digest as drifted and return whether the digest the registry serves is adopted."""
+        return adopts_drift(DriftKind.DIGEST, reference, latest.sha, self.logger, publication=latest.publication)
 
-        A pinned reference whose digest changed at the registry (a re-pushed tag) has drifted, and one whose
-        digest still matches is left as it is.
+    def _drifted_pin(self, match: re.Match[str], latest: DependencyVersion, reference: Reference) -> str:
+        """Return the line for a reference whose digest has drifted, adopting what its tag serves now or not.
+
+        The digest alone is replaced, so the reference keeps the tag it names.
         """
-        if not _drifted(reference, latest):
-            return match.string
-        return self._drifted_pin(match, latest, reference)
+        if self._adopts_drift(latest, reference):
+            return rewrite_string(match, {"sha": latest.sha})
+        return match.string
 
     def _apply_update(
         self, match: re.Match[str], latest: DependencyVersion, reference: Reference, *, pin_unpinned: bool
@@ -175,10 +148,8 @@ class _Rewriter:
         """
         if latest.version != reference.current_version and latest.floating is None:
             self.logger.new_version(reference, latest)
-        elif reference.can_hold_a_hash_pin:
-            self.logger.pinned(reference, latest)
         else:
-            self.logger.pinned_version(reference, latest)
+            self.logger.pinned(reference, latest if reference.can_hold_a_hash_pin else replace(latest, sha=""))
         version = f"{'' if reference.current_version else ':'}{latest.version}"
         if pin_unpinned:
             # Append the digest to a previously unpinned reference, bumping the version too if one is available.
@@ -211,9 +182,8 @@ def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file 
 ) -> list[str]:
     """Return the lines with `update_line` applied to each reference the regexp matches, honouring its marker.
 
-    `dependency` names the reference for a regexp that captures none. `steers_the_update` tells whether a
-    reference's marker can hold its update back. `declared` is a reference that a file declares away from its
-    marker, carrying that marker. The pass then updates that reference alone, at its line and column.
+    `declared` is a reference that a file declares away from its marker, carrying that marker. The pass then updates
+    that reference alone, at its line and column.
     """
     marker = None if declared is None else declared.marker
     # A start position is something only a compiled pattern takes, and `re.compile` hands back one it is given.
@@ -256,10 +226,7 @@ def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cann
 ) -> str:
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
-    It reads a marker written as a comment, on the reference's own line or above it, and takes one the file names
-    elsewhere from the updater that read it, in `marker`. `report_marker` reports that marker, and
-    `steers_the_update` says whether the marker steers the update. `update_line` receives the reference carrying the
-    marker as read, so `latest_version` acts on its bound, its `allow` directives, and what it gets wrong.
+    The marker is a comment on the reference's own line or above it, unless the file names it elsewhere in `marker`.
     """
     marker = parse_marker(line) if marker is None else marker
     reference = matched_reference(match, line.location, dependency, marker=marker)

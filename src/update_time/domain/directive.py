@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from .marker import Marker
 
 
+# What a reason for a bound adds to the reason for an `ignore[update]` on a file left as it is.
+_A_BOUND_DECIDES_NOTHING: Final[str] = ", so a bound decides nothing"
+
+
 class Reason(StrEnum):
     """Why a directive is redundant, valued with the words the warning reports it in.
 
@@ -31,43 +35,26 @@ class Reason(StrEnum):
     BUILD_REQUIREMENT_NOT_LOCKED = "uv does not lock a build requirement, so a bound decides nothing"
     BUILD_REQUIREMENT_KEPT = "Update-time leaves a build requirement as it is"
     URL_RATHER_THAN_VERSION = "this requirement names a URL rather than a version, so a bound decides nothing"
-    ENVIRONMENT_MARKER_PIN_KEPT = (
-        "Update-time leaves a pin with an environment marker as it is, so a bound decides nothing"
-    )
     ENVIRONMENT_MARKER_PIN_LEFT = "Update-time leaves a pin with an environment marker as it is"
-    UNMANAGED_FILE_KEPT = (
-        "Update-time leaves the dependencies of a file uv does not manage as they are, so a bound decides nothing"
-    )
+    ENVIRONMENT_MARKER_PIN_KEPT = f"{ENVIRONMENT_MARKER_PIN_LEFT}{_A_BOUND_DECIDES_NOTHING}"
     UNMANAGED_FILE_LEFT = "Update-time leaves the dependencies of a file uv does not manage as they are"
-    NO_LOCK_FILE_KEPT = (
-        "Update-time leaves the dependencies of a project without a lock file as they are, so a bound decides nothing"
-    )
+    UNMANAGED_FILE_KEPT = f"{UNMANAGED_FILE_LEFT}{_A_BOUND_DECIDES_NOTHING}"
     NO_LOCK_FILE_LEFT = "Update-time leaves the dependencies of a project without a lock file as they are"
-    BINARY_LOCK_KEPT = (
-        "Update-time leaves the dependencies of a project with a binary lock as they are, so a bound decides nothing"
-    )
+    NO_LOCK_FILE_KEPT = f"{NO_LOCK_FILE_LEFT}{_A_BOUND_DECIDES_NOTHING}"
     BINARY_LOCK_LEFT = "Update-time leaves the dependencies of a project with a binary lock as they are"
-    YARN_WITHOUT_A_COOLDOWN_KEPT = (
-        "Update-time leaves the dependencies of a project whose yarn cannot apply a cooldown as they are, so a bound "
-        "decides nothing"
-    )
+    BINARY_LOCK_KEPT = f"{BINARY_LOCK_LEFT}{_A_BOUND_DECIDES_NOTHING}"
     YARN_WITHOUT_A_COOLDOWN_LEFT = (
         "Update-time leaves the dependencies of a project whose yarn cannot apply a cooldown as they are"
     )
-    MORE_THAN_ONE_MANAGER_KEPT = (
-        "Update-time leaves the dependencies of a project whose files name more than one package manager as they are, "
-        "so a bound decides nothing"
-    )
+    YARN_WITHOUT_A_COOLDOWN_KEPT = f"{YARN_WITHOUT_A_COOLDOWN_LEFT}{_A_BOUND_DECIDES_NOTHING}"
     MORE_THAN_ONE_MANAGER_LEFT = (
         "Update-time leaves the dependencies of a project whose files name more than one package manager as they are"
     )
-    WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT = (
-        "Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are, so a "
-        "bound decides nothing"
-    )
+    MORE_THAN_ONE_MANAGER_KEPT = f"{MORE_THAN_ONE_MANAGER_LEFT}{_A_BOUND_DECIDES_NOTHING}"
     WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT = (
         "Update-time leaves the dependencies of a workspace whose root lies outside the scan root as they are"
     )
+    WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT = f"{WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT}{_A_BOUND_DECIDES_NOTHING}"
     BOUND_ON_A_HELD_BACK_UPDATE = "this reference's update is held back, so a bound decides nothing"
     FOLLOWS_A_BRANCH = (
         "this reference follows a branch or a floating tag rather than a version, so a bound decides nothing"
@@ -209,10 +196,7 @@ WARNING_DIRECTIVES: Final[tuple[_Directive, ...]] = tuple(
 
 # A held-back update makes each opt-in redundant, for the reason given beside the scope it opts into.
 _HELD_BACK_OPT_INS: Final[MappingProxyType[Scope, Reason]] = MappingProxyType(
-    {
-        Scope.FLOATING_PIN: Reason.NEVER_PINNED,
-        Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED,
-    }
+    {Scope.FLOATING_PIN: Reason.NEVER_PINNED, Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED}
 )
 
 

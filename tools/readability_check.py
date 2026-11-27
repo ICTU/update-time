@@ -102,10 +102,7 @@ _DROP_MARKUP_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[([^\]]*)\]\([^)]*\
 
 
 def _drop_markup(text: str, code: str = "") -> str:
-    """Drop Markdown images, reduce links to their text, and replace each run of inline code with `code`.
-
-    Comments and docstrings are written in the same style as Markdown, so both prose sources need this.
-    """
+    """Drop Markdown images, reduce links to their text, and replace each run of inline code with `code`."""
     text = _TEXT_PATTERN.sub("", text)  # Images.
     text = _DROP_MARKUP_PATTERN.sub(r"\1", text)  # Links, reduced to their text.
     return _INLINE_CODE.sub(code, text)
@@ -509,10 +506,7 @@ def main() -> int:
 
 
 def _install_data() -> int:
-    """Fetch the nltk datasets this check reads, by splitting and tagging a sentence of its own.
-
-    The unit tests read prose through the same datasets, and refuse the network, so theirs have to arrive first.
-    """
+    """Fetch the nltk datasets this check reads, by splitting and tagging a sentence of its own."""
     _sentence_tokenizer()
     _tagged("A sentence.")
     return 0
