@@ -12,6 +12,7 @@ import importlib
 import importlib.machinery
 import importlib.util
 import inspect
+import itertools
 import os
 import re
 import sys
@@ -482,18 +483,19 @@ def _occurrences(source: str, qualified_name: str, snippet: str) -> list[int]:
     ]
 
 
-def _docstrings(source: str) -> list[tuple[int, int]]:
-    """Return the offsets where each docstring of the source's module, classes, and functions starts and ends."""
+@functools.cache
+def _docstrings(source: str) -> tuple[tuple[int, int], ...]:
+    """Return where each docstring of the source's module, classes, and functions starts and ends, found once."""
     try:
         tree = _parsed(source)
     except SyntaxError:
-        return []  # The file is not Python, or does not parse, so every occurrence counts.
+        return ()  # The file is not Python, or does not parse, so every occurrence counts.
     definitions = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-    return [
+    return tuple(
         _node_span(source, node.body[0])
         for node in ast.walk(tree)
         if isinstance(node, definitions) and ast.get_docstring(node, clean=False) is not None
-    ]
+    )
 
 
 def _span(source: str, qualified_name: str) -> tuple[int, int]:
@@ -580,7 +582,13 @@ def _names_assigned(statement: ast.stmt) -> list[str] | None:
 
 def _offset(source: str, line: int, column: int) -> int:
     """Return the offset that the one-based line and the column point at in the source."""
-    return sum(len(text) for text in source.splitlines(keepends=True)[: line - 1]) + column
+    return _line_starts(source)[line - 1] + column
+
+
+@functools.cache
+def _line_starts(source: str) -> tuple[int, ...]:
+    """Return the offset each line of the source starts at, counted once however many offsets are asked for."""
+    return (0, *itertools.accumulate(len(text) for text in source.splitlines(keepends=True)))
 
 
 class StaleError(Exception):

@@ -506,10 +506,18 @@ update-whitelists: install-py-dependencies
 
 # === Install dependencies ===
 
-# Fetch the nltk datasets the readability check reads. The unit tests read prose through them and refuse the
-# network, so a fresh checkout has to have them before the tests run.
+# The files the readability check reads from the nltk datasets. Git ignores them, so each is named by its path.
+nltk_data_files := ".nltk/taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.classes.json .nltk/taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.tagdict.json .nltk/taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.weights.json .nltk/tokenizers/punkt_tab/english/abbrev_types.txt .nltk/tokenizers/punkt_tab/english/collocations.tab .nltk/tokenizers/punkt_tab/english/ortho_context.tab .nltk/tokenizers/punkt_tab/english/sent_starters.txt"
+
+# Fetch the nltk datasets the readability check reads, where their inputs changed since they were last fetched. The
+# unit tests read prose through them and refuse the network, so a fresh checkout has to have them before the tests run.
 [private]
 install-nltk-data: install-py-dependencies
+    {{ if_changed("install-nltk-data", "tools/readability_check.py uv.lock justfile " + nltk_data_files, "just --no-deps nltk-data") }}
+
+# Fetch the nltk datasets.
+[private]
+nltk-data:
     {{ start_capture() }} {{ python_m }} tools.readability_check --install-data {{ end_capture("install-nltk-data") }}
 
 # Install Python dependencies from the lock file, where their inputs changed since they last synced. The malware check
