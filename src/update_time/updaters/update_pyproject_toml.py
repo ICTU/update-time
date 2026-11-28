@@ -49,10 +49,6 @@ def _update_pyproject_tomls() -> None:
     warn_about_pins(pyproject_tomls, _LOG, policies)
 
 
-if __name__ == "__main__":
-    _update_pyproject_tomls()
-
-
 def _policy(why: Decision) -> ManagerPolicy[Declaration] | None:
     """Return the policy for the markers of a pyproject.toml, by why uv does not run for it, or None where uv runs."""
     return {
@@ -62,3 +58,7 @@ def _policy(why: Decision) -> ManagerPolicy[Declaration] | None:
         Decision.NOTHING_TO_RESOLVE: MARKER_POLICY,
         Decision.ROOT_OUTSIDE_THE_SCAN: MARKER_POLICY.policy_for_a_workspace_root_outside_the_scan,
     }[why]
+
+
+if __name__ == "__main__":
+    _update_pyproject_tomls()
