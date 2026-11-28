@@ -1,11 +1,4 @@
-"""Shared HTTP helpers: the one place the tool reaches the network.
-
-Every source talks to a flaky external registry, so a single slow or unreachable host must not abort the whole run
-with a traceback. `fetch` turns transport-level failures (timeouts, connection errors) into a logged `None`, so the
-caller can leave the reference unchanged and the run continues. It lives in `io` (next to the file and process I/O)
-so that network access is centralized: sources and updaters go through it rather than calling `requests` directly,
-which the architecture tests enforce.
-"""
+"""Shared HTTP helpers: the one place the tool reaches the network, as the architecture tests require."""
 
 import threading
 from contextlib import suppress
@@ -82,11 +75,7 @@ def fetch(
     on_response: Callable[[Response], None] | None = None,
     **request: Unpack[_Request],
 ) -> _Fetched:
-    """Make an HTTP request and return the response, or None (logged) on a network error or non-OK status.
-
-    `method` selects the session method (`get`, `head`, `post`); `request` (headers, params, auth, json) is
-    forwarded to it verbatim. Pass `require_ok=False` to receive the response regardless of status.
-    """
+    """Make an HTTP request and return the response, or None (logged) on a network error or non-OK status."""
     if not hasattr(_SESSIONS, "session"):
         _SESSIONS.session = requests.Session()
     try:

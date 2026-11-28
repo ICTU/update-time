@@ -1,7 +1,4 @@
-"""Node engine updater script updates the Node engine in package.json files to the latest Node release.
-
-Note: this script does not update package-lock.json.
-"""
+"""Node engine updater script updates the Node engine in package.json files to the latest Node release."""
 
 from functools import partial
 from typing import TYPE_CHECKING, Final
@@ -30,13 +27,7 @@ def _update_node_engine(package_json: PackageJson) -> None:
     if engine.location.line_number is None:
         _LOG.no_entry(NODE_ENGINE, package_json.path)
         return
-    update_file(
-        package_json.path,
-        NODE_ENGINE_REFERENCE,
-        source=SOURCE,
-        logger=_LOG,
-        declared=engine,
-    )
+    update_file(package_json.path, NODE_ENGINE_REFERENCE, source=SOURCE, logger=_LOG, declared=engine)
 
 
 def _update_node_engines() -> None:

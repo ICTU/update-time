@@ -53,12 +53,7 @@ def _asks_for_settings(command: Command) -> bool:
 
 
 class UvLockTestCase(ExecutablesOnPathTestCase):
-    """Base for the tests that run an updater delegating to uv, with uv lock faked.
-
-    A subclass names the file the scan discovers, the lock uv writes for it, and the updater. `locks` holds each faked
-    uv lock of the last update: its command, and the files as they were when it ran. uv's settings hold the
-    `exclude-newer` that `configured_exclude_newer` spells, none unless a test sets one.
-    """
+    """Base for the tests that run an updater delegating to uv, with uv lock faked."""
 
     manifest: ClassVar[Path]
     lock_file: ClassVar[Path]
@@ -78,10 +73,9 @@ class UvLockTestCase(ExecutablesOnPathTestCase):
     ) -> FakeFiles:
         """Update the files that the scan discovers, the manifest where the test names none, and return the files.
 
-        The uv lock of the files as written writes the lock as written. Where the test gives none, it leaves the lock
-        as it is, or absent where there was none. Each uv lock after it writes the lock after, or
-        fails for `LOCK_FAILS`. A tuple gives the lock after of each of those in turn. uv writes past the write errors
-        the files hold, since it is a process of its own. PyPI does not name a changelog for a version.
+        Each uv lock from the first with `--upgrade` on writes the lock after, or fails for `LOCK_FAILS`, and a tuple
+        gives the lock after of each of them in turn. uv writes past the write errors the files hold, since it is a
+        process of its own.
         """
         fake_files = files if isinstance(files, FakeFiles) else FakeFiles(files)
         locks_after = iter(lock_after) if isinstance(lock_after, tuple) else repeat(lock_after)

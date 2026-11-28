@@ -6,10 +6,7 @@ from typing import Self
 
 
 class Command(tuple[str, ...]):
-    """An external command, as the sequence of words a shell would run.
-
-    A tuple, so the machinery that runs it can take it as it is, and rendering it gives the command line it runs.
-    """
+    """An external command, as the sequence of words a shell would run."""
 
     __slots__ = ()
 

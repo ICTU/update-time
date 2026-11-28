@@ -39,9 +39,8 @@ def without_code_blocks(markdown: str) -> str:
 def lines_without_code_blocks(markdown: str) -> Iterator[tuple[int, str]]:
     """Yield each line with its number, empty where the line is a code fence or sits inside a fenced code block.
 
-    What a code block holds is sample content rather than markup, so a line in one that starts with a `#` is a
-    comment in the sample, not a heading of the document. The lines come back empty rather than left out, so that
-    a line number still points at the line it came from, and so that a block between two tables still parts them.
+    The lines come back empty rather than left out, so that a line number still points at the line it came from,
+    and so that a block between two tables still parts them.
     """
     in_code_block = False
     for line_number, line in enumerate(markdown.splitlines(), start=1):

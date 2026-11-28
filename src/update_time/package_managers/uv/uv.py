@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, ClassVar, Final, override
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import normalized_python_name
 from update_time.io.filesystem import is_scanned
-from update_time.io.log import get_logger
-from update_time.io.process import is_installed, run
+from update_time.io.log import NotRunCause, get_logger
+from update_time.io.process import is_installed, result_or_failure
 from update_time.lock_files.uv_lock import UvLock
 from update_time.manifests.pyproject_config import PyprojectConfig, read
 from update_time.manifests.pyproject_toml import PyprojectToml
@@ -29,13 +29,10 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName
     from update_time.io.log import Logger
     from update_time.manifests.pyproject_config import UvWorkspace
-    from update_time.manifests.python_dependency_toml import (
-        Declaration,
-        PythonDependencyToml,
-    )
+    from update_time.manifests.python_dependency_toml import Declaration, PythonDependencyToml
 
 _LOG: Final[Logger] = get_logger("pyproject.toml")
-# The signals that a Python package manager manages a pyproject.toml: its lock file, by name, and its table under
+# What names the Python package manager of a pyproject.toml: its lock file, by name, and its table under
 # `[tool]`, which carries the manager's name. A build backend reads its settings from the tool's table as well, so the
 # lock file decides before the table, and uv's table before the others.
 _LOCK_FILES: Final[MappingProxyType[str, str]] = MappingProxyType(
@@ -56,41 +53,32 @@ _SETTINGS_EXCLUDE_NEWER: Final[re.Pattern[str]] = re.compile(
 def decision(pyproject_toml: Path, config: PyprojectConfig) -> Decision:
     """Return whether uv runs for the project, and log why not where it does not.
 
-    The lock files beside the project's workspace root name its managers. Where none sits there, the tables of the
-    root's pyproject.toml name them, uv's first. A `[tool.uv]` table that sets `managed = false` leaves uv's lock file
-    and table out. A project that another manager manages, or more than one, gets its warning whether or not it
-    declares a dependency. The project's own `config`, already parsed, serves where the project is its own workspace
-    root.
+    A project that another manager manages, or more than one, gets its warning whether or not it declares a dependency.
     """
     root = _workspace_root(pyproject_toml)
     root_config = config if root == pyproject_toml else _config(root)
-    signals = _signals(root, root_config)
-    managers = signals.managers()
+    names = _manager_names(root, root_config)
+    managers = names.managers()
     if managers and managers != ("uv",):
-        _warn_about_the_managers(pyproject_toml, root, signals)
+        _warn_about_the_managers(pyproject_toml, root, names)
         return Decision.SEVERAL_MANAGERS if len(managers) > 1 else Decision.UNMANAGED
     if not config.declares_a_dependency:
-        _LOG.no_dependencies(pyproject_toml, "uv", "resolve")
+        _LOG.manager_not_run(pyproject_toml, "uv", NotRunCause.NO_DEPENDENCIES_TO_RESOLVE)
         return Decision.NOTHING_TO_RESOLVE
     if not is_scanned(root):
-        _LOG.workspace_root_outside_the_scan(pyproject_toml, "uv", root)
+        _LOG.manager_not_run(pyproject_toml, "uv", NotRunCause.WORKSPACE_ROOT_OUTSIDE_THE_SCAN, root)
         return Decision.ROOT_OUTSIDE_THE_SCAN
     if managers:
         return Decision.RUN
     if root_config.uv.managed:
-        _LOG.not_a_uv_project(pyproject_toml, UvLock.beside(root).path)
+        _LOG.manager_not_run(pyproject_toml, "uv", NotRunCause.NOT_A_UV_PROJECT, UvLock.beside(root).path)
     else:
-        _LOG.project_marked_unmanaged(pyproject_toml, root)
+        _LOG.manager_not_run(pyproject_toml, "uv", NotRunCause.MARKED_UNMANAGED, root)
     return Decision.UNMANAGED
 
 
 def _workspace_root(pyproject_toml: Path) -> Path:
-    """Return the pyproject.toml of the uv workspace root governing the project, or the project itself.
-
-    uv reads `exclude-newer` from the workspace root, not from a member manifest's own `[tool.uv]`, so walk up from
-    the project's directory: the root is the nearest ancestor whose pyproject.toml declares a `[tool.uv.workspace]`
-    that includes this project. A project that is part of no workspace (the common case) is its own root.
-    """
+    """Return the pyproject.toml of the uv workspace root governing the project, or the project itself."""
     project_dir = pyproject_toml.parent
     for ancestor in (project_dir, *project_dir.parents):
         candidate = ancestor / "pyproject.toml"
@@ -101,11 +89,7 @@ def _workspace_root(pyproject_toml: Path) -> Path:
 
 
 def _workspace_table(pyproject_toml: Path) -> UvWorkspace | None:
-    """Return the `[tool.uv.workspace]` table of the pyproject.toml, or None if it has none or can't be read.
-
-    A missing (probing an ancestor) or malformed pyproject.toml reads back as None, so resolution keeps walking up
-    rather than aborting.
-    """
+    """Return the `[tool.uv.workspace]` table of the pyproject.toml, or None if it has none or can't be read."""
     return _config(pyproject_toml).uv.workspace
 
 
@@ -129,13 +113,13 @@ def _config(pyproject_toml: Path) -> PyprojectConfig:
     return read(pyproject_toml) or PyprojectConfig()
 
 
-def _signals(pyproject_toml: Path, config: PyprojectConfig) -> _Signals:
-    """Return the project's signals, without uv's where the config sets `managed = false`."""
+def _manager_names(pyproject_toml: Path, config: PyprojectConfig) -> _ManagerNames:
+    """Return what names the project's managers, without uv's lock and table where the config sets `managed = false`."""
     managers = [manager for manager in _MANAGERS if manager != "uv" or config.uv.managed]
     lock_files = tuple(
         lock_file for lock_file in _lock_files(pyproject_toml.parent) if _LOCK_FILES[lock_file.name] in managers
     )
-    return _Signals(lock_files=lock_files, tables=tuple(table for table in managers if table in config.tools))
+    return _ManagerNames(lock_files=lock_files, tables=tuple(table for table in managers if table in config.tools))
 
 
 def _lock_files(directory: Path) -> tuple[Path, ...]:
@@ -144,7 +128,7 @@ def _lock_files(directory: Path) -> tuple[Path, ...]:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _Signals:
+class _ManagerNames:
     """The lock files beside a project, and the tables of its pyproject.toml, that name a Python package manager."""
 
     lock_files: tuple[Path, ...]
@@ -160,15 +144,16 @@ class _Signals:
         return ("uv",) if "uv" in self.tables else self.tables
 
 
-def _warn_about_the_managers(pyproject_toml: Path, root: Path, signals: _Signals) -> None:
-    """Warn that the signals name a manager other than uv, or more than one, and point a member at its root's warning.
+def _warn_about_the_managers(pyproject_toml: Path, root: Path, names: _ManagerNames) -> None:
+    """Warn where the lock files and tables name a manager other than uv, or more than one.
 
-    A member whose workspace root lies outside the scan gets the warning itself, since the root gets none.
+    A member is pointed at its root's warning. A member whose workspace root lies outside the scan gets the warning
+    itself, since the root gets none.
     """
     if pyproject_toml != root and is_scanned(root):
-        _LOG.left_with_the_workspace_root(pyproject_toml, "uv", root)
-    elif len(managers := signals.managers()) > 1:
-        _LOG.signals_of_more_than_one_manager(pyproject_toml, signals.lock_files, signals.tables)
+        _LOG.manager_not_run(pyproject_toml, "uv", NotRunCause.LEFT_WITH_THE_WORKSPACE_ROOT, root)
+    elif len(managers := names.managers()) > 1:
+        _LOG.signals_of_more_than_one_manager(pyproject_toml, names.lock_files, names.tables)
     else:
         _LOG.unsupported_package_manager(pyproject_toml, managers[0], "uv")
 
@@ -189,16 +174,10 @@ def configure_cooldown(pyproject_toml: Path) -> None:
     uv's `exclude-newer` is a publish-date cutoff that works as a cooldown (it accepts a relative duration such as
     `7 days`). Passing it only on the command line makes uv bake it into the lockfile and then treat a later `uv
     sync --locked` (without the flag) as stale, so Update-time writes it to config instead: uv reads the same cutoff
-    on every command and the lockfile stays reproducible. uv reads `exclude-newer` from the workspace root, not from a
-    member. The `UV_EXCLUDE_NEWER` environment variable is the user's own global override, so when it is set
-    Update-time adds nothing.
+    on every command and the lockfile stays reproducible. The `UV_EXCLUDE_NEWER` environment variable is the user's own
+    global override, so when it is set Update-time adds nothing.
 
-    A file whose `tool` or `tool.uv` is not a table gets a warning instead. Without uv on the path, nothing is written,
-    and the uv run that follows reports uv missing.
-
-    A value carrying the managed-by comment is kept in sync with the cooldown; a value without the comment is
-    the user's own and is left untouched, as is an already-current value carrying it (which is not rewritten). The
-    setting that holds the user's own cooldown is logged.
+    A file whose `tool` or `tool.uv` is not a table gets a warning instead.
     """
     if os.environ.get("UV_EXCLUDE_NEWER"):
         _LOG.project_cooldown(pyproject_toml, "UV_EXCLUDE_NEWER", COOLDOWN.get())
@@ -222,7 +201,7 @@ def configure_cooldown(pyproject_toml: Path) -> None:
             return  # Already Update-time's and already current.
     managed_by_comment = "managed by Update-time — remove this comment to set exclude-newer yourself"
     if file.set_tool_key("uv", "exclude-newer", cooldown, comment=managed_by_comment):
-        _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
+        _LOG.configured_cooldown(pyproject_toml, pyproject_toml, cooldown, EXCLUDE_NEWER_SETTING)
     else:
         _LOG.uv_cooldown_not_set(pyproject_toml)
 
@@ -232,24 +211,24 @@ def _duration(days: int) -> str:
     return f"{days} days"
 
 
-def settings_hold_exclude_newer(command: Command, file: Path, log: Logger) -> bool:
-    """Return whether uv's settings for the command, run in the file's directory, hold an `exclude-newer`.
+def settings_hold_exclude_newer(command: Command, file: Path, log: Logger, directory: Path | None = None) -> bool:
+    """Return whether uv's settings for the file's command, run in the directory or the file's, hold an `exclude-newer`.
 
     The settings include an `exclude-newer` in the file itself. Without uv on the path, uv is not asked, and its
-    settings hold none.
+    settings hold none. Where Update-time cannot read from uv's settings whether they hold one, it warns and treats
+    them as holding none.
     """
-    return is_installed("uv") and _settings_hold_exclude_newer(command, file.parent, file, log)
-
-
-def _settings_hold_exclude_newer(command: Command, directory: Path, file: Path, log: Logger) -> bool:
-    """Return whether uv's settings for the file's command, run in the directory, hold an `exclude-newer`.
-
-    Where Update-time cannot read from uv's settings whether they hold one, it warns and treats them as holding none.
-    """
-    if not (match := _SETTINGS_EXCLUDE_NEWER.search(run(Command(*command, "--show-settings"), cwd=directory).stdout)):
-        log.uv_settings_unreadable(file)
+    if not is_installed("uv"):
         return False
-    return match["value"] == "Some"
+    settings = result_or_failure(Command(*command, "--show-settings"), directory or file.parent)
+    if isinstance(settings, str):
+        reason = settings
+    elif match := _SETTINGS_EXCLUDE_NEWER.search(settings.stdout):
+        return match["value"] == "Some"
+    else:
+        reason = "uv lists its settings in a form Update-time does not read"
+    log.settings_unreadable(file, "uv", "exclude-newer", reason)
+    return False
 
 
 class UvPipCompile(RequirementsCompiler):
@@ -263,7 +242,7 @@ class UvPipCompile(RequirementsCompiler):
     @override
     def settings_hold_cutoff(self, command: Command) -> bool:
         """Return whether uv's settings for the command hold an `exclude-newer`."""
-        return _settings_hold_exclude_newer(command, self.compiled.compile_directory, self.compiled.path, self.log)
+        return settings_hold_exclude_newer(command, self.compiled.path, self.log, self.compiled.compile_directory)
 
     @override
     def duration(self, days: int) -> str:

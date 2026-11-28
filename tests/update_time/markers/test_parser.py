@@ -258,35 +258,12 @@ def _fields_set(marker: Marker) -> set[str]:
 class ParseMarkerRawTest(unittest.TestCase):
     """Unit tests that `parse_marker` captures the directive text verbatim."""
 
-    def test_verbatim_directives(self):
-        """Test that the parsed marker keeps the directives exactly as written."""
-        marker = parse_marker(_line("image: python:3.12  # update-time: ignore[update] set[stale-after=0]"))
-        self.assertEqual(marker.raw, "ignore[update] set[stale-after=0]")
-
-    def test_comma_combined_items_kept_together(self):
-        """Test that comma-combined bracket items are kept as one directive, not split apart."""
-        marker = parse_marker(_line("image: python:3.14  # update-time: allow[update<3.15, hash-drift]"))
-        self.assertEqual(marker.raw, "allow[update<3.15, hash-drift]")
-
-    def test_unrecognised_scope_kept_as_written(self):
-        """Test that a typo'd scope is kept as written, so the user is shown the item they actually typed."""
-        self.assertEqual(parse_marker(_line("image: python:3.12  # update-time: ignore[updaet]")).raw, "ignore[updaet]")
-
-    def test_trailing_reason_left_out(self):
-        """Test that free text after the last directive (a reason) is not part of the captured text."""
-        marker = parse_marker(_line("image: python:3.12  # update-time: set[stale-after=0] (until the migration)"))
-        self.assertEqual(marker.raw, "set[stale-after=0]")
-
     def test_directives_across_two_lines_are_ordered_inline_first(self):
         """Test that a marker split over a line and the comment above it captures both, inline directives first."""
         marker = parse_marker(
             _line("image: python:3.14  # update-time: allow[update<3.15]", "# update-time: set[stale-after=0]")
         )
         self.assertEqual(marker.raw, "allow[update<3.15] set[stale-after=0]")
-
-    def test_no_marker_has_empty_raw(self):
-        """Test that a line without a marker parses to an empty verbatim text, so nothing is echoed for it."""
-        self.assertEqual(parse_marker(_line("image: python:3.12")).raw, "")
 
 
 class ParseMarkerCommentTest(unittest.TestCase):
@@ -296,6 +273,19 @@ class ParseMarkerCommentTest(unittest.TestCase):
         """Test that a marker in an XML comment is read."""
         marker = parse_marker(_line("<version>6.1.0</version>  <!-- update-time: set[stale-after=0] -->"))
         self.assertEqual(marker, Marker(stale=Threshold(value=0)))
+
+    @kills.replace(
+        parser._parse_marker_contents,
+        "marker = marker.merge(parse_directives(text[prefix.end() :]))",
+        "return parse_directives(text[prefix.end() :])",
+        "a comment repeating the prefix drops the directives after the second prefix",
+    )
+    def test_a_repeated_prefix_combines_the_directives_after_it(self):
+        """Test that a comment repeating the `# update-time:` prefix combines the directives after each prefix."""
+        marker = parse_marker(
+            _line("image: python:3.12  # update-time: ignore[update>=3.13] # update-time: set[stale-after=0]")
+        )
+        self.assertEqual(marker, Marker(stale=Threshold(value=0), version_bound=bound(Verb.IGNORE, "update>=3.13")))
 
 
 class ParseDirectivesTest(unittest.TestCase):
@@ -308,11 +298,7 @@ class ParseDirectivesTest(unittest.TestCase):
         ("set", Marker(), ""),
         ("ignore[yanked] allow it for now", Marker(ignored_scopes=Scope.YANKED), "ignore[yanked]"),
         ("ignore[yanked] set by the security team", Marker(ignored_scopes=Scope.YANKED), "ignore[yanked]"),
-        (
-            "ignore ignore[yanked]",
-            Marker(ignored_scopes=Scope.YANKED, invalid_item="ignore"),
-            "ignore ignore[yanked]",
-        ),
+        ("ignore ignore[yanked]", Marker(ignored_scopes=Scope.YANKED, invalid_item="ignore"), "ignore ignore[yanked]"),
         ("ignore (pinned on purpose)", Marker(invalid_item="ignore"), "ignore"),
         ("set[stale-after=0]", Marker(stale=Threshold(value=0)), "set[stale-after=0]"),
         (
@@ -330,6 +316,17 @@ class ParseDirectivesTest(unittest.TestCase):
             Marker(stale=Threshold(value=90), cooldown=Threshold(value=30)),
             "set[stale-after=90, cooldown=30]",
         ),
+        (
+            "ignore[archived, update>=3.13]",
+            Marker(ignored_scopes=Scope.ARCHIVED, version_bound=bound(Verb.IGNORE, "update>=3.13")),
+            "ignore[archived, update>=3.13]",
+        ),
+        (
+            "ignore[update>=3.13,<3.15, archived]",
+            Marker(ignored_scopes=Scope.ARCHIVED, version_bound=bound(Verb.IGNORE, "update>=3.13,<3.15")),
+            "ignore[update>=3.13,<3.15, archived]",
+        ),
+        ("set[stale-after=0] alloww[hash-drift]", Marker(stale=Threshold(value=0)), "set[stale-after=0]"),
         ("ignore[updaet]", Marker(invalid_item="updaet"), "ignore[updaet]"),
         ("set[stale-after=0] (until the migration)", Marker(stale=Threshold(value=0)), "set[stale-after=0]"),
         ("", Marker(), ""),

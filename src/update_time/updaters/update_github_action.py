@@ -13,7 +13,7 @@ from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.github_workflow import ACTION_REFERENCE, spell_action
 from update_time.references.github import PinUpdater, names_a_version
-from update_time.references.match import matched_reference, reference_matches
+from update_time.references.match import matched_references
 from update_time.references.rewrite import updated_lines
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 
@@ -32,12 +32,11 @@ def _versioned_actions(lines: list[Line]) -> list[Reference]:
     So `uses: tj-actions/changed-files@<sha> # v45.0.0` is read at `45.0.0`, and so is the unpinned
     `uses: tj-actions/changed-files@v45.0.0` whose marker holds the update back.
     """
-    actions = []
-    for line, match, marker in reference_matches(lines, ACTION_REFERENCE):
-        reference = matched_reference(match, line.location, marker=marker)
-        if names_a_version(reference):
-            actions.append(replace(reference, current_version=str(Version(reference.current_version))))
-    return actions
+    return [
+        replace(reference, current_version=str(Version(reference.current_version)))
+        for reference in matched_references(lines, ACTION_REFERENCE)
+        if names_a_version(reference)
+    ]
 
 
 def _update_github_actions() -> None:

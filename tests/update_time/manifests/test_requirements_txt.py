@@ -33,10 +33,10 @@ class RequirementPatternTest(unittest.TestCase):
         "read twice",
         case="humanize==1.0+local",
     )
-    @kills.replace(
+    @kills.append(
         requirements_txt,
         r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}\s*==',
-        r'_EXACT_PIN: Final[str] = rf"^\s*{_NAME}{_EXTRAS}\s*===?',
+        "=?",
         "the lookahead's copy of the pin reads `===` as an exact pin, so an arbitrary equality matches neither pattern",
         case="humanize===nightly",
     )
@@ -68,10 +68,9 @@ class RequirementPatternTest(unittest.TestCase):
         "Update-time does not read a requirement with a lower bound, since it matches neither pattern",
         case="humanize>=4",
     )
-    @kills.replace(
+    @kills.delete(
         requirements_txt,
-        "|[;#]|$)",
-        "|[;#])",
+        "|$",
         "Update-time does not read a requirement without a version, since it matches neither pattern",
         case="humanize",
     )

@@ -11,6 +11,7 @@ from unittest.mock import Mock, call, patch
 import libcst
 from tools.rename import (
     _PROSE_ROOTS,
+    _AttributeRenamer,
     _InPlaceRenameCommand,
     _is_module,
     _prose,
@@ -218,14 +219,7 @@ class MainTest(unittest.TestCase):
         module_file: str = "m.py",
         prose: str = "",
     ) -> int:
-        """Rename over files holding the given sources, and return the exit code.
-
-        `module` is what the module `m` holds, given as the file `module_file` when the old name names that module.
-        The sources sit in the package holding that module.
-
-        `prose` is what the one file searched for mentions of the name holds, empty for a repository mentioning it
-        nowhere.
-        """
+        """Rename over files holding the given sources, and return the exit code."""
         self.reported, self.noted = io.StringIO(), io.StringIO()
         dotted = module_file.removesuffix(".py").removesuffix("/__init__").replace("/", ".")
         package = dotted.rpartition(".")[0]
@@ -397,69 +391,86 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "import pkg\n\npkg.m.old()\n"), 1)
         self.assertIn("file1.py:3", self.reported.getvalue())
 
-    def test_a_method_named_by_its_class_is_renamed_at_its_definition_and_calls(self):
-        """Test that a name given as `module.Class.method` renames the method's definition and every call to it."""
-        defines = "class Helper:\n    def old(self):\n        return self.old()\n"
-        calls = "def use(helper):\n    return helper.{}()\n"
-        self.assertEqual(self.rename(defines, calls.format("old"), old="file0.Helper.old", new="new"), 0)
-        renamed = "class Helper:\n    def new(self):\n        return self.new()\n"
-        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(renamed)])
-        self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [call(calls.format("new"))])
-
-    def test_a_property_rename_renames_the_decorator_of_its_setter(self):
-        """Test that a property named by its class is renamed at its getter and at its setter's decorator."""
-        defines = (
+    def test_a_member_rename_renames_the_member_wherever_a_file_names_it(self):
+        """Test that a member rename renames the member's definitions and uses, and leaves a function of its name."""
+        helper = "class Helper:\n    def {0}(self):\n        return 1\n"
+        point = "class Point:\n    {0}: int\n"
+        shape = (
             "class Shape:\n    @property\n    def {0}(self):\n        return 1\n\n"
             "    @{0}.setter\n    def {0}(self, value):\n        pass\n"
         )
-        self.assertEqual(self.rename(defines.format("old"), old="file0.Shape.old", new="new"), 0)
-        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(defines.format("new"))])
-
-    def test_a_method_rename_renames_another_class_s_method_of_that_name_in_the_defining_file(self):
-        """Test that a method rename renames the method of that name another class in the file defines, as elsewhere."""
-        defines = (
+        two_classes = (
             "class Helper:\n    def {0}(self):\n        return 1\n\n\n"
             "class Other:\n    def {0}(self):\n        return 2\n\n\n"
             "def use(helper, other):\n    return helper.{0}() + other.{0}()\n"
         )
-        self.assertEqual(self.rename(defines.format("old"), old="file0.Helper.old", new="new"), 0)
-        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(defines.format("new"))])
-
-    def test_a_method_rename_leaves_a_function_of_that_name_in_another_file(self):
-        """Test that a method rename renames its calls in another file, not a function or another method there."""
-        defines = "class Helper:\n    def old(self):\n        return 1\n"
-        uses = "def old():\n    return 2\n\n\ndef use(helper):\n    return old() + helper.{}() + helper.other()\n"
-        self.assertEqual(self.rename(defines, uses.format("old"), old="file0.Helper.old", new="new"), 0)
-        self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [call(uses.format("new"))])
-
-    def test_a_method_rename_renames_an_override_in_another_file(self):
-        """Test that a method rename renames the override of the method a subclass in another file defines."""
-        defines = "class Helper:\n    def old(self):\n        return 1\n"
-        overrides = (
-            "class Sub(Helper):\n    def {}(self):\n        return 2\n\n    def other(self):\n        return 3\n\n"
+        subclass = (
+            "class Sub(Helper):\n    def {0}(self):\n        return 2\n\n    def other(self):\n        return 3\n\n"
             "    class Meta:\n        pass\n"
         )
-        self.assertEqual(self.rename(defines, overrides.format("old"), old="file0.Helper.old", new="new"), 0)
-        self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [call(overrides.format("new"))])
+        cases = {
+            "a method and its calls": (
+                "file0.Helper.old",
+                "class Helper:\n    def {0}(self):\n        return self.{0}()\n",
+                "def use(helper):\n    return helper.{0}()\n",
+            ),
+            "a property and its setter's decorator": ("file0.Shape.old", shape),
+            "another class's method in the defining file": ("file0.Helper.old", two_classes),
+            "a call beside a function of that name in another file": (
+                "file0.Helper.old",
+                helper,
+                "def old():\n    return 2\n\n\ndef use(helper):\n    return old() + helper.{0}() + helper.other()\n",
+            ),
+            "an override in another file": ("file0.Helper.old", helper, subclass),
+            "keyword arguments in another file": (
+                "file0.Point.old",
+                point,
+                "def use(point):\n    return Point(1, {0}=1, other=2), point.{0}\n",
+            ),
+            "an assigned class attribute of a subclass in another file": (
+                "file0.Point.old",
+                point,
+                "class Origin(Point):\n    {0} = 0\n    other = 1\n",
+            ),
+            "an annotated class attribute of a subclass in another file": (
+                "file0.Point.old",
+                point,
+                "class Origin(Point):\n    {0}: int = 0\n    other: int = 1\n",
+            ),
+        }
+        for case, (old, *sources) in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(self.rename(*[source.format("old") for source in sources], old=old, new="new"), 0)
+                written = {path: mock.write_text.call_args_list for path, mock in self.paths.items()}
+                self.assertEqual(
+                    written, {f"file{i}.py": [call(source.format("new"))] for i, source in enumerate(sources)}
+                )
 
-    def test_an_attribute_rename_renames_its_keyword_arguments_in_another_file(self):
-        """Test that an attribute rename renames the keyword arguments of that name in a file not defining it."""
-        defines = "class Point:\n    old: int\n"
-        uses = "def use(point):\n    return Point(1, {0}=1, other=2), point.{0}\n"
-        self.assertEqual(self.rename(defines, uses.format("old"), old="file0.Point.old", new="new"), 0)
-        self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [call(uses.format("new"))])
-
-    def test_an_attribute_rename_renames_the_class_attribute_a_subclass_in_another_file_sets(self):
-        """Test that an attribute rename renames the class attribute of that name a subclass in another file sets."""
+    @kills.replace(
+        _AttributeRenamer.visit_ImportFrom,
+        "return False",
+        "return True",
+        "an attribute rename renames a module of that name that a `from` import names",
+        case="a from import",
+    )
+    @kills.replace(
+        _AttributeRenamer.visit_Import,
+        "return False",
+        "return True",
+        "an attribute rename renames a module of that name that an import names",
+        case="an import",
+    )
+    def test_an_attribute_rename_leaves_the_module_an_import_names_alone(self):
+        """Test that an attribute rename leaves the module an import names as it is, though a part of it is the name."""
         defines = "class Point:\n    old: int\n"
         cases = {
-            "an assignment": "class Origin(Point):\n    {} = 0\n    other = 1\n",
-            "an annotated assignment": "class Origin(Point):\n    {}: int = 0\n    other: int = 1\n",
+            "a from import": "from pkg.old import Shape\n\n\ndef use(point):\n    return point.{}, Shape\n",
+            "an import": "import pkg.old\n\n\ndef use(point):\n    return point.{}\n",
         }
-        for case, sets in cases.items():
+        for case, uses in cases.items():
             with self.subTest(case=case):
-                self.assertEqual(self.rename(defines, sets.format("old"), old="file0.Point.old", new="new"), 0)
-                self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [call(sets.format("new"))])
+                self.assertEqual(self.rename(defines, uses.format("old"), old="file0.Point.old", new="new"), 0)
+                self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [call(uses.format("new"))])
 
     def test_the_files_the_rename_changed_are_written(self):
         """Test that a file the rename changed is written, and one it left as it was is not."""

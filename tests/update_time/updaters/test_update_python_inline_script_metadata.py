@@ -228,12 +228,7 @@ class ScriptLockTest(_ScriptLockTestCase):
                 left = self.files_after_update(run, get, glob, files, _script_lock("1.1"), discovered=[other, _SCRIPT])
                 self.assertEqual(left[_SCRIPT], script("package==1.1"))
                 self.assertEqual({command[3] for command in uv_locks(run)}, {str(_SCRIPT)})
-                self.assert_logged(
-                    message_of(Logger.unreadable_file),
-                    content=FileContent.INLINE_SCRIPT_METADATA,
-                    location=Location(other),
-                    error=str(error),
-                )
+                self.assert_unreadable_file_logged(other, FileContent.INLINE_SCRIPT_METADATA, error)
 
     def test_without_an_earlier_lock_a_dependency_without_an_exact_pin_gets_no_new_version(
         self, run: Mock, get: Mock, glob: Mock

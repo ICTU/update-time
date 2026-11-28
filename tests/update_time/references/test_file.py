@@ -28,11 +28,7 @@ class UpdateFileTest(unittest.TestCase):
         mock_file = mock_path("image: python:3.14\nmount: redis:1.0\n")
         mount_regexp = r"mount: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
         update_file(
-            mock_file,
-            IMAGE_REGEXP,
-            mount_regexp,
-            source=Source(new_version=new_version_getter("9.9")),
-            logger=Mock(),
+            mock_file, IMAGE_REGEXP, mount_regexp, source=Source(new_version=new_version_getter("9.9")), logger=Mock()
         )
         mock_file.read_text.assert_called_once_with()
         mock_file.write_text.assert_called_once_with("image: python:9.9\nmount: redis:9.9\n")
@@ -71,7 +67,7 @@ class UpdateYamlFilesTest(unittest.TestCase):
 
     def update(self, logger: Mock, get_new_version: NewVersionGetter) -> None:
         """Update the discovered files, each with the given getter."""
-        with patch.object(file, "TagGetter", Mock(return_value=Mock(source=Source(new_version=get_new_version)))):
+        with patch.object(file, "image_source", Mock(return_value=Source(new_version=get_new_version))):
             update_yaml_files(
                 self.FILE_TYPE,
                 regexp=IMAGE_REGEXP,

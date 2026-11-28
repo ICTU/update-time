@@ -22,23 +22,17 @@ class PreReleasePatternTest(unittest.TestCase):
         "an alpha or beta spelled as Maven's alias is adopted as if it were a release",
         case="8.a1",
     )
-    @kills.replace(
-        versions_plugin, "(alpha|", "(", "an alpha spelled out is adopted as if it were a release", case="8-alpha-1"
+    @kills.delete(
+        versions_plugin, "alpha|", "an alpha spelled out is adopted as if it were a release", case="8-alpha-1"
     )
-    @kills.replace(
-        versions_plugin, "|beta|", "|", "a beta spelled out is adopted as if it were a release", case="8-beta-1"
+    @kills.delete(versions_plugin, "beta|", "a beta spelled out is adopted as if it were a release", case="8-beta-1")
+    @kills.delete(versions_plugin, "rc|", "a release candidate is adopted as if it were a release", case="8-rc1")
+    @kills.delete(versions_plugin, "cr|", "a candidate release is adopted as if it were a release", case="8-cr1")
+    @kills.delete(
+        versions_plugin, "m|", "a milestone spelled as Maven's alias is adopted as if it were a release", case="8-M1"
     )
-    @kills.replace(versions_plugin, "|rc|", "|", "a release candidate is adopted as if it were a release", case="8-rc1")
-    @kills.replace(versions_plugin, "|cr|", "|", "a candidate release is adopted as if it were a release", case="8-cr1")
-    @kills.replace(
-        versions_plugin,
-        "|m|",
-        "|",
-        "a milestone spelled as Maven's alias is adopted as if it were a release",
-        case="8-M1",
-    )
-    @kills.replace(versions_plugin, "|pre|", "|", "a pre-release is adopted as if it were a release", case="8-pre1")
-    @kills.replace(versions_plugin, "|preview|", "|", "a preview is adopted as if it were a release", case="8-preview")
+    @kills.delete(versions_plugin, "pre|", "a pre-release is adopted as if it were a release", case="8-pre1")
+    @kills.delete(versions_plugin, "preview|", "a preview is adopted as if it were a release", case="8-preview")
     @kills.replace(
         versions_plugin,
         'rf"[-.](alpha',

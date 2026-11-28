@@ -1,20 +1,8 @@
-"""Unit tests for reading a JSON file and finding where it declares an entry."""
+"""Unit tests for finding where a JSON document declares an entry."""
 
 import unittest
 
-from update_time.formats.json import JsonFile, entry_offset
-
-from tests.file_mocks import mock_path
-
-
-class ReadTest(unittest.TestCase):
-    """Unit tests for reading a JSON file."""
-
-    def test_read(self):
-        """Test that a JSON file is read as its text and the contents parsed from that text."""
-        contents = '{"name": "x", "version": "1.0"}'
-        path = mock_path(contents)
-        self.assertEqual(JsonFile.read(path), JsonFile(path, contents, {"name": "x", "version": "1.0"}))
+from update_time.formats.json import entry_offset
 
 
 class EntryOffsetTest(unittest.TestCase):

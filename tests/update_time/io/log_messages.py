@@ -1,32 +1,36 @@
 """The log messages a test expects, looked up on the logger's methods, and the extra a log call carries."""
 
-from typing import TYPE_CHECKING
+from dataclasses import asdict
+from typing import TYPE_CHECKING, cast
 
 from update_time.io.console import MESSAGE_NAME
 from update_time.io.log import (
     Logger,
     _Fields,  # simplint: ignore[private-import-path] # annotates with it
     _LogMessage,  # simplint: ignore[private-import-path] # annotates with it
+    _Unanswered,  # simplint: ignore[private-import-path] # annotates with it
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from update_time.domain.reference import DriftedPin
+    from update_time.io.log import _HoldsMessage  # simplint: ignore[private-import-path] # annotates with it
 
 
 def drift_warning(drifted: DriftedPin) -> tuple[_LogMessage, _Fields]:
     """Return the warning about the drift, and the fields it carries."""
-    fields = Logger._drift_warning_fields(drifted)
-    return message_of(Logger.drift, *fields), fields
+    return message_of(Logger.drift), Logger._drift_warning_fields(drifted)
 
 
-def message_of(log_method: Callable[..., None], *holes: str) -> _LogMessage:
-    """Return the log method's message that has the holes, the one with these holes alone where several have them."""
-    messages: list[_LogMessage] = getattr(log_method, "messages", [])
-    having = [message for message in messages if message.holes >= set(holes)]
-    (message,) = having if len(having) == 1 else [message for message in having if message.holes == set(holes)]
-    return message
+def message_of(log_method: Callable[..., None]) -> _LogMessage:
+    """Return the message the log method logs."""
+    return cast("_HoldsMessage", log_method).message
+
+
+def unknown_version_date(unanswered: _Unanswered, **fields: str) -> tuple[_LogMessage, _Fields]:
+    """Return the error that a source did not answer for a candidate, and the fields it carries."""
+    return message_of(Logger.unknown_version_date), {**fields, **asdict(unanswered)}
 
 
 def adopted_drift_report(drifted: DriftedPin, directive: str) -> tuple[_LogMessage, _Fields]:

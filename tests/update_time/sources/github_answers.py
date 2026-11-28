@@ -135,15 +135,7 @@ def patch_github(  # noqa: PLR0913 — what each endpoint answers
 ) -> Mock:
     """Patch Session.get to serve the GitHub releases, tags, commits, compare, and repository endpoints.
 
-    Each request is answered by the endpoint it names. An endpoint given as None answers non-OK, so a test can make it
-    unreachable. The commits endpoint serves the same commit for every ref. A listing of commits serves the listed
-    commits a page at a time, or else that commit alone. The compare endpoint answers every comparison of two commits
-    with the comparison status.
-
-    Pass a Mock as the commit, the listed commits, or the comparison status to serve a whole response rather than JSON,
-    such as a non-OK one with an error body, or an exception as the commit to fail the request itself. The tags are
-    listed a page at a time too, and the lookup of a single tag finds any of them, unless a Mock or an exception given
-    as the tag ref answers it.
+    An endpoint given as None answers non-OK. The commits endpoint serves the same commit for every ref.
     """
 
     def answer(url: str) -> Mapping | list | Mock | Exception | None:
@@ -253,10 +245,7 @@ def github_requests(endpoint: str) -> list[str]:
 
 
 class GitHubProjectMixin(unittest.TestCase):
-    """Mix in to patch the project getter a GitHub reference resolves through, exposed as `self.get_project`.
-
-    The getter answers with an empty project unless a test sets `self.get_project.return_value`.
-    """
+    """Mix in to patch the project getter a GitHub reference resolves through, exposed as `self.get_project`."""
 
     def setUp(self) -> None:
         """Patch the project getter with one that asks `self.get_project`, for the duration of the test."""

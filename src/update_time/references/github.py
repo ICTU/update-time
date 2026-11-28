@@ -30,11 +30,7 @@ from update_time.sources.github import (
 )
 
 from .drift import adopts_drift
-from .resolve import (
-    latest_version,
-    report_directives_the_source_cannot_apply,
-    report_project_checks,
-)
+from .resolve import latest_version, report_directives_the_source_cannot_apply, report_project_checks
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -126,7 +122,7 @@ class PinUpdater:
             reference = replace(reference, current_version=version)
         latest = latest_version(reference, self.source, self.logger)
         if latest is not None and latest.unserved is Unserved.RELEASES:
-            self.logger.no_release_tagged(reference)
+            self.logger.reference_left_as_is(replace(reference, current_version=""), Unserved.RELEASES)
             return None
         if latest is None or not latest.sha:
             return None
@@ -190,7 +186,7 @@ class PinUpdater:
         if reference.current_sha and hash_drifted(pinned.sha, reference.current_sha):
             return self._moved_ref_pin(reference, pinned, kept_floating_by)
         if kept_floating_by:
-            self.logger.keeping_ref(reference, pinned, kept_floating_by, _ref_kind(reference))
+            self.logger.keeping_floating_pin(reference, pinned, kept_floating_by, _ref_kind(reference))
             return None
         if reference.current_sha and pinned.version == ref:
             return None  # Still pinned to the ref's commit

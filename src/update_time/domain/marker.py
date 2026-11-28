@@ -131,7 +131,7 @@ class Marker:
         """Return the directive narrowing which versions an update may take, or nothing when the marker sets none.
 
         The bound is named as the item the user wrote, since `ignore` and `allow` can each set one. An
-        `ignore[update]` beside it leaves it named, so a caller judging the two apart can name each.
+        `ignore[update]` beside it leaves it named.
         """
         return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
 
@@ -227,11 +227,7 @@ class Marker:
     def merge(self, other: Marker) -> Marker:
         """Return this marker combined with another one.
 
-        The scopes and advisories combine as unions, so `ignore[update]` and `ignore[yanked]` together hold back both
-        scopes. A value that cannot combine, such as a version bound, comes from the other marker only where this one
-        leaves it unset. The `raw` texts and the default directives concatenate, this marker's first. `Marker()` is the
-        identity, so markers fold at every level: items into a bracket, directives into a text, and texts into a line.
-        The result leaves `spelling` out, since a marker is spelled only once it is whole.
+        `Marker()` is the identity. The result leaves `spelling` out, since a marker is spelled only once it is whole.
         """
         return Marker(
             ignored_scopes=self.ignored_scopes | other.ignored_scopes,

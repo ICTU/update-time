@@ -20,12 +20,7 @@ _REV: Final[PinUpdater] = PinUpdater(spell_rev, _LOG)
 
 
 def _updated_lines(lines: list[Line]) -> list[str]:
-    """Return the config's lines with every GitHub-hosted hook's `rev:` pinned or bumped, honouring markers.
-
-    Unlike the single-line references most updaters rewrite, a hook's repository and its `rev:` sit on separate
-    lines, so the pass tracks the repository from each `repo:` line and applies it to the `rev:` lines that follow.
-    A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
-    """
+    """Return the config's lines with every GitHub-hosted hook's `rev:` pinned or bumped, honouring markers."""
     result = []
     repository = None  # The repository of the `repo:` in scope, None for `local`, `meta`, and a host other than GitHub
     for line in lines:

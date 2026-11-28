@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from update_time.domain.directive import WARNING_DIRECTIVES
+from update_time.domain.directive import WARNING_DIRECTIVES, Reason
 from update_time.domain.marker import Scope
 from update_time.domain.reference import Reference
 from update_time.markers.report import report_marker
@@ -11,7 +11,6 @@ from update_time.markers.report import report_marker
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
-    from update_time.domain.directive import Reason
     from update_time.io.log import Logger
 
 
@@ -31,10 +30,12 @@ class ManagerPolicy[ReferenceT: Reference]:
     cooldown_redundancy: Reason
     unchecked_scopes: Callable[[ReferenceT], Mapping[Scope, Reason]]
 
-    @staticmethod
-    def every_warning_scope(reason: Reason) -> dict[Scope, Reason]:
-        """Return every warning scope, each left unchecked for the reason."""
-        return {directive.scope: reason for directive in WARNING_DIRECTIVES}
+    @property
+    def policy_for_more_than_one_manager(self) -> ManagerPolicy[ReferenceT]:
+        """Return the policy for a file whose project's lock files or tables name more than one package manager."""
+        return self.policy_for_files_left_as_they_are(
+            Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT
+        )
 
     def policy_for_files_left_as_they_are(
         self, hold_back_reason: Reason, bound_reason: Reason
@@ -46,6 +47,18 @@ class ManagerPolicy[ReferenceT: Reference]:
             bound_redundancy=lambda _reference: bound_reason,
             cooldown_redundancy=hold_back_reason,
         )
+
+    @property
+    def policy_for_a_workspace_root_outside_the_scan(self) -> ManagerPolicy[ReferenceT]:
+        """Return the policy for a file whose workspace root lies outside the scan root."""
+        return self.policy_for_files_left_as_they_are(
+            Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
+        )
+
+    @staticmethod
+    def every_warning_scope(reason: Reason) -> dict[Scope, Reason]:
+        """Return every warning scope, each left unchecked for the reason."""
+        return {directive.scope: reason for directive in WARNING_DIRECTIVES}
 
     def keeps_the_version(self, reference: ReferenceT) -> bool:
         """Return whether the reference's marker carries an `ignore[update]` that keeps its version where it is."""

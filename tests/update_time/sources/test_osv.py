@@ -291,20 +291,14 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         """Test that an unreachable OSV returns an answer per pin, each of them none, and is warned about."""
         status = HTTPStatus.SERVICE_UNAVAILABLE
         mock_post.return_value = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://osv")
-        self.assertEqual(
-            get_vulnerabilities([_REFERENCE, _OTHER_REFERENCE], Ecosystem.PYPI),
-            [None, None],
-        )
+        self.assertEqual(get_vulnerabilities([_REFERENCE, _OTHER_REFERENCE], Ecosystem.PYPI), [None, None])
         self.assert_could_not_fetch_logged("https://osv", status=status, reason=status.phrase)
 
     def test_a_batch_answer_that_is_not_json(self, mock_post: Mock):
         """Test that a batch answer that is not JSON leaves every pin unanswered, and is warned about."""
         url = "https://api.osv.dev/v1/querybatch"
         mock_post.return_value = unparsable_response(ok=True, url=url)
-        self.assertEqual(
-            get_vulnerabilities([_REFERENCE, _OTHER_REFERENCE], Ecosystem.PYPI),
-            [None, None],
-        )
+        self.assertEqual(get_vulnerabilities([_REFERENCE, _OTHER_REFERENCE], Ecosystem.PYPI), [None, None])
         self.assert_invalid_json_logged(url)
 
 

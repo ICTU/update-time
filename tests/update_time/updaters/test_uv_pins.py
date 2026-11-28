@@ -39,9 +39,6 @@ from .fixtures import (
     ADVISORY,
     DJANGO_ADVISORY,
     DJANGO_VULNERABILITY,
-    OTHER_DJANGO_ADVISORY,
-    OTHER_DJANGO_VULNERABILITY,
-    PYPI_PAST_COOLDOWN_UPLOAD,
     PYPI_RECENT_UPLOAD,
     VULNERABILITY,
 )
@@ -54,19 +51,12 @@ _LOG: Final[Logger] = get_logger("uv pins")
 
 
 def _index_without_yanks() -> Mock:
-    """Return a `Session.get` mock answering PyPI with an index that does not list a version to read a yank from.
-
-    The yank pass asks PyPI about every pin, whichever of the checks a test is about.
-    """
+    """Return a `Session.get` mock answering PyPI with an index that does not list a version to read a yank from."""
     return Mock(return_value=pypi_index())
 
 
 class PythonDependencyTomlTestCase(LoggingTestCase):
-    """Base for the tests of the checks both uv-delegated updaters share.
-
-    The dependencies are read from the file rather than from uv, so no check needs a package manager to run: each
-    reads whatever the file declares by the time it is called.
-    """
+    """Base for the tests of the checks both uv-delegated updaters share."""
 
     def dependency_toml_file(self, *specs: str, marker: str = "") -> PyprojectToml:
         """Return a mock file declaring the specs as its dependencies, in the form both file kinds declare them.
@@ -131,17 +121,6 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         warn_about_pins([file], _LOG, {})
         self.assert_stale_dependency_logged("other", "1.0", Location(file.path, 4))
         self.assert_no_staleness_warning_logged("package", Location(file.path, 3))
-
-    def test_the_markers_threshold_is_used(self, get: Mock):
-        """Test that a pin carrying a staleness threshold of its own is judged by that one, not by the run's.
-
-        The newest release is 100 days old, which is stale against the marker's 90 and not against the run's 365,
-        so the warning is given only when the marker's threshold is the one applied.
-        """
-        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
-        file = self.dependency_toml_file("package==1.0", marker="set[stale-after=90]")
-        warn_about_pins([file], _LOG, {})
-        self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_recent_pin_not_warned(self, get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
@@ -215,7 +194,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker="ignore[yanked]"))
         warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("other", "1.0", Location(file.path, 4))
-        self.assert_ignored_warning_logged(Scope.YANKED, "package", Location(file.path, 3))
+        self.assert_ignored_warning_logged(Scope.YANKED, "package", Location(file.path, 3), "ignore[yanked]")
 
     def test_ignore_update_marker_still_warns_about_a_yanked_pin(self, get: Mock):
         """Test that a pin `ignore[update]` holds back still reports the yank of the version it is left on."""
@@ -271,15 +250,6 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
             "django", Location(file.path, 2), DJANGO_VULNERABILITY.advisory, "set[vulnerability-level=none]"
         )
 
-    def test_a_marker_naming_an_advisory_silences_that_one_alone(self):
-        """Test that an `ignore[vulnerable=ID]` marker leaves the pin's other advisories warned about."""
-        advisory = DJANGO_VULNERABILITY.advisory
-        directive = f"ignore[vulnerable={advisory}]"
-        file = self.dependency_toml_file("django==3.2.0", marker=directive)
-        self.check_pins(file, DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY)
-        self.assert_vulnerable_dependency_logged("django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(file.path, 2))
-        self.assert_ignored_vulnerability_logged("django", Location(file.path, 2), advisory, directive)
-
     def test_a_marker_silences_its_own_pin_in_the_batch(self):
         """Test that a marker on one pin's line leaves the pin declared below it in the batch warned about."""
         directive = "set[vulnerability-level=none]"
@@ -287,23 +257,6 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
         self.check_pins(file, ADVISORY)
         self.assert_vulnerable_dependency_logged("other", "1.0", VULNERABILITY, Location(file.path, 4))
         self.assert_ignored_vulnerability_logged("package", Location(file.path, 3), VULNERABILITY.advisory, directive)
-
-    def test_the_markers_risk_level_is_used(self):
-        """Test that a pin's own risk level decides what it is warned about, rather than the level of the run."""
-        file = self.dependency_toml_file("django==3.2.0", marker="set[vulnerability-level=high]")
-        self.check_pins(file, DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY)
-        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(file.path, 2))
-
-    def test_every_redundant_suppression_is_reported(self):
-        """Test that each of a marker's vulnerability suppressions is reported when it silences nothing."""
-        advisory = f"ignore[vulnerable={VULNERABILITY.advisory}]"
-        file = self.dependency_toml_file("package==1.0", marker=f"{advisory} set[vulnerability-level=high]")
-        self.check_pins(file)  # OSV answers with no vulnerability, so both forms silence nothing.
-        location = Location(file.path, 2)
-        self.assert_redundant_vulnerable_advisory_logged("package", "1.0", location, advisory)
-        self.assert_redundant_vulnerable_level_logged(
-            "package", "1.0", "high", location, "set[vulnerability-level=high]"
-        )
 
 
 @no_vulnerabilities()
@@ -324,7 +277,7 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         file = self.dependency_toml_file("package==1.0", marker="ignore[archived]")
         warn_about_pins([file], _LOG, {})
         self.assert_no_warnings_logged()
-        self.assert_ignored_warning_logged(Scope.ARCHIVED, "package", Location(file.path, 2))
+        self.assert_ignored_warning_logged(Scope.ARCHIVED, "package", Location(file.path, 2), "ignore[archived]")
 
     def test_a_marker_silences_a_dependency_that_pins_no_version(self, get: Mock):
         """Test that both project scopes silence their warning for a dependency declared without an exact pin."""

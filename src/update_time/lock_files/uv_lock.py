@@ -29,7 +29,7 @@ class UvLock:
         """Return the lock uv writes beside the pyproject.toml."""
         return cls(pyproject_toml.parent / "uv.lock")
 
-    def read(self) -> str | None:
+    def text(self) -> str | None:
         """Return the lock's text, or None where there is no lock."""
         return self.path.read_text() if self.path.is_file() else None
 

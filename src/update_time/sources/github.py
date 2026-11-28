@@ -39,7 +39,7 @@ from update_time.primitives.lookup import DeferredLookup, LookedUp
 from update_time.primitives.timestamp import parse_timestamp
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Iterable, Mapping
 
     from update_time.domain.bound import VersionBound
     from update_time.io.log import Logger
@@ -187,12 +187,11 @@ def _look_up_github(url: str, statuses_meaning_absent: tuple[int, ...] = ()) -> 
     exhausted run catches, so every API request goes through here.
     """
     headers = {"Authorization": f"Bearer {github_token}"} if (github_token := os.environ.get(TOKEN_VARIABLE)) else {}
-    report = _LOG.github_token_rate_limit_used_up if "Authorization" in headers else _LOG.github_rate_limit_used_up
-    on_response = partial(_report_used_up_rate_limit, report=report)
+    on_response = partial(_report_used_up_rate_limit, authenticated="Authorization" in headers)
     return look_up(url, _LOG, statuses_meaning_absent=statuses_meaning_absent, on_response=on_response, headers=headers)
 
 
-def _report_used_up_rate_limit(response: Response, *, report: Callable[[int, datetime], None]) -> None:
+def _report_used_up_rate_limit(response: Response, *, authenticated: bool) -> None:
     """Report when the response says the rate limit of the GitHub API is used up."""
     if response.headers.get("X-RateLimit-Remaining") != "0":
         return
@@ -202,13 +201,13 @@ def _report_used_up_rate_limit(response: Response, *, report: Callable[[int, dat
     except (KeyError, ValueError) as error:
         _LOG.unreadable_github_rate_limit(error)
         return
-    _log_used_up_rate_limit(report, limit, reset)
+    _log_used_up_rate_limit(limit, reset, authenticated=authenticated)
 
 
 @cache
-def _log_used_up_rate_limit(report: Callable[[int, datetime], None], limit: int, reset: datetime) -> None:
+def _log_used_up_rate_limit(limit: int, reset: datetime, *, authenticated: bool) -> None:
     """Report that GitHub's API rate limit is used up until the reset, once per rate limit window in each process."""
-    report(limit, reset)
+    _LOG.github_rate_limit_used_up(limit, reset, authenticated=authenticated)
 
 
 @cache

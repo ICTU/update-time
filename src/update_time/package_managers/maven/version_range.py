@@ -1,7 +1,7 @@
 """The Maven version ranges that hand a version bound to the versions plugin."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from packaging.version import InvalidVersion, Version
 
@@ -12,12 +12,6 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import VersionBound
     from update_time.domain.dependency import VersionString
-
-# Maven sorts a qualified version after the release it qualifies: `33.0.0-jre` after `33.0.0`. Appended to a version,
-# this suffix gives a version that Maven sorts after every qualified form of it, and before the next release. A bound
-# reads a version up to the first character that is neither a digit nor a dot, so a clause ending at a version ends
-# after its qualified forms.
-_PAST_QUALIFIERS: Final[str] = ".0.0.0.1"
 
 
 def maven_range(bound: VersionBound, current_version: VersionString) -> str | None:

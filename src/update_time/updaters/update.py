@@ -69,24 +69,14 @@ class _Scripts:
             logger.update_stopped(self.dependency_type(script).name, Signals(-exit_code))
             return 1
 
-        parallel = self.parallel_scripts
+        parallel = tuple(script for script in self if script.parallel)
         results = list(map(result, parallel, processes.run(*(script.command for script in parallel)), strict=True))
-        results.extend(result(script, *processes.run(script.command)) for script in self.sequential_scripts)
+        results.extend(result(script, *processes.run(script.command)) for script in self if not script.parallel)
         return max(results, default=0)
 
     def dependency_type(self, script: _Script) -> DependencyType:
         """Return the dependency type the script serves."""
         return next(dependency_type for dependency_type, scripts in self.scripts.items() if script in scripts)
-
-    @property
-    def parallel_scripts(self) -> tuple[_Script, ...]:
-        """Return each script that may run beside another."""
-        return tuple(script for script in self if script.parallel)
-
-    @property
-    def sequential_scripts(self) -> tuple[_Script, ...]:
-        """Return each script that may not run beside another."""
-        return tuple(script for script in self if not script.parallel)
 
 
 # The updater scripts serving each dependency type. package_json rewrites the package.json files that node_engine
@@ -104,10 +94,7 @@ _SCRIPTS = _Scripts(
         DEPENDENCY_TYPES.python_version: (_Script(name="python_version_file"),),
         DEPENDENCY_TYPES.docker_images: (
             _Script(name="dockerfile_base_image"),
-            _Script(name="circle_ci_config"),
-            _Script(name="gitlab_ci_config"),
-            _Script(name="manifest_images"),
-            _Script(name="devcontainer"),
+            _Script(name="container_images"),
         ),
         DEPENDENCY_TYPES.github_actions: (_Script(name="github_action"),),
         DEPENDENCY_TYPES.pre_commit_hooks: (_Script(name="pre_commit_config"),),

@@ -8,7 +8,7 @@ from datetime import timedelta
 from functools import cache
 from logging import DEBUG, ERROR, INFO, WARNING
 from typing import TYPE_CHECKING, Protocol, override
-from unittest.mock import ANY, call, patch
+from unittest.mock import ANY, Mock, call, patch
 
 import update_time
 from update_time.domain.cooldown import COOLDOWN
@@ -17,9 +17,9 @@ from update_time.domain.dependency import (
     DependencyVersion,
     FloatingPin,
     ImageNotLookedUp,
+    Unserved,
     tag_of,
 )
-from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
 from update_time.domain.reference import RefKind
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL, Vulnerability
@@ -27,25 +27,27 @@ from update_time.io.console import CHANGES, NOTE
 from update_time.io.log import (
     _WARNINGS,
     Logger,
+    ToolFailure,
     ToolTask,
     _Fields,  # simplint: ignore[private-import-path] # annotates with it
     _FieldValue,  # simplint: ignore[private-import-path] # annotates with it
     _finding,
     _LogMessage,  # simplint: ignore[private-import-path] # annotates with it
+    _risk_level_reason,
+    _unnamed_ref_reason,
+    _unsupported_manager_reason,
 )
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
 from update_time.primitives.timestamp import utc_date_and_time
 
 from .domain_objects import reference
-from .fixtures import (
-    FRESH_DATE,
-)
+from .fixtures import FRESH_DATE
 from .io.log_messages import adopted_drift_report, drift_warning, logged_extra, message_of
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Generator, Mapping
+    from collections.abc import Generator, Mapping
     from pathlib import Path
     from types import ModuleType
     from unittest.mock import _Call  # simplint: ignore[private-import-path] # no public call type
@@ -53,13 +55,12 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import Yank
     from update_time.domain.directive import RedundancyReason
     from update_time.domain.reference import DriftedPin
+    from update_time.io.log import FileContent
     from update_time.primitives.command import Command
 
 
 class _Cached(Protocol):
-    """A function whose results are cached, as `functools.cache` returns one, wrapping the function it caches."""
-
-    __wrapped__: Callable[..., object]  # simplint: ignore[callable-ellipsis] # a cache wraps any function
+    """A function whose results are cached, as `functools.cache` returns one."""
 
     def cache_clear(self) -> None:
         """Empty the cache, so what one test cached is not served to the next."""
@@ -72,16 +73,13 @@ def setting_names(package: ModuleType) -> set[str]:
 
 @cache
 def _package_modules(package: ModuleType) -> tuple[ModuleType, ...]:
-    """Return the package and every module within it, walked once and remembered.
+    """Return every module within the package, walked once and remembered.
 
     What each module holds is read afresh every time, so a cache added to one is still found. This cache survives the
     clearing itself as long as the module defining it sits outside `package`.
     """
     prefix = f"{package.__name__}."
-    return (
-        package,
-        *(importlib.import_module(found.name) for found in pkgutil.walk_packages(package.__path__, prefix)),
-    )
+    return tuple(importlib.import_module(found.name) for found in pkgutil.walk_packages(package.__path__, prefix))
 
 
 def module_values[Value](module: ModuleType, kind: type[Value]) -> list[Value]:
@@ -102,27 +100,19 @@ class CacheClearingTestCase(unittest.TestCase):
 
     def _start_new_run(self) -> None:
         """Forget what the previous run fetched and which changelogs it suppressed, so the next run starts afresh."""
-        for cached_function in all_cached_functions(update_time):
+        for cached_function in _all_cached_functions(update_time):
             cached_function.cache_clear()
         for logger in all_loggers(update_time):
             logger.forget_shown_changelogs()
 
 
-def all_cached_functions(package: ModuleType) -> list[_Cached]:
-    """Return every cached function the package's modules define, the package's own included.
-
-    Every module is scanned because `cached_functions` attributes each cache to the module defining it, so a
-    module left out takes its caches with it.
-    """
-    return [function for module in _package_modules(package) for function in cached_functions(module)]
-
-
-def cached_functions(module: ModuleType) -> list[_Cached]:
-    """Return the cached functions the module defines, recognised by the `cache_clear` their decorator adds."""
+def _all_cached_functions(package: ModuleType) -> list[_Cached]:
+    """Return every cached function the package's modules hold, recognised by the `cache_clear` their decorator adds."""
     return [
         value
+        for module in _package_modules(package)
         for value in module.__dict__.values()
-        if hasattr(value, "cache_clear") and getattr(value, "__module__", None) == module.__name__
+        if hasattr(value, "cache_clear")
     ]
 
 
@@ -138,10 +128,7 @@ def all_loggers(package: ModuleType) -> tuple[Logger, ...]:
 
 
 class LoggingTestCase(CacheClearingTestCase):
-    """Base test case for any test of code that logs.
-
-    It mocks the logger's log method, exposed as the mock_log attribute, and offers the assert_*_logged helpers below.
-    """
+    """Base test case for any test of code that logs, with the logger's log method mocked as `self.mock_log`."""
 
     @override
     def setUp(self) -> None:
@@ -220,13 +207,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assertEqual(self.records(WARNING), expected)
 
     def assert_new_version_logged(
-        self,
-        dependency: str,
-        version: str,
-        location: Location,
-        note: str = Logger._NO_CHANGELOG,
-        *,
-        changes: str = "",
+        self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG, *, changes: str = ""
     ) -> None:
         """Assert that a new version was the only record logged for the dependency in the file."""
         fields = self._new_version_fields(dependency, version, location, note, changes)
@@ -256,13 +237,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assertEqual(self.records(message.level)[-1:], [self._expected_call(message, fields)])
 
     def assert_new_version_logged_among_others(
-        self,
-        dependency: str,
-        version: str,
-        location: Location,
-        note: str = Logger._NO_CHANGELOG,
-        *,
-        changes: str = "",
+        self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG, *, changes: str = ""
     ) -> None:
         """Assert that a new version was logged, among the other records of a run that logs several."""
         fields = self._new_version_fields(dependency, version, location, note, changes)
@@ -285,11 +260,7 @@ class LoggingTestCase(CacheClearingTestCase):
         return self.records_of(message_of(Logger.new_version))
 
     def records_of(self, message: _LogMessage, **fields: _FieldValue) -> list[_Call]:
-        """Return the records logged for the message, ignoring the other records at its level.
-
-        The fields narrow it further, so a message one field parameterises — a redundancy warning's reason — is
-        matched by the value it carries rather than by the message alone.
-        """
+        """Return the records logged for the message that carry the fields, ignoring the other records at its level."""
         rendered = Logger._rendered(fields)
         return [
             record
@@ -320,9 +291,9 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert the message was not logged at all, whatever else was logged at its level."""
         self.assertEqual(self.records_of(message, **fields), [], f"Expected no {what} to be logged")
 
-    def assert_no_unpinned_floating_tag_logged(self) -> None:
-        """Assert that the run did not report a floating tag left as it is (other records are allowed)."""
-        self.assert_none_logged(message_of(Logger.unpinned_floating_tag), "unpinned floating tag")
+    def assert_no_reference_left_as_is_logged(self) -> None:
+        """Assert that the run did not report a reference left as it is (other records are allowed)."""
+        self.assert_none_logged(message_of(Logger.reference_left_as_is), "reference left as it is")
 
     def assert_pinned_logged(
         self, dependency: str, version: str, sha: str, location: Location, *, among_others: bool = False
@@ -334,7 +305,7 @@ class LoggingTestCase(CacheClearingTestCase):
             dependency=dependency,
             location=location,
             version=version,
-            sha=sha,
+            hash=f"@{sha}",
         )
 
     def _assert_reported(self, message: _LogMessage, *, among_others: bool, **fields: _FieldValue) -> None:
@@ -370,21 +341,29 @@ class LoggingTestCase(CacheClearingTestCase):
         The reason names the tag looked up, which is the version unless the reference names none.
         """
         self.assert_logged_among_others(
-            message_of(Logger.unpinned_floating_tag),
+            message_of(Logger.reference_left_as_is),
             dependency=dependency,
             tag=tag_of(version),
             location=location,
             reason=reason.explained(looked_up or version),
         )
 
-    def assert_kept_floating_logged(
-        self, dependency: str, version: str, release: DependencyVersion, location: Location, directive: str = ANY
+    def assert_kept_floating_logged(  # noqa: PLR0913 — the fields the message carries
+        self,
+        dependency: str,
+        version: str,
+        release: DependencyVersion,
+        location: Location,
+        directive: str = ANY,
+        *,
+        ref: RefKind | None = None,
     ) -> None:
-        """Assert that a floating tag left as it is was reported, naming the release it resolves to."""
+        """Assert that a floating pin left as it is was reported: a floating image tag, or else a ref of that kind."""
         self.assert_logged_among_others(
-            message_of(Logger.keeping_floating_tag),
+            message_of(Logger.keeping_floating_pin),
             dependency=dependency,
-            tag=tag_of(version),
+            pin="floating tag" if ref is None else ref,
+            name=tag_of(version, ":" if ref is None else "@"),
             resolved=release.version,
             sha=release.sha,
             location=location,
@@ -394,37 +373,19 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_comment_naming_no_ref_logged(self, dependency: str, name: str, location: Location) -> None:
         """Assert that a commit SHA whose comment does not name a ref was reported as left as it is."""
         self.assert_logged_among_others(
-            message_of(Logger.comment_naming_no_ref), dependency=dependency, name=name, location=location
-        )
-
-    def assert_kept_ref_logged(  # noqa: PLR0913 — the fields the message carries
-        self,
-        dependency: str,
-        name: str,
-        release: DependencyVersion,
-        location: Location,
-        directive: str,
-        *,
-        ref: RefKind = RefKind.BRANCH,
-    ) -> None:
-        """Assert that a branch or tag reference left as it is was reported, naming the release it resolves to."""
-        self.assert_logged_among_others(
-            message_of(Logger.keeping_ref),
+            message_of(Logger.reference_left_as_is),
             dependency=dependency,
-            ref=ref,
-            name=name,
-            resolved=release.version,
-            sha=release.sha,
+            tag="",
             location=location,
-            directive=directive,
+            reason=_unnamed_ref_reason(name),
         )
 
-    def assert_image_not_looked_up_logged(
-        self, dependency: str, tag: str, location: Location, reason: ImageNotLookedUp
+    def assert_left_as_is_logged(
+        self, dependency: str, tag: str, location: Location, reason: ImageNotLookedUp | Unserved
     ) -> None:
-        """Assert that a reference Update-time does not look up was reported, with its reason, among others."""
+        """Assert that a reference left as it is was reported, with its reason, among others."""
         self.assert_logged_among_others(
-            message_of(Logger.image_not_looked_up),
+            message_of(Logger.reference_left_as_is),
             dependency=dependency,
             tag=tag_of(tag),
             location=location,
@@ -449,16 +410,10 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_undated_drift_logged(self, drifted: DriftedPin, reason: str) -> None:
         """Assert that what the drifted pin now points at could not be dated, logged as the file's only error."""
-        fields = Logger._undated_drift_fields(drifted, reason)
-        self.assert_error_logged(message_of(Logger.undated_drift, *fields), **fields)
+        self.assert_error_logged(message_of(Logger.undated_drift), **Logger._undated_drift_fields(drifted, reason))
 
     def assert_hash_mismatch_logged(
-        self,
-        dependency: str,
-        version: str,
-        declared_hash: str,
-        served_hash: str,
-        location: Location,
+        self, dependency: str, version: str, declared_hash: str, served_hash: str, location: Location
     ) -> None:
         """Assert that a declared integrity hash disagreeing with the served one was logged once for the file."""
         self.assert_logged(
@@ -537,45 +492,12 @@ class LoggingTestCase(CacheClearingTestCase):
         self, dependency: str, version: str, location: Location, directive: str = ANY
     ) -> None:
         """Assert that a suppression naming an advisory the version does not have was warned about, among the others."""
-        self.assert_logged_among_others(
-            message_of(Logger.redundant_ignore),
-            dependency=dependency,
-            location=location,
-            directive=directive,
-            finding=_finding(Scope.VULNERABLE, version),
-        )
-
-    def assert_redundant_vulnerable_level_logged(  # noqa: PLR0913 — the fields of the warning
-        self,
-        dependency: str,
-        version: str,
-        level: str,
-        location: Location,
-        directive: str = ANY,
-        *,
-        run_level: str | None = None,
-    ) -> None:
-        """Assert that a risk level judging the vulnerabilities as the run's does was warned about, among others."""
-        run_setting = (
-            f"the default level {VULNERABILITY_LEVEL.default}"
-            if run_level is None
-            else f"--vulnerability-level {run_level}"
-        )
-        self.assert_logged_among_others(
-            message_of(Logger.redundant_vulnerable_level),
-            **self._redundant_suppression_fields(dependency, version, location, directive),
-            level=level,
-            run_setting=run_setting,
-        )
-
-    @staticmethod
-    def _redundant_suppression_fields(dependency: str, version: str, location: Location, directive: str) -> _Fields:
-        """Return the fields every redundant vulnerability suppression is warned with."""
-        return {"directive": directive, "dependency": dependency, "location": location, "version": version}
+        reason = _finding(Scope.VULNERABLE, version)
+        self.assert_redundant_directive_logged(reason, dependency, location, directive, among_others=True)
 
     def assert_redundant_directive_logged(
         self,
-        reason: RedundancyReason,
+        reason: RedundancyReason | str,
         dependency: str,
         location: Location,
         directive: str = ANY,
@@ -592,21 +514,40 @@ class LoggingTestCase(CacheClearingTestCase):
             reason=reason,
         )
 
+    def assert_redundant_vulnerable_level_logged(  # noqa: PLR0913 — the fields of the warning
+        self,
+        dependency: str,
+        version: str,
+        level: str,
+        location: Location,
+        directive: str = ANY,
+        *,
+        run_level: str | None = None,
+    ) -> None:
+        """Assert that a risk level judging the vulnerabilities as the run's does was warned about, among others."""
+        reason = _risk_level_reason(level, run_level or VULNERABILITY_LEVEL.default, version)
+        self.assert_redundant_directive_logged(reason, dependency, location, directive, among_others=True)
+
     def assert_no_redundant_suppression_logged(self) -> None:
         """Assert that no vulnerability suppression was reported as silencing nothing, whatever else was logged."""
-        what = "redundant vulnerability suppression"
-        self.assert_none_logged(message_of(Logger.redundant_ignore), what)
-        self.assert_no_redundant_vulnerable_level_logged()
-        self.assert_none_logged(message_of(Logger.redundant_directive), what, reason=Reason.NO_VULNERABILITY_REPORTS)
+        self.assertEqual(
+            self._redundant_directives_naming("vulnerab"), [], "A vulnerability suppression was reported as redundant"
+        )
+
+    def _redundant_directives_naming(self, word: str) -> list[_Call]:
+        """Return the records reporting a directive as redundant whose directive names the word."""
+        records = self.records_of(message_of(Logger.redundant_directive))
+        return [record for record in records if word in str(record.args[1]["directive"])]
 
     def assert_no_redundant_vulnerable_level_logged(self) -> None:
         """Assert that no risk level was warned about as redundant."""
-        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level), "redundant risk level")
+        self.assertEqual(
+            self._redundant_directives_naming("vulnerability-level"), [], "A risk level was reported as redundant"
+        )
 
     def assert_no_redundant_directive_logged(self) -> None:
         """Assert that no directive was reported as redundant, whatever else was logged."""
         self.assert_none_logged(message_of(Logger.redundant_directive), "redundant directive")
-        self.assert_none_logged(message_of(Logger.redundant_stale_threshold), "redundant staleness threshold")
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
@@ -644,19 +585,22 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that ignoring a reference's update was logged, by default as the last record."""
         assert_logged = self.assert_logged_among_others if among_others else self._assert_last_logged
-        assert_logged(message_of(Logger.ignored), dependency=dependency, location=location, directive=directive)
+        fields: _Fields = {
+            "dependency": dependency,
+            "location": location,
+            "versions": "every version",
+            "directive": directive,
+        }
+        assert_logged(message_of(Logger.held_back), **fields)
 
     def assert_no_ignored_logged(self) -> None:
         """Assert that no update was reported as held back by a marker, whatever else was logged at that level."""
-        self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
+        self.assert_none_logged(message_of(Logger.held_back), "update held back by a marker", versions="every version")
 
     def assert_held_back_by_cooldown_logged(
         self, dependency: str, version: str, location: Location, *, days: int = COOLDOWN.default, directive: str = ""
     ) -> None:
-        """Assert that the version published at `FRESH_DATE` was logged as held back, among the other records.
-
-        A `directive` is the marker's directive that sets the cooldown, which the line names.
-        """
+        """Assert that the version published at `FRESH_DATE` was logged as held back, among the other records."""
         fields: _Fields = {
             "dependency": dependency,
             "location": location,
@@ -664,9 +608,9 @@ class LoggingTestCase(CacheClearingTestCase):
             "published": utc_date_and_time(FRESH_DATE),
             "days": days,
             "until": utc_date_and_time(FRESH_DATE + timedelta(days=days)),
-            **({"directive": directive} if directive else {}),
+            "set_by": f" (update-time: {directive})" if directive else "",
         }
-        self.assert_logged_among_others(message_of(Logger.held_back_by_cooldown, *fields), **fields)
+        self.assert_logged_among_others(message_of(Logger.held_back_by_cooldown), **fields)
 
     def assert_no_staleness_warning_logged(self, dependency: str, location: Location) -> None:
         """Assert that the dependency at the location was not warned about as stale."""
@@ -676,79 +620,95 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_no_ignored_staleness_logged(self) -> None:
         """Assert that no staleness warning was reported as silenced, whatever else was logged at that level."""
         self.assert_none_logged(
-            message_of(Logger.ignored_warning), "staleness warning silenced by a marker", warning="staleness"
+            message_of(Logger.silenced_warning), "staleness warning silenced by a marker", warning="staleness"
         )
 
     def assert_no_ignored_vulnerability_logged(self) -> None:
         """Assert that no vulnerability warning was reported as silenced, whatever else was logged at that level."""
-        silenced = self.records_of(message_of(Logger.ignored_warning))
-        vulnerabilities = [record for record in silenced if record.args[1]["warning"].endswith(" vulnerability")]
-        self.assertEqual(vulnerabilities, [], "Expected that a marker did not silence a vulnerability warning")
+        silenced = self._silenced_vulnerabilities("update-time:")
+        self.assertEqual(silenced, [], "Expected that a marker did not silence a vulnerability warning")
+
+    def _silenced_vulnerabilities(self, cause: str) -> list[_Call]:
+        """Return the records reporting a silenced vulnerability warning, whose cause starts with the given text."""
+        silenced = self.records_of(message_of(Logger.silenced_warning))
+        return [
+            record
+            for record in silenced
+            if record.args[1]["warning"].endswith(" vulnerability") and record.args[1]["cause"].startswith(cause)
+        ]
 
     def assert_ignored_vulnerability_logged(
         self, dependency: str, location: Location, advisory: str, directive: str
     ) -> None:
         """Assert that a vulnerability warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            message_of(Logger.ignored_warning),
+            message_of(Logger.silenced_warning),
             dependency=dependency,
             location=location,
-            directive=directive,
             warning=_WARNINGS[Scope.VULNERABLE].format(advisory=advisory),
+            cause=f"update-time: {directive}",
         )
 
     def assert_no_globally_ignored_vulnerability_logged(self) -> None:
         """Assert that no vulnerability warning was reported as silenced run-wide, whatever else was logged."""
-        self.assert_none_logged(
-            message_of(Logger.globally_ignored_vulnerability), "vulnerability warning silenced run-wide"
-        )
+        silenced = self._silenced_vulnerabilities("--ignore-vulnerability")
+        self.assertEqual(silenced, [], "Expected that the option did not silence a vulnerability warning")
 
     def assert_globally_ignored_vulnerability_logged(
         self, dependency: str, location: Location, advisory: str, identifiers: str
     ) -> None:
         """Assert that a vulnerability warning silenced run-wide was logged, among the other records at its level."""
         self.assert_logged_among_others(
-            message_of(Logger.globally_ignored_vulnerability),
+            message_of(Logger.silenced_warning),
             dependency=dependency,
-            advisory=advisory,
-            identifiers=identifiers,
             location=location,
+            warning=_WARNINGS[Scope.VULNERABLE].format(advisory=advisory),
+            cause=f"--ignore-vulnerability {identifiers}",
         )
 
-    def assert_ignored_warning_logged(
-        self, scope: Scope, dependency: str, location: Location, directive: str = ANY
-    ) -> None:
+    def assert_ignored_warning_logged(self, scope: Scope, dependency: str, location: Location, directive: str) -> None:
         """Assert that the warning the scope steers was logged as silenced by a marker, among the other records."""
         self.assert_logged_among_others(
-            message_of(Logger.ignored_warning),
+            message_of(Logger.silenced_warning),
             dependency=dependency,
             location=location,
-            directive=directive,
             warning=_WARNINGS[scope],
+            cause=f"update-time: {directive}",
         )
 
     def assert_redundant_ignore_archived_logged(self, dependency: str, location: Location) -> None:
         """Assert that an `ignore[archived]` on a repository that is not archived was warned about as redundant."""
-        self.assert_logged(
-            message_of(Logger.redundant_ignore),
-            dependency=dependency,
-            location=location,
-            directive="ignore[archived]",
-            finding=_finding(Scope.ARCHIVED, ArchivedSubject.REPOSITORY),
-        )
+        reason = _finding(Scope.ARCHIVED, ArchivedSubject.REPOSITORY)
+        self.assert_redundant_directive_logged(reason, dependency, location, "ignore[archived]")
 
     def assert_unsupported_package_manager_logged(self, path: Path, manager: str, supported: str) -> None:
         """Assert that an unsupported package manager was logged for the file."""
         self.assert_logged(
-            message_of(Logger.unsupported_package_manager),
+            message_of(Logger.manager_cannot_run),
             location=Location(path),
             manager=manager,
-            supported=supported,
+            reason=_unsupported_manager_reason(supported),
         )
 
     def assert_invalid_file_logged(self, path: Path, file_format: str) -> None:
         """Assert that a file that does not parse was logged for the file, naming its format."""
         self.assert_logged(message_of(Logger.invalid_file), location=Location(path), format=file_format)
+
+    def assert_unreadable_file_logged(self, path: Path, content: FileContent, error: str | Exception) -> None:
+        """Assert that a file that could not be read was logged, naming what the run read it for and the error."""
+        self.assert_logged(
+            message_of(Logger.unreadable_file), content=content, location=Location(path), error=str(error)
+        )
+
+    def assert_tool_not_on_path_logged(self, path: Path, executable: str) -> None:
+        """Assert that an executable missing from the path was logged at error, for the update of the file."""
+        self.assert_error_logged(
+            message_of(Logger.tool_failed),
+            task=ToolTask.UPDATE,
+            location=Location(path),
+            tool=executable,
+            failure=ToolFailure.NOT_ON_PATH,
+        )
 
     def assert_could_not_fetch_logged(self, *urls: str, status: int = ANY, reason: str = ANY) -> None:
         """Assert that the run's only warnings say each of the URLs could not be fetched, a single one by default."""
@@ -768,7 +728,11 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_uv_dependencies_not_updated_logged(self, path: Path, tool: str) -> None:
         """Assert that the file's dependencies were reported as not updated, because the uv command failed."""
         self.assert_error_logged(
-            message_of(Logger.tool_failed), location=Location(path), task=ToolTask.UPDATE, tool=tool
+            message_of(Logger.tool_failed),
+            location=Location(path),
+            task=ToolTask.UPDATE,
+            tool=tool,
+            failure=ToolFailure.FAILED,
         )
 
     def assert_no_info_logged(self) -> None:
@@ -804,3 +768,22 @@ class ExecutablesOnPathTestCase(LoggingTestCase):
     def leave_off_the_path(self, *missing: str) -> None:
         """Find every executable on the path except the missing ones."""
         self.which.side_effect = lambda executable: None if executable in missing else f"/bin/{executable}"
+
+
+class MockLoggerTestCase(unittest.TestCase):
+    """Base for the tests that assert what the code under test logs to a mock logger."""
+
+    @override
+    def setUp(self) -> None:
+        """Start each test with a fresh mock logger and path."""
+        super().setUp()
+        self.logger = Mock()
+        self.path = Mock()
+
+    @override
+    @contextlib.contextmanager
+    def subTest(self, *args: object, **kwargs: object) -> Generator[None]:
+        """Run the case on calls of its own, so a table cannot forget to reset the logger."""
+        self.logger.reset_mock()
+        with super().subTest(*args, **kwargs):
+            yield

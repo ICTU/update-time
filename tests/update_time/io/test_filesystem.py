@@ -187,10 +187,7 @@ class InsideGitRepositoryTest(unittest.TestCase):
 
     def test_defaults_to_the_working_directory(self):
         """Test that, without an explicit start, the check walks up from the working directory."""
-        with (
-            patch("pathlib.Path.cwd", Mock(return_value=_PROJECT)),
-            self.patch_git_entry(_PROJECT),
-        ):
+        with patch("pathlib.Path.cwd", Mock(return_value=_PROJECT)), self.patch_git_entry(_PROJECT):
             self.assertTrue(inside_git_repository())
 
 

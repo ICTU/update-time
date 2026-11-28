@@ -1,9 +1,7 @@
 """Make a test kill the mutations it is meant to kill, so that an ordinary test run keeps the evidence.
 
-A green test proves nothing on its own: it may assert what the code cannot get wrong, or mock away the collaborator
-it claims to check. A decorated test runs its body, then runs again against each mutation it registers, and fails
-unless the mutation breaks it. The failure names the regression the mutation stands in for. A mutation is applied in
-memory, so an interrupted run does not leave a source file broken.
+A decorated test runs its body, then runs again against each mutation it registers, and fails unless the mutation
+breaks it. A mutation is applied in memory, so an interrupted run does not leave a source file broken.
 """
 
 import ast
@@ -20,7 +18,6 @@ import types
 import unittest
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypedDict, TypeVar, Unpack, cast, override
@@ -146,8 +143,8 @@ class Case:
 class _MutationResult:
     """What checking a mutation showed, and what went wrong where the outcome does not say.
 
-    Stale and broken each have several causes, so a result of either carries the one that applied. Killed and
-    survived speak for themselves. A killed result carries the cases the test's table ran.
+    Stale and broken each have several causes, so a result of either carries the one that applied. A killed result
+    carries the cases the test's table ran.
     """
 
     outcome: Outcome
@@ -159,8 +156,7 @@ class _MutationResult:
 class Mutation:
     """A change to a source file and the regression it stands in for.
 
-    The regression names what breaks when the change is made. It explains the failure when a test does not kill
-    the mutation.
+    The regression names what breaks when the change is made.
 
     A regression that crashes makes the test raise rather than fail, and so does a mutation that broke the test's
     scaffolding. Naming the error in `raises` tells the two apart: the test kills the mutation by raising that
@@ -592,17 +588,11 @@ def _line_starts(source: str) -> tuple[int, ...]:
 
 
 class StaleError(Exception):
-    """Raised where the mutation cannot be applied to the source at all, carrying the reason to report.
-
-    That is the mutation's fault rather than the test's.
-    """
+    """Raised where the mutation cannot be applied to the source at all, carrying the reason to report."""
 
 
 class _SourceError(Exception):
-    """Raised where the mutated source will not import, on its own or when the test module imports it.
-
-    Either way that is the mutation's fault rather than the checker's.
-    """
+    """Raised where the mutated source will not import, on its own or when the test module imports it."""
 
 
 def _executed_module(source: str, module: types.ModuleType) -> types.ModuleType:
@@ -735,12 +725,6 @@ def _killer(mutation: Mutation) -> str:
     return f"the case {mutation.case!r}"
 
 
-# Where a survived registration is recorded, so how often the mechanism catches a test that stopped guarding can
-# be counted later. Only SURVIVED is recorded: it is rare and it is the event the registrations exist for, where a
-# stale snippet is common and fixed within the minute.
-_SURVIVALS = Path("tests/mutation_time/mutation-survivals.md")
-
-
 def _captured[Method](method: Method, name: str) -> Method:
     """Return the `Path` method, raising when a patch has already replaced it.
 
@@ -751,33 +735,15 @@ def _captured[Method](method: Method, name: str) -> Method:
     if not isinstance(method, types.FunctionType) and not os.environ.get(_CHECKED_TEST):
         message = (
             f"src/mutation_time/mutation.py was imported while Path.{name} was patched, "
-            "so the record it keeps is not safe"
+            "so the source it reads would be the patch's"
         )
         raise TypeError(message)
     return method
 
 
-# The methods that look up, read, and write `_SURVIVALS`, and read the source a mutation changes. They are taken from
-# `Path` here, at import, because checking and recording run inside the test that registers the mutation, and that
-# test may have patched them.
-_EXISTS: Final[Callable[[Path], bool]] = _captured(Path.exists, "exists")
+# The method that reads the source a mutation changes. It is taken from `Path` here, at import, because checking runs
+# inside the test that registers the mutation, and that test may have patched it.
 _READ_TEXT = _captured(Path.read_text, "read_text")
-_WRITE_TEXT: Final[Callable[[Path, str], int]] = _captured(Path.write_text, "write_text")
-
-
-def _record_survival(test_name: str, mutation: Mutation) -> None:
-    """Record the survived registration in `_SURVIVALS`, creating the file when it holds nothing yet.
-
-    A mutation of a test module is passed over: the framework's own targets survive by design, so recording them
-    would fill the file with entries that say nothing about a guard. An entry names the day it was recorded on and
-    is written once, so re-running the suite while the test is being fixed adds nothing, where the same
-    registration surviving on a later day is recorded as the separate event it is.
-    """
-    if mutation.module.__name__.startswith("tests."):
-        return
-    recorded = _READ_TEXT(_SURVIVALS) if _EXISTS(_SURVIVALS) else "# Registrations that survived\n\n"
-    if (entry := f"- {datetime.now(UTC):%Y-%m-%d} `{test_name}` — {mutation.regression}\n") not in recorded:
-        _WRITE_TEXT(_SURVIVALS, recorded + entry)
 
 
 def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation, ...]) -> None:
@@ -795,8 +761,6 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
             with unittest.TestCase.subTest(test_case, regression=mutation.regression):
                 result = mutation.check(test_name)
                 results.append(result)
-                if result.outcome is Outcome.SURVIVED:
-                    _record_survival(test_name, mutation)
                 test_case.assertEqual(result.outcome, Outcome.KILLED, _failure(mutation, result))
     if any(result.outcome is not Outcome.KILLED for result in results):
         return  # The mutation that was not killed fails the test case already.

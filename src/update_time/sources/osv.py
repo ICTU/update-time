@@ -120,11 +120,7 @@ def _reported_vulnerabilities(query: _Query, version: str) -> list[Vulnerability
 
 @cache
 def _advisory_records(query: _Query) -> list[_Record] | None:
-    """Return the full records of the advisories OSV returns for the query, or None when they can't be read.
-
-    The request is cached, so references with the same query share it: two references to one action, or two pins of
-    one version in different files.
-    """
+    """Return the full records of the advisories OSV returns for the query, or None when they can't be read."""
     answer = fetch_json(f"{_OSV_API}/v1/query", _LOG, body=_QueryAnswerJSON, method="post", json=query.payload).value
     return None if answer is None else answer.get("vulns", [])
 
@@ -340,12 +336,7 @@ class _Record(TypedDict):
 
 # The name OSV gives each ecosystem.
 _OSV_ECOSYSTEMS: Final[MappingProxyType[Ecosystem, str]] = MappingProxyType(
-    {
-        Ecosystem.PYPI: "PyPI",
-        Ecosystem.NPM: "npm",
-        Ecosystem.MAVEN: "Maven",
-        Ecosystem.GITHUB_ACTIONS: "GitHub Actions",
-    }
+    {Ecosystem.PYPI: "PyPI", Ecosystem.NPM: "npm", Ecosystem.MAVEN: "Maven", Ecosystem.GITHUB_ACTIONS: "GitHub Actions"}
 )
 
 

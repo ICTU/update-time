@@ -106,8 +106,7 @@ def parse_directives(directives: str) -> Marker:
 
     The first token that is not a directive ends the list, so a trailing reason is allowed. Each directive folds
     into the marker with `Marker.merge`, so earlier directives win over later ones. The text up to the last
-    directive is folded in as the marker's `raw` text, so the marker can later be echoed back to the user exactly
-    as they spelled it (see `Marker.raw`).
+    directive is folded in as the marker's `raw` text.
     """
     marker = Marker()
     position = 0
@@ -121,8 +120,7 @@ def _parse_directive(directive_match: re.Match[str]) -> Marker:
     """Return the marker expressed by a single parsed directive.
 
     A bracket left unclosed is reported as an invalid item, keeping its `[` so the message shows that the bracket
-    was never closed. A bare `ignore` is reported as an invalid item too. A closed bracket, even one holding
-    only an unrecognised item, is handled by `_parse_bracket`.
+    was never closed. A bare `ignore` is reported as an invalid item too.
     """
     if (unterminated := directive_match.group("unterminated")) is not None:
         return Marker(invalid_item=f"[{unterminated}")
@@ -201,9 +199,7 @@ def _parse_advisory_item(verb: Verb, item: str) -> Marker | None:
 def _parse_bound(verb: Verb, item: str) -> VersionBound | None:
     """Parse a marker item into a version bound, or None when the item is not a bound.
 
-    An `update` bound whose specifier is unparsable raises `InvalidSpecifier` rather than returning None, so a
-    caller can tell a malformed bound (which it should report) from an item that is simply not a bound. A bound
-    built here holds exactly one of its two forms, the specifier or the level.
+    An `update` bound whose specifier is unparsable raises `InvalidSpecifier` rather than returning None.
     """
     if (level := next((level for level in UpdateLevel if item == f"{level.name.lower()}-update"), None)) is not None:
         return VersionBound(verb, level=level, item=item)

@@ -132,7 +132,7 @@ def _pin_resolver(get_yank: YankGetter) -> ReferenceResolver[Reference, Resolved
     def resolve(pins: Iterable[Reference]) -> Iterable[ResolvedReference]:
         return (
             ResolvedReference.from_reference(
-                pin, release=DependencyVersion(pin.current_version, yank=get_yank(pin.dependency, pin.current_version))
+                pin, version=DependencyVersion(pin.current_version, yank=get_yank(pin.dependency, pin.current_version))
             )
             for pin in pins
         )

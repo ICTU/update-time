@@ -18,11 +18,23 @@ MANAGED_BY_COMMENT: Final[str] = "managed by Update-time — remove this comment
 CONFIGURED_EXCLUDE_NEWER: Final[str] = "Some(Absolute(2024-06-01T22:00:00Z))"
 UNSET_EXCLUDE_NEWER: Final[str] = "None"
 
-# Answers to `uv --show-settings` that do not say whether uv's settings hold an `exclude-newer`.
-UNREADABLE_SETTINGS: Final[dict[str, RunAnswer]] = {
-    "a format without the exclude-newer": Mock(stdout="ResolverSettings {}\n", stderr=""),
-    "a uv that fails": CalledProcessError(2, "uv", "", "error: unexpected argument '--show-settings'"),
+# Answers to `uv --show-settings` that do not say whether uv's settings hold an `exclude-newer`, and the reason the
+# warning about them gives.
+UNREADABLE_SETTINGS: Final[dict[str, tuple[RunAnswer, str]]] = {
+    "a format without the exclude-newer": (
+        Mock(stdout="ResolverSettings {}\n", stderr=""),
+        "uv lists its settings in a form Update-time does not read",
+    ),
+    "a uv that fails": (
+        CalledProcessError(2, "uv", "", "error: unexpected argument '--show-settings'\n"),
+        "error: unexpected argument '--show-settings'",
+    ),
 }
+
+
+def unreadable_settings_fields(reason: str) -> dict[str, str]:
+    """Return the fields of the warning that uv's settings do not say whether they hold an `exclude-newer`."""
+    return {"tool": "uv", "setting": "exclude-newer", "reason": reason}
 
 
 class UvSettingsTestCase(ExecutablesOnPathTestCase):

@@ -3,12 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import (
-    NO_PROJECT,
-    NO_RELEASE,
-    DependencyVersion,
-    Project,
-)
+from update_time.domain.dependency import NO_PROJECT, NO_VERSION, DependencyVersion, Project
 from update_time.domain.marker import NO_MARKER, Marker
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.vulnerability import Vulnerability
@@ -55,12 +50,12 @@ def reference(dependency: str, location: Location, version: str = "") -> Referen
 def resolved_reference(
     dependency: str,
     location: Location,
-    release: DependencyVersion = NO_RELEASE,
+    version: DependencyVersion = NO_VERSION,
     marker: Marker = NO_MARKER,
     project: Project = NO_PROJECT,
 ) -> ResolvedReference:
-    """Return the resolved reference a check is handed: the reference, its release, its marker, and its project."""
-    return ResolvedReference(dependency, "", location, release=release, marker=marker, project=project)
+    """Return the resolved reference a check is handed: the reference, its version, its marker, and its project."""
+    return ResolvedReference(dependency, "", location, version=version, marker=marker, project=project)
 
 
 def bound(verb: Verb, item: str) -> VersionBound:

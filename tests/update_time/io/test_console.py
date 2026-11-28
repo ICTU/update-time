@@ -14,13 +14,7 @@ from mutation_time.mutation import kills
 from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion
 from update_time.formats import restructured_text
 from update_time.io import console as console_module
-from update_time.io.console import (
-    _MARKDOWN_PARSER,
-    LOG_THEME,
-    MESSAGE_NAME,
-    _LogHighlighter,
-    configure_logging,
-)
+from update_time.io.console import _MARKDOWN_PARSER, LOG_THEME, MESSAGE_NAME, _LogHighlighter, configure_logging
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.command import Command
 
@@ -91,7 +85,7 @@ class RecordRenderingTests(TestCase):
     @staticmethod
     def report_pin(log: Logger) -> None:
         """Report that `pkg` was pinned to a version."""
-        log.pinned_version(reference("pkg", create_location("requirements.txt", 3)), DependencyVersion("1.2.0"))
+        log.pinned(reference("pkg", create_location("requirements.txt", 3)), DependencyVersion("1.2.0"))
 
     @kills.delete(
         console_module.named_message,
@@ -123,7 +117,7 @@ class RecordRenderingTests(TestCase):
     )
     def test_the_name_of_a_message_is_a_hyperlink(self):
         """Test that the name of a log message is a link a terminal can open, to the name's heading in the index."""
-        url = "https://github.com/ICTU/update-time/blob/main/docs/log-messages.md#pinned-to-version"
+        url = "https://github.com/ICTU/update-time/blob/main/docs/log-messages.md#pinned"
         self.assertIn(f";{url}\x1b\\", self.rendered(self.report_pin, styles=True))
 
     @kills.replace(
@@ -142,7 +136,7 @@ class RecordRenderingTests(TestCase):
         """Test that the name of a log message renders dim, with the parentheses around it, and the message does not."""
         rendered = self.rendered(self.report_pin, styles=True)
         self.assertIn("\x1b[2m (\x1b[0m", rendered)
-        self.assertIn("\x1b\\\x1b[2mpinned-to-version\x1b[0m", rendered)
+        self.assertIn("\x1b\\\x1b[2mpinned\x1b[0m", rendered)
         self.assertIn("\x1b[2m)\x1b[0m", rendered)
         self.assertIn("Pinned", rendered)
         self.assertNotIn("\x1b[2mPinned", rendered)
@@ -173,10 +167,9 @@ class RecordRenderingTests(TestCase):
         "a line of changes that opens with an HTML anchor is dropped, its text with it",
         case="beside text",
     )
-    @kills.replace(
+    @kills.delete(
         console_module._ChangelogMarkdown._without_blank_blocks,
-        "{index - 1, index, index + 1} & tags_alone",
-        "{index - 1, index} & tags_alone",
+        ", index + 1",
         "an HTML anchor alone in a quote or a list item closes that block early, so the changes after it lose the "
         "quote or vanish",
         case="in a quote",
@@ -343,10 +336,9 @@ class RecordRenderingTests(TestCase):
         changes = Changes("3.13.0 (2026-10-23)\n----\n\n* Added Python 3.15.", markdown=False, url="")
         self.assert_boxed(self.rendered_changes(changes), ["3.13.0 (2026-10-23)", "", "* Added Python 3.15."])
 
-    @kills.replace(
+    @kills.force_true(
         restructured_text.heading_underline,
-        "and (len(underline) >= len(title) or len(underline) >= _SHORTEST_UNDERLINE)",
-        "and True",
+        "(len(underline) >= len(title) or len(underline) >= _SHORTEST_UNDERLINE)",
         "the box drops the `...` that says the changes were cut short, as if it underlined the line above",
     )
     def test_a_short_run_of_punctuation_in_changes_that_are_not_markdown_is_shown_as_written(self):

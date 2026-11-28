@@ -23,7 +23,7 @@ Update-time rewrites the files in place and logs what it did:
                     Changelog: https://github.com/python-humanize/humanize/releases/tag/4.15.0
            INFO     Pinned python in Dockerfile:1 to
                     3.14.6@sha256:9f2c1e7bd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
-                    (pinned-to-hash)
+                    (pinned)
            INFO     New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0
                     (new-version)
                     No changelog available!
@@ -265,8 +265,8 @@ A [bound](#bounding-an-update) does not prevent pinning, so `allow[update<3.13]`
 Update-time leaves a floating tag as it is where it does not find a version tag serving the same image, or cannot read the digest the tag serves. It reports why at `DEBUG`:
 
 ```console
-DEBUG Floating tag acme/api:dev in docker-compose.yml:7 was left as it is: no tag naming a version serves the same image (floating-tag-left-as-is)
-DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry does not serve a manifest for edge, so what that tag serves is unknown (floating-tag-left-as-is)
+DEBUG Reference acme/api:dev in docker-compose.yml:7 was left as it is: no tag naming a version serves the same image (reference-left-as-is)
+DEBUG Reference ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry does not serve a manifest for edge, so what that tag serves is unknown (reference-left-as-is)
 ```
 
 Where Update-time reads the digest but does not find a version tag, and the reference records another digest, it warns about the [hash drift](#hash-drift) instead. Where it cannot read the digest at all, it does not warn about drift, since it cannot tell whether the floating tag was re-pointed.
@@ -300,10 +300,10 @@ What Update-time adds depends on what the reference can hold:
 Sometimes a reference already carries a hash pin, and only what it points at changed. Update-time warns about that and leaves the pin unchanged. It never silently adopts a changed target, which would defeat the immutability a pin exists to provide. Hash drift takes five forms:
 
 ```console
-WARNING Digest drift for python:3.14 in Dockerfile:1: pinned to sha256:… but the registry now serves sha256:…; the pin was left unchanged, verify the change is expected before updating the pin (digest-drift)
-WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pinned to commit … but the tag now points at …; the pin was left unchanged, verify the tag was moved deliberately before updating the pin (ref-drift)
-WARNING Branch drift for actions/checkout@main in .github/workflows/ci.yml:17: pinned to commit … but the branch has moved on to …; the pin was left unchanged, verify the branch moved to a commit you trust before updating the pin (ref-drift)
-WARNING Ref drift for actions/checkout@stable-2024 in .github/workflows/ci.yml:17: pinned to commit … but the ref now points at …; the pin was left unchanged, verify the ref moved to a commit you trust before updating the pin (ref-drift)
+WARNING Digest drift for python:3.14 in Dockerfile:1: pinned to sha256:… but the registry now serves sha256:…; the pin was left unchanged, verify the change is expected before updating the pin (hash-drift)
+WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pinned to commit … but the tag now points at …; the pin was left unchanged, verify the tag was moved deliberately before updating the pin (hash-drift)
+WARNING Branch drift for actions/checkout@main in .github/workflows/ci.yml:17: pinned to commit … but the branch has moved on to …; the pin was left unchanged, verify the branch moved to a commit you trust before updating the pin (hash-drift)
+WARNING Ref drift for actions/checkout@stable-2024 in .github/workflows/ci.yml:17: pinned to commit … but the ref now points at …; the pin was left unchanged, verify the ref moved to a commit you trust before updating the pin (hash-drift)
 WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares sha256-… but jsDelivr serves sha256-…; the hash was left unchanged, and since npm does not republish a version it is probably the declared hash that is wrong (integrity-hash-mismatch)
 ```
 
@@ -795,9 +795,9 @@ WARNING Redundant update-time directive ignore[archived] for org.apache.commons:
 Update-time reports an `ignore[yanked]` or an `ignore[archived]` as redundant where its check finds nothing to silence. A suppression can outlive what it was written for, and the check is what tells you it did:
 
 ```console
-WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: version 4.15.0 was not yanked (redundant-ignore)
-WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: the project is not archived (redundant-ignore)
-WARNING Redundant update-time directive ignore[archived] for actions/checkout in .github/workflows/ci.yml:17: the repository is not archived (redundant-ignore)
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: version 4.15.0 was not yanked (redundant-directive)
+WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: the project is not archived (redundant-directive)
+WARNING Redundant update-time directive ignore[archived] for actions/checkout in .github/workflows/ci.yml:17: the repository is not archived (redundant-directive)
 ```
 
 Update-time does not report such a directive as redundant when it cannot reach the dependency's source.
@@ -805,7 +805,7 @@ Update-time does not report such a directive as redundant when it cannot reach t
 Update-time reports a staleness threshold such as `set[stale-after=90]` as redundant where it and `--stale-after` judge the newest release alike, so both warn about it or neither does:
 
 ```console
-WARNING Redundant update-time directive set[stale-after=90] for humanize in docs/requirements.txt:12: newest release 4.15.0 was published 30 days ago, which the threshold of 90 days and the default of 365 days judge alike (redundant-stale-after)
+WARNING Redundant update-time directive set[stale-after=90] for humanize in docs/requirements.txt:12: newest release 4.15.0 was published 30 days ago, which the threshold of 90 days and the default of 365 days judge alike (redundant-directive)
 ```
 
 Under `--stale-after 0`, a threshold is redundant until the newest release is older than the threshold, since the run itself does not warn about any release. So `set[stale-after=0]` is always redundant there.
@@ -815,7 +815,7 @@ Under `--stale-after 0`, a threshold is redundant until the newest release is ol
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
 
 ```console
-WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability (redundant-ignore)
+WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability (redundant-directive)
 ```
 
 Update-time judges a marker naming several advisories together. It warns only when none of them matches a vulnerability the version has.
@@ -823,7 +823,7 @@ Update-time judges a marker naming several advisories together. It warns only wh
 Update-time reports a risk level such as `set[vulnerability-level=high]` as redundant where it and `--vulnerability-level` report the same vulnerabilities in the version. Such a level is one the reference no longer needs:
 
 ```console
-WARNING Redundant update-time directive set[vulnerability-level=high] for django in docs/requirements.txt:12: the risk level high and the default level low report the same vulnerabilities in version 4.2.0 (redundant-vulnerability-level)
+WARNING Redundant update-time directive set[vulnerability-level=high] for django in docs/requirements.txt:12: the risk level high and the default level low report the same vulnerabilities in version 4.2.0 (redundant-directive)
 ```
 
 #### Where a marker does not steer the update
@@ -930,8 +930,8 @@ A [bound](#bounding-an-update) can be redundant in two ways:
 Update-time reports the two as:
 
 ```console
-WARNING Redundant update-time directive allow[update>=3.12] for python in Dockerfile:2: this bound never has an effect at version 3.12 (redundant-bound)
-WARNING Redundant update-time directive ignore[update>=3.12] for python in Dockerfile:2: this bound blocks every update at version 3.12 (redundant-bound)
+WARNING Redundant update-time directive allow[update>=3.12] for python in Dockerfile:2: this bound never has an effect at version 3.12 (redundant-directive)
+WARNING Redundant update-time directive ignore[update>=3.12] for python in Dockerfile:2: this bound blocks every update at version 3.12 (redundant-directive)
 ```
 
 Update-time also reports a bound as redundant on a reference whose version the bound cannot narrow. Besides the references under [Where a marker does not steer the update](#where-a-marker-does-not-steer-the-update), those are:
@@ -1563,11 +1563,11 @@ A Dockerfile's `FROM` can name its image or its tag through build arguments, as 
 Update-time leaves a `FROM` alone where it cannot tell which line the new version goes on, such as where a build argument does not have a default. It leaves every other reference through a variable or a template alone as well, such as `redis:7.2-${VARIANT}` or `{{ .Values.tag }}`. It reports at `DEBUG` why it does not ask a registry about an image:
 
 ```console
-DEBUG Reference acme/api:1.2.3 in docker-compose.yml:4 was left as it is: the Compose file builds this image (image-not-looked-up)
-DEBUG Reference redis:7.2-${VARIANT} in docker-compose.yml:7 was left as it is: it names its image or tag through a variable or a template (image-not-looked-up)
-DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it writes its version across more than one line of the Dockerfile (image-not-looked-up)
-DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it shares its build argument with a FROM line that names another image or tag, or carries another marker (image-not-looked-up)
-DEBUG Reference python:$PY in Dockerfile:2 was left as it is: its digest overrules the build arguments it names (image-not-looked-up)
+DEBUG Reference acme/api:1.2.3 in docker-compose.yml:4 was left as it is: the Compose file builds this image (reference-left-as-is)
+DEBUG Reference redis:7.2-${VARIANT} in docker-compose.yml:7 was left as it is: it names its image or tag through a variable or a template (reference-left-as-is)
+DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it writes its version across more than one line of the Dockerfile (reference-left-as-is)
+DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it shares its build argument with a FROM line that names another image or tag, or carries another marker (reference-left-as-is)
+DEBUG Reference python:$PY in Dockerfile:2 was left as it is: its digest overrules the build arguments it names (reference-left-as-is)
 ```
 
 Update-time leaves a reference alone as well where the registry does not serve the image's repository. That happens for an image the project builds itself, a mistyped image name, and a private image Update-time cannot authenticate to. Update-time cannot tell these apart, so it reports the reference at `DEBUG`, whether its tag floats or not.

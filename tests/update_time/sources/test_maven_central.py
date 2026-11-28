@@ -86,11 +86,7 @@ _GUAVA_PARENT_POM: Final[str] = _guava_pom_url("guava-parent")
 # The metadata files a listing closes with, each with the bytes the repository sizes it at: the metadata itself,
 # and the checksums over it, whose lengths are those of an MD5 and a SHA-1 written out in hexadecimal.
 _METADATA_FILES: Final[MappingProxyType[str, str]] = MappingProxyType(
-    {
-        "maven-metadata.xml": "5927",
-        "maven-metadata.xml.md5": "32",
-        "maven-metadata.xml.sha1": "40",
-    }
+    {"maven-metadata.xml": "5927", "maven-metadata.xml.md5": "32", "maven-metadata.xml.sha1": "40"}
 )
 
 
@@ -113,10 +109,9 @@ class ProjectTest(LoggingTestCase):
         "a pom naming its repository in a connection alone is read as naming none, so its archival goes unread",
         case="connection",
     )
-    @kills.replace(
+    @kills.delete(
         pom_xml,
-        '("url", "connection", "developerConnection")',
-        '("url", "connection")',
+        ', "developerConnection"',
         "a pom naming its repository in a developer connection alone is read as naming none",
         case="developerConnection",
     )
@@ -258,9 +253,7 @@ class ProjectTest(LoggingTestCase):
         self.assert_could_not_fetch_logged(_GUAVA_POM, status=404, reason="Not Found")
 
     @kills.delete_statement(
-        _pom,
-        "_LOG.invalid_response(url, FORMAT)",
-        "an artefact pom whose XML does not parse goes unreported",
+        _pom, "_LOG.invalid_response(url, FORMAT)", "an artefact pom whose XML does not parse goes unreported"
     )
     def test_a_pom_whose_xml_does_not_parse(self):
         """Test that an artefact whose pom does not parse is warned about, and leaves GitHub unasked."""
@@ -313,10 +306,9 @@ class LacksAGitHubRepositoryTest(LoggingTestCase):
         "a pom that fails to fetch reads as lacking a repository, so its `archived` scope is reported as redundant",
         case="a pom that fails to fetch",
     )
-    @kills.replace(
+    @kills.force_true(
         _pom_repository,
-        "LookedUp(None, absent=parent_pom.absent)",
-        "LookedUp(None, absent=True)",
+        "parent_pom.absent",
         "a parent pom that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
         case="a parent pom that fails to fetch",
     )
@@ -482,13 +474,7 @@ class GetChangesTest(LoggingTestCase):
         "a release tagged with the version behind `version-` goes unmatched",
         case="version-",
     )
-    @kills.replace(
-        maven_central,
-        '_VERSION_PREFIXES: Final[tuple[str, ...]] = ("r", "version-", "REL")',
-        '_VERSION_PREFIXES: Final[tuple[str, ...]] = ("r", "version-")',
-        "a release tagged with the version behind `REL` goes unmatched",
-        case="REL",
-    )
+    @kills.delete(maven_central, ', "REL"', "a release tagged with the version behind `REL` goes unmatched", case="REL")
     def test_a_release_tagged_with_a_prefix_other_than_v_matches(self):
         """Test that a release tagged with the version behind `r`, `version-`, or `REL` holds the version's changes."""
         cases = {
@@ -701,10 +687,9 @@ class ServesTest(LoggingTestCase):
         "as redundant",
         case="a server error",
     )
-    @kills.replace(
+    @kills.force_true(
         serves,
-        "return not _listing(artefact).absent",
-        "return True",
+        "not _listing(artefact).absent",
         "an artefact Maven Central does not serve reads as served, so its scopes are not reported as redundant",
         case="a missing listing",
     )
@@ -725,12 +710,7 @@ class ServesTest(LoggingTestCase):
 class PublicationTest(LoggingTestCase):
     """Unit tests for finding a version's row in the listing to date the version by."""
 
-    @kills.replace(
-        publication,
-        'if row["version"] == version)',
-        'if row["version"])',
-        "a new version is dated by whichever row the listing holds first",
-    )
+    @kills.delete(publication, " == version", "a new version is dated by whichever row the listing holds first")
     @kills.delete(
         publication,
         ", None",

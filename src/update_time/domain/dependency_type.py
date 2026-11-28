@@ -1,7 +1,4 @@
-"""The kinds of dependency Update-time updates, and the files that declare one.
-
-The command-line help names these files.
-"""
+"""The kinds of dependency Update-time updates, and the files that declare one."""
 
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Final
@@ -60,26 +57,17 @@ class _DependencyTypes:
 
 DEPENDENCY_TYPES: Final[_DependencyTypes] = _DependencyTypes(
     python_dependencies=DependencyType(
-        "Python dependencies",
-        (PYPROJECT_TOML, REQUIREMENTS_TXT, INLINE_SCRIPT_METADATA),
+        "Python dependencies", (PYPROJECT_TOML, REQUIREMENTS_TXT, INLINE_SCRIPT_METADATA)
     ),
     npm_dependencies=DependencyType(
-        "npm, pnpm, yarn, and bun dependencies",
-        (PACKAGE_JSON, PNPM_WORKSPACE_YAML, YARNRC_YML),
+        "npm, pnpm, yarn, and bun dependencies", (PACKAGE_JSON, PNPM_WORKSPACE_YAML, YARNRC_YML)
     ),
     maven_dependencies=DependencyType("Maven dependencies", (POM_XML,)),
     node_engine_version=DependencyType("Node engine version", (PACKAGE_JSON,)),
     python_version=DependencyType("Python version", (PYTHON_VERSION_FILE,)),
     docker_images=DependencyType(
         "Docker images",
-        (
-            DOCKERFILES,
-            CIRCLE_CI_CONFIGS,
-            GITLAB_CI_CONFIG,
-            DOCKER_COMPOSE_FILES,
-            HELM_CHARTS,
-            DEVCONTAINER_CONFIGS,
-        ),
+        (DOCKERFILES, CIRCLE_CI_CONFIGS, GITLAB_CI_CONFIG, DOCKER_COMPOSE_FILES, HELM_CHARTS, DEVCONTAINER_CONFIGS),
     ),
     github_actions=DependencyType("GitHub Actions", (GITHUB_WORKFLOWS,)),
     pre_commit_hooks=DependencyType("Pre-commit hooks", (PRE_COMMIT_CONFIG,)),

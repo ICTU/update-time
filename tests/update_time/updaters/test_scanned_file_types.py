@@ -8,9 +8,11 @@ from mutation_time.mutation import kills
 from update_time.domain.file_type import (
     CIRCLE_CI_CONFIGS,
     DEVCONTAINER_CONFIGS,
+    DOCKER_COMPOSE_FILES,
     DOCKERFILES,
     GITHUB_WORKFLOWS,
     GITLAB_CI_CONFIG,
+    HELM_CHARTS,
     INLINE_SCRIPT_METADATA,
     PACKAGE_JSON,
     POM_XML,
@@ -21,11 +23,8 @@ from update_time.domain.file_type import (
     SPHINX_CONFIG,
 )
 from update_time.updaters import (
-    update_circle_ci_config,
-    update_devcontainer,
     update_dockerfile_base_image,
     update_github_action,
-    update_gitlab_ci_config,
     update_jsdelivr,
     update_node_engine,
     update_pom_xml,
@@ -35,21 +34,19 @@ from update_time.updaters import (
     update_python_version_file,
     update_requirements_txt,
 )
+from update_time.updaters.update_container_images import _update_container_images
 
 if TYPE_CHECKING:
     from types import ModuleType
 
     from update_time.domain.file_type import FileType
 
-# The file type each updater scans, and the function that scans it. `_update_manifest_images` is left out: it scans
-# two file types, so `ScannedManifestsTest` pins both of them. So is `update_package_json`, whose tests find each file
-# by its pattern.
+# The file type each updater scans, and the function that scans it. `update_container_images` is left out: it scans
+# five file types, so a test of its own pins them. So is `update_package_json`, whose tests find each file by its
+# pattern.
 _SCANS: Final[tuple[tuple[ModuleType, str, FileType], ...]] = (
-    (update_circle_ci_config, "_update_circle_ci_config", CIRCLE_CI_CONFIGS),
-    (update_devcontainer, "_update_devcontainers", DEVCONTAINER_CONFIGS),
     (update_dockerfile_base_image, "_update_dockerfiles", DOCKERFILES),
     (update_github_action, "_update_github_actions", GITHUB_WORKFLOWS),
-    (update_gitlab_ci_config, "_update_gitlab_ci_config", GITLAB_CI_CONFIG),
     (update_jsdelivr, "_update_jsdelivrs", SPHINX_CONFIG),
     (update_node_engine, "_update_node_engines", PACKAGE_JSON),
     (update_pom_xml, "_update_pom_xmls", POM_XML),
@@ -86,15 +83,25 @@ class ScannedFileTypesTest(unittest.TestCase):
         self.assertNotEqual(_SCANS, ())  # An empty table would pass the assertion below without examining anything
         for module, function, expected in _SCANS:
             with self.subTest(script=_script(module)):
-                with patch(f"{module.__name__}.{_walker(module)}", return_value=[]) as walk:
+                with patch(f"{module.__name__}.glob_for", return_value=[]) as walk:
                     getattr(module, function)()
                 walk.assert_called_once()
                 self.assertEqual(walk.call_args.args, (expected,))
 
-
-def _walker(module: ModuleType) -> str:
-    """Return the name the module hands its file type to, so the test patches the one that module uses."""
-    # The names an updater hands its file type to: `glob_for` where it walks the files itself, `update_yaml_files`
-    # where the walk is done for it because each file is parsed before its references are rewritten.
-    walkers = ("glob_for", "update_yaml_files")
-    return next(name for name in walkers if hasattr(module, name))
+    @kills.replace(
+        _update_container_images,
+        "glob_for(GITLAB_CI_CONFIG)",
+        "glob_for(HELM_CHARTS)",
+        "the container image script walks the Helm charts in place of the GitLab CI config",
+    )
+    def test_container_image_script_scans_each_image_file_type(self):
+        """Test that the container image script walks each file type whose images it updates, once."""
+        module = _update_container_images.__module__
+        with (
+            patch(f"{module}.update_yaml_files") as update_yaml_files,
+            patch(f"{module}.glob_for", return_value=[]) as walk,
+        ):
+            _update_container_images()
+        walked = [call.args[0] for call in (*update_yaml_files.call_args_list, *walk.call_args_list)]
+        expected = [CIRCLE_CI_CONFIGS, DOCKER_COMPOSE_FILES, GITLAB_CI_CONFIG, HELM_CHARTS, DEVCONTAINER_CONFIGS]
+        self.assertEqual(walked, expected)

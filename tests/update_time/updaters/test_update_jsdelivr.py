@@ -11,7 +11,6 @@ from update_time.domain.marker import Scope
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.references.resolve import _archival_alone
-from update_time.sources.jsdelivr import version_getter
 from update_time.updaters.update_jsdelivr import _update_jsdelivrs
 
 from tests.file_mocks import mock_path
@@ -81,12 +80,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         deprecated: dict[str, str] | None = None,
         served_hash: str = HASH2,
     ) -> None:
-        """Let the registries offer the versions, newest first, each published on the given date.
-
-        The three responses are the fixed order the source asks for them in: the jsDelivr version list, the npm
-        registry document carrying each version's publication date and deprecation, and the flat file listing
-        carrying `served_hash` as the integrity hash of the referenced file.
-        """
+        """Let the registries offer the versions, newest first, each published on the given date."""
         mock_get.side_effect = [
             jsdelivr_versions(*versions),
             npm_registry(dict.fromkeys(versions, published), deprecated),
@@ -221,11 +215,6 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3))
 
-    @kills.delete(
-        version_getter,
-        ", unserved=Unserved.VERSION",
-        "a URL whose version is not PEP 440 is looked up at the npm registry and checked for staleness",
-    )
     @kills.force_false(
         _archival_alone,
         "not get_project.declares_archival(dependency)",

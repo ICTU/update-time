@@ -3,7 +3,7 @@
 import re
 from typing import ClassVar, Final, override
 
-from update_time.io.process import run_unlogged
+from update_time.io.process import result_or_failure
 from update_time.primitives.command import Command
 
 from .requirements_compiler import RequirementsCompiler
@@ -25,18 +25,13 @@ class PipCompile(RequirementsCompiler):
     def settings_hold_cutoff(self, command: Command) -> bool:
         """Return whether pip's settings hold an `uploaded-prior-to`.
 
-        pip-compile runs on a pip of its own, so a `pip` that cannot list its settings stops nothing. Update-time warns
-        and treats the settings as holding none.
+        pip-compile runs on a pip of its own, so a `pip` that cannot list its settings stops nothing.
         """
-        config = run_unlogged(Command("pip", "config", "list"), cwd=self.compiled.compile_directory)
-        if isinstance(config, OSError):
-            reason = str(config)
-        elif not config.succeeded:
-            reason = config.stderr.strip() or "pip failed without saying why"
-        else:
-            return bool(_CONFIG_UPLOADED_PRIOR_TO.search(config.stdout))
-        self.log.settings_unreadable(self.compiled.path, "pip", "uploaded-prior-to", reason)
-        return False
+        config = result_or_failure(Command("pip", "config", "list"), self.compiled.compile_directory)
+        if isinstance(config, str):
+            self.log.settings_unreadable(self.compiled.path, "pip", "uploaded-prior-to", config)
+            return False
+        return bool(_CONFIG_UPLOADED_PRIOR_TO.search(config.stdout))
 
     @override
     def duration(self, days: int) -> str:

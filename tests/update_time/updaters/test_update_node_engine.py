@@ -72,12 +72,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         _update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
         error = "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
-        self.assert_logged(
-            message_of(Logger.unreadable_file),
-            content=FileContent.NODE_ENGINE,
-            location=Location(unreadable),
-            error=error,
-        )
+        self.assert_unreadable_file_logged(unreadable, FileContent.NODE_ENGINE, error)
 
     def test_a_node_version_outside_the_engines_section_is_left_as_it_is(self, mock_glob: Mock):
         """Test that a node version another section declares is not taken for the engine."""
@@ -148,7 +143,9 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         mock_package_json = self.update_engine(mock_glob, _package_json(section="volta", directives="ignore[update]"))
         mock_package_json.write_text.assert_not_called()
         self.assert_ignored_logged("node", Location(mock_package_json, 6), "ignore[update]")
-        self.assertEqual(len(self.records_of(message_of(Logger.ignored))), 1)  # The volta pin is steered by no marker.
+        self.assertEqual(
+            len(self.records_of(message_of(Logger.held_back), versions="every version")), 1
+        )  # The volta pin is steered by no marker.
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -163,10 +160,9 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_bound_in_the_update_time_field_admits_a_version_it_covers(self, mock_glob: Mock):
         """Test that a bounded engine adopts the newest version the bound admits, rather than the newest release."""
-        mock_package_json = self.update_engine(
-            mock_glob, _package_json(directives="allow[update<20]"), latest=("19", "20")
-        )
-        mock_package_json.write_text.assert_called_once_with(_package_json("19", directives="allow[update<20]"))
+        directives = "allow[update<20]"
+        mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives), latest=("19", "20"))
+        mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
         self.assert_new_version_logged("node", docker_hub_version("19"), Location(mock_package_json, 3))
         self.assert_no_warnings_logged()
 
@@ -265,9 +261,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
             with self.subTest(case=case):
                 mock_package_json = self.update_engine(mock_glob, _package_json(field=field))
                 mock_package_json.write_text.assert_called_once_with(_package_json("19", field=field))
-                self.assert_invalid_bracket_item_logged(
-                    "node", Location(mock_package_json, 3), "update-time.engines.node"
-                )
+                location = Location(mock_package_json, 3)
+                self.assert_invalid_bracket_item_logged("node", location, "update-time.engines.node")
                 self.assert_recognised_marker_spelled(spelling)
 
 

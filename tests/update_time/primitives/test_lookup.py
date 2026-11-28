@@ -15,10 +15,9 @@ class LookedUpTest(unittest.TestCase):
         "a passed-on lookup of an absent resource reads as a failed request",
         case="absent",
     )
-    @kills.replace(
+    @kills.force_true(
         LookedUp.failure,
-        "absent=self.absent",
-        "absent=True",
+        "self.absent",
         "a passed-on lookup of a failed request reads as an absent resource",
         case="failed",
     )

@@ -12,7 +12,7 @@ from mutation_time.mutation import kills
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN, CooldownWalk
 from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDependency, Release, Unserved
-from update_time.io.log import Logger
+from update_time.io.log import _UNDATED_COMMIT, Logger
 from update_time.primitives.timestamp import utc_date_and_time
 from update_time.sources import github
 from update_time.sources.github import (
@@ -42,7 +42,7 @@ from tests.http_mocks import mock_response, patch_get, patch_get_response, reque
 from tests.update_time.base_test_cases import CacheClearingTestCase, LoggingTestCase
 from tests.update_time.domain_objects import bound, days_ago
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2, FRESH_DATE, PAST_COOLDOWN_DATE
-from tests.update_time.io.log_messages import message_of
+from tests.update_time.io.log_messages import message_of, unknown_version_date
 
 from .github_answers import (
     GITHUB_RATE_LIMITED_REASON,
@@ -92,53 +92,33 @@ class GitHubURLtoRawTest(unittest.TestCase):
 class GitHubRepositoryTest(unittest.TestCase):
     """Unit tests for reading the GitHub repository a URL names."""
 
-    def test_non_github_url(self):
-        """Test that a non-GitHub URL does not name a repository, scp-like ssh URLs included."""
-        self.assert_repository(None, "https://example.org", "git@gitlab.com:ICTU/update-time.git")
-
-    def assert_repository(self, expected: GitHubRepository | None, *urls: str) -> None:
-        """Assert that each URL names the expected repository."""
-        for url in urls:
+    def test_the_repository_a_url_names(self):
+        """Test which GitHub repository a URL names, if any."""
+        update_time = GitHubRepository("ICTU", "update-time")
+        cases = {
+            "https://example.org": None,
+            "git@gitlab.com:ICTU/update-time.git": None,
+            "https://github.com/ICTU/quality-time": GitHubRepository("ICTU", "quality-time"),
+            "https://github.com/ICTU": None,
+            "https://github.com/ICTU/": None,
+            "git+https://github.com/ICTU/update-time.git": update_time,
+            "git+ssh://git@github.com/ICTU/update-time.git": update_time,
+            "git@github.com:ICTU/update-time.git": update_time,
+            "git@github.com:ICTU/update-time": update_time,
+            "https://github.com/ICTU/update-time#readme": update_time,
+        }
+        for url, expected in cases.items():
             with self.subTest(url=url):
                 self.assertEqual(github_repository(url), expected)
-
-    def test_github_url(self):
-        """Test that a GitHub URL names a repository."""
-        self.assert_repository(GitHubRepository("ICTU", "quality-time"), "https://github.com/ICTU/quality-time")
 
     @kills.delete(
         github.github_repository,
         " and path_parts[0] != _GITHUB_SPONSORS_PATH",
         "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
-        case="https://github.com/sponsors/ICTU",
     )
     def test_github_sponsors_url(self):
         """Test that a GitHub sponsors URL does not name a repository."""
-        self.assert_repository(None, "https://github.com/sponsors/ICTU")
-
-    def test_github_url_without_repo(self):
-        """Test that a GitHub URL naming an owner alone does not name a repository, with or without a trailing slash."""
-        self.assert_repository(None, "https://github.com/ICTU", "https://github.com/ICTU/")
-
-    def test_npm_git_url(self):
-        """Test that an npm-style git+https URL with a .git suffix is parsed."""
-        self.assert_repository(GitHubRepository("ICTU", "update-time"), "git+https://github.com/ICTU/update-time.git")
-
-    def test_npm_ssh_url(self):
-        """Test that an npm-style git+ssh URL, whose user information precedes the host, is parsed."""
-        self.assert_repository(GitHubRepository("ICTU", "update-time"), "git+ssh://git@github.com/ICTU/update-time.git")
-
-    def test_scp_like_ssh_url(self):
-        """Test that the scp-like ssh form is parsed, with and without the `.git` suffix."""
-        self.assert_repository(
-            GitHubRepository("ICTU", "update-time"),
-            "git@github.com:ICTU/update-time.git",
-            "git@github.com:ICTU/update-time",
-        )
-
-    def test_url_with_fragment(self):
-        """Test that a URL with a trailing fragment (as npm uses) is parsed."""
-        self.assert_repository(GitHubRepository("ICTU", "update-time"), "https://github.com/ICTU/update-time#readme")
+        self.assertIsNone(github_repository("https://github.com/sponsors/ICTU"))
 
 
 class GetLatestVersionTest(LoggingTestCase):
@@ -161,13 +141,6 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("owner/repository", "1.0")
         self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
         self.assertTrue(latest.changes.markdown)
-
-    @patch_github(
-        releases=[github_release_json("1.1", published_at=PAST_COOLDOWN_DATE)], tags=[], commit=github_commits_json()
-    )
-    def test_publication_date(self):
-        """Test that the resolved release's publication date is captured."""
-        self.assertEqual(get_latest_version("owner/repository", "1.0").publication.value, PAST_COOLDOWN_DATE)
 
     @patch_github(
         releases=[github_release_json("1.1"), github_release_json("2.0")], tags=[], commit=github_commits_json()
@@ -329,9 +302,10 @@ class GetLatestVersionTest(LoggingTestCase):
     def assert_tag_skipped(self, dependency: str, reason: str) -> None:
         """Assert that the dependency's v1.1 tag was skipped for the reason, leaving it on version 1.0."""
         self.assert_version(get_latest_version(dependency, "1.0"), "1.0", "", "")
-        self.assert_error_logged(
-            message_of(Logger.undated_commit), dependency=dependency, candidate="v1.1", current="1.0", reason=reason
+        message, fields = unknown_version_date(
+            _UNDATED_COMMIT, dependency=dependency, candidate="v1.1", current="1.0", reason=reason
         )
+        self.assert_error_logged(message, **fields)
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json())
     def test_skip_tag_whose_commit_has_no_date(self):
@@ -383,9 +357,10 @@ class GetLatestVersionTest(LoggingTestCase):
         commits = f"https://api.github.com/repos/{dependency}/commits/{COMMIT_SHA2}"
         self.assertEqual(github_requests("commits"), [commits])
         reason = GITHUB_RATE_LIMITED_REASON
-        self.assert_error_logged(
-            message_of(Logger.undated_commit), dependency=dependency, candidate="v1.2", current="1.0", reason=reason
+        message, fields = unknown_version_date(
+            _UNDATED_COMMIT, dependency=dependency, candidate="v1.2", current="1.0", reason=reason
         )
+        self.assert_error_logged(message, **fields)
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=requests.exceptions.Timeout())
     def test_skip_tag_when_the_commit_request_fails(self):
@@ -702,15 +677,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         raises="KeyError: 'body'",
     )
     @patch_get_response(
-        [
-            {
-                "tag_name": "1.1",
-                "html_url": RELEASE_PAGE,
-                "draft": False,
-                "prerelease": False,
-                "published_at": None,
-            }
-        ]
+        [{"tag_name": "1.1", "html_url": RELEASE_PAGE, "draft": False, "prerelease": False, "published_at": None}]
     )
     def test_release_without_body(self):
         """Test that the changes are empty when the release GitHub answers carries no body."""
@@ -739,17 +706,19 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package"), self.CHANGES)
         self.assertNotIn(contents_url(self.MONOREPO), requested_urls(mock_get))
 
-    def create_responses(self, mock_get: Mock, listings: dict[str, tuple[str, ...]]) -> None:
+    def create_responses(
+        self, mock_get: Mock, listings: dict[str, tuple[str, ...]], answers: Mapping[str, Mock] | None = None
+    ) -> None:
         """Point the mock Session.get at a listing per directory, each giving the files that directory holds.
 
-        A file named like a changelog answers the changelog naming version 1.1.
+        Each file listed answers the changelog naming version 1.1. The answers given replace those for their URLs.
         """
         responses = {
             contents_url(self.MONOREPO, directory): mock_response(contents_json(*names))
             for directory, names in listings.items()
         }
-        responses[file_url("CHANGELOG.md")] = mock_response(text=self.CHANGELOG)
-        respond_per_url(mock_get, responses)
+        files = {file_url(name): mock_response(text=self.CHANGELOG) for names in listings.values() for name in names}
+        respond_per_url(mock_get, responses | files | dict(answers or {}))
 
     @patch_get()
     def test_directory_without_a_changelog_file(self, mock_get: Mock):
@@ -758,17 +727,15 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package"), self.CHANGES)
         self.assertIn(contents_url(self.MONOREPO, "packages/package"), requested_urls(mock_get))
 
-    @kills.replace(
+    @kills.force_false(
         _changes_from_files,
-        'markdown=markdown.is_file(entry["name"])',
-        "markdown=False",
+        'markdown.is_file(entry["name"])',
         "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
         case="CHANGELOG.md",
     )
-    @kills.replace(
+    @kills.force_true(
         _changes_from_files,
-        'markdown=markdown.is_file(entry["name"])',
-        "markdown=True",
+        'markdown.is_file(entry["name"])',
         "a changelog in a repository's root that is not Markdown is rendered as Markdown",
         case="CHANGELOG.rst",
     )
@@ -777,11 +744,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         """Test that a changelog file's changes link its page, and that its extension says whether they're Markdown."""
         for name, markdown in {"CHANGELOG.md": True, "CHANGELOG.rst": False}.items():
             with self.subTest(changelog=name):
-                responses = {
-                    contents_url(self.MONOREPO): mock_response(contents_json(name)),
-                    file_url(name): mock_response(text=self.CHANGELOG),
-                }
-                respond_per_url(mock_get, responses)
+                self.create_responses(mock_get, {"": (name,)})
                 changes = changes_from_changelog_file(self.MONOREPO, "1.1")
                 self.assertEqual(changes, self.CHANGES)
                 self.assertEqual(changes.markdown, markdown)
@@ -819,14 +782,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         for case, (status, refused) in cases.items():
             with self.subTest(case):
                 unlisted = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://not/listed")
-                respond_per_url(
-                    mock_get,
-                    {
-                        contents_url(self.MONOREPO, "packages/gone"): unlisted,
-                        contents_url(self.MONOREPO): mock_response(contents_json("CHANGELOG.md")),
-                        file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
-                    },
-                )
+                gone = contents_url(self.MONOREPO, "packages/gone")
+                self.create_responses(mock_get, {"": ("CHANGELOG.md",)}, {gone: unlisted})
                 self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/gone"), self.CHANGES)
                 if refused:
                     self.assert_could_not_fetch_logged("https://not/listed", status=status, reason=status.phrase)
@@ -843,14 +800,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     def test_directory_answered_as_a_file(self, mock_get: Mock):
         """Test that a directory GitHub answers with a file leaves the repository's root to supply the changes."""
         file_json = {"name": "package", "download_url": file_url("package"), "git_url": "https://tree/package"}
-        respond_per_url(
-            mock_get,
-            {
-                contents_url(self.MONOREPO, "packages/package"): mock_response(file_json),
-                contents_url(self.MONOREPO): mock_response(contents_json("CHANGELOG.md")),
-                file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
-            },
-        )
+        package = contents_url(self.MONOREPO, "packages/package")
+        self.create_responses(mock_get, {"": ("CHANGELOG.md",)}, {package: mock_response(file_json)})
         self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package"), self.CHANGES)
 
 
@@ -880,18 +831,19 @@ class GitHubRateLimitTest(LoggingTestCase):
     """Unit tests for warning that GitHub's API rate limit is used up."""
 
     RESET = datetime(2026, 10, 17, 15, 42, tzinfo=UTC)
+    ADVICE = "; set GITHUB_TOKEN to raise it"
 
     @patch_get()
     def test_a_used_up_rate_limit_is_reported_as_an_error(self, mock_get: Mock):
         """Test that a response saying the rate limit is used up is reported as an error, in the token's form."""
         mock_get.return_value = self.refused_response()
-        for case, environment, message in (
-            ("anonymous", {}, message_of(Logger.github_rate_limit_used_up)),
-            ("with a token", {"GITHUB_TOKEN": "a-token"}, message_of(Logger.github_token_rate_limit_used_up)),  # nosec B105
+        for case, environment, holder, advice in (
+            ("anonymous", {}, "", self.ADVICE),
+            ("with a token", {"GITHUB_TOKEN": "a-token"}, " for GITHUB_TOKEN", ""),  # nosec B105
         ):
             with self.subTest(case), patch_environ(environment, clear=True):
                 archival(GitHubRepository("owner", "repository"))
-                self.assert_error_logged(message, limit=60, reset=utc_date_and_time(self.RESET))
+                self.assert_used_up_rate_limit_logged(holder, advice)
 
     def refused_response(self, overrides: Mapping[str, str | None] | None = None) -> Mock:
         """Return the 403 GitHub sends, with headers saying the limit of 60 requests is used up until `RESET`.
@@ -909,6 +861,16 @@ class GitHubRateLimitTest(LoggingTestCase):
             {"message": "API rate limit exceeded"}, ok=False, status_code=403, reason="Forbidden", headers=headers
         )
 
+    def assert_used_up_rate_limit_logged(self, holder: str = "", advice: str = ADVICE) -> None:
+        """Assert that the run reported the limit of 60 requests as used up until `RESET`."""
+        self.assert_error_logged(
+            message_of(Logger.github_rate_limit_used_up),
+            limit=60,
+            reset=utc_date_and_time(self.RESET),
+            holder=holder,
+            advice=advice,
+        )
+
     @kills.uncache(_log_used_up_rate_limit, "a used-up rate limit is reported once for every request GitHub refuses")
     @patch_environ()
     @patch_get()
@@ -918,9 +880,7 @@ class GitHubRateLimitTest(LoggingTestCase):
         for name in ("first", "second"):
             archival(GitHubRepository("owner", name))
         self.assertEqual(mock_get.call_count, 2)
-        self.assert_error_logged(
-            message_of(Logger.github_rate_limit_used_up), limit=60, reset=utc_date_and_time(self.RESET)
-        )
+        self.assert_used_up_rate_limit_logged()
 
     @kills.replace(
         _report_used_up_rate_limit,

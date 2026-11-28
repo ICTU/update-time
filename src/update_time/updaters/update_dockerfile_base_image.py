@@ -20,7 +20,7 @@ from update_time.manifests.dockerfile import (
 from update_time.markers.parser import parse_marker
 from update_time.references.match import matched_reference
 from update_time.references.rewrite import update_references_in_lines
-from update_time.sources.oci import TagGetter
+from update_time.sources.oci import image_source
 
 if TYPE_CHECKING:
     from update_time.domain.marker import Marker
@@ -61,7 +61,7 @@ def _refusal_reason(substituted: SubstitutedLine, shared_lines: set[int]) -> Ima
 def _updated_lines(lines: list[Line]) -> list[str]:
     """Return the Dockerfile's lines with each base image it pulls updated, each version axis where it is written."""
     dockerfile = Dockerfile(lines)
-    get_new_version = TagGetter(dockerfile.images_not_pulled())
+    tag_source = image_source(dockerfile.images_not_pulled())
     substituted_lines = dockerfile.substituted_lines()
     shared_lines = _shared_lines(substituted_lines)
     result = [line.text for line in lines]
@@ -70,17 +70,13 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     for index, (line, substituted) in enumerate(zip(lines, substituted_lines, strict=True)):
         if substituted is None:
             digest_overrules = pins_a_digest_beside_a_variable(line.text)
-            source = (
-                _refusal(ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS)
-                if digest_overrules
-                else get_new_version.source
-            )
+            source = _refusal(ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS) if digest_overrules else tag_source
             [result[index]] = update_references_in_lines([line], BASE_IMAGE_REFERENCE, source=source, logger=_LOG)
             continue
         reference = matched_reference(base_image_match(line.text), line.location)
         _LOG.substituted_reference(reference, substituted.substituted_reference)
         reason = _refusal_reason(substituted, shared_lines)
-        source = get_new_version.source if reason is None else _refusal(reason)
+        source = tag_source if reason is None else _refusal(reason)
         [updated_line] = update_references_in_lines(
             [substituted], DIGESTLESS_BASE_IMAGE_REFERENCE, source=source, logger=_LOG
         )

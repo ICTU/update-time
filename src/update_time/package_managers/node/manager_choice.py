@@ -23,9 +23,7 @@ if TYPE_CHECKING:
 
 _LOG: Final[Logger] = get_logger("package.json")
 
-# The managers Update-time can update, keyed by name. The updater resolves a detected manager name against this
-# catalog and skips a project whose `packageManager` field names a manager that isn't here, rather than mishandling it
-# by running npm (which would write a stray package-lock.json and ignore the real lock).
+# The managers Update-time can update, keyed by name.
 SUPPORTED_MANAGERS: Final[dict[str, PackageManager]] = {manager.name: manager for manager in (NPM, PNPM, YARN, BUN)}
 # The files that name a project's package manager. A corepack `packageManager` field wins over them, and npm is the
 # default.

@@ -1,8 +1,4 @@
-"""Which directives on a pom's dependencies and plugins decide nothing, and the report of their markers.
-
-Update-time applies Maven's cooldown per artefact, a bound can hold back every version, and the scanned poms and Maven
-Central decide which scopes are redundant. So these are functions over a pom's declarations, not a `ManagerPolicy`.
-"""
+"""Which directives on a pom's dependencies and plugins decide nothing, and the report of their markers."""
 
 from typing import TYPE_CHECKING, Final
 
@@ -54,10 +50,7 @@ def _report_redundant_directives(declaration: Declaration, reason: Reason | None
 
 
 def report_redundant_scopes(
-    declared: list[Declaration],
-    left_to_another: list[Declaration],
-    *,
-    pom_names_rules: bool,
+    declared: list[Declaration], left_to_another: list[Declaration], *, pom_names_rules: bool
 ) -> None:
     """Report the scopes that decide nothing: on a declaration leaving its version to another, and on an artefact."""
     _report_scopes_checked_at_the_managing_declaration(left_to_another)

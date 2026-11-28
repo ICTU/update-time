@@ -6,21 +6,15 @@ from typing import TYPE_CHECKING, Final
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.filesystem import is_scanned
-from update_time.io.log import ToolTask, get_logger
+from update_time.io.log import NotRunCause, ToolFailure, ToolTask, get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files.locked_versions import ROOT_PROJECT
 from update_time.manifests.npm_declaration import Catalogs
 from update_time.manifests.package_json import PackageJson
 from update_time.primitives.command import Command
 
-from .marker_policy import (
-    BINARY_LOCK_POLICY,
-    MARKER_POLICY,
-    NO_LOCK_FILE_POLICY,
-    WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY,
-    CheckedPackageJson,
-)
-from .project_update import ProjectSnapshot, ProjectUpdate, log_updates
+from .marker_policy import BINARY_LOCK_POLICY, MARKER_POLICY, NO_LOCK_FILE_POLICY, CheckedFile
+from .project_update import ProjectBeforeUpdate, ProjectUpdate, log_updates
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -119,25 +113,25 @@ class PackageManager:
         _LOG.project_cooldown(path, f"{self.name} {setting}", COOLDOWN.get())
         return CooldownArguments()
 
-    def update_package_json(self, package_json: PackageJson) -> CheckedPackageJson | None:
+    def update_package_json(self, package_json: PackageJson) -> CheckedFile | None:
         """Update the package.json and its lockfile using this package manager, and log what it moved and rewrote.
 
         The update moves the dependencies of the workspace's members as well, so a member is left to the run for its
-        workspace root. Without the package manager on the path, the package.json gets an error and stays as it is.
+        workspace root.
         """
         path = package_json.path
         if not is_installed(executable := self.update.executable):
-            _LOG.tool_not_on_path(path, ToolTask.UPDATE, executable)
-            return CheckedPackageJson(package_json, MARKER_POLICY)
+            _LOG.tool_failed(path, ToolTask.UPDATE, executable, ToolFailure.NOT_ON_PATH)
+            return CheckedFile(package_json, MARKER_POLICY)
         directory = path.parent
         workspace = self.workspace_of(directory)
         if (policy := workspace.policy_for_a_project_left_as_it_is(path)) is not None:
-            return CheckedPackageJson(package_json, policy)
+            return CheckedFile(package_json, policy)
         if workspace.root.resolve() != directory.resolve():
             _LOG.updated_by_the_workspace_root(path, self.name, workspace.root_file())
-            return CheckedPackageJson(package_json, MARKER_POLICY)
+            return CheckedFile(package_json, MARKER_POLICY)
         after = workspace.update(package_json)
-        return None if after is None else CheckedPackageJson(after, MARKER_POLICY)
+        return None if after is None else CheckedFile(after, MARKER_POLICY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -160,17 +154,17 @@ class _Workspace:
         """
         manager = self.manager
         if not is_scanned(self.root):
-            _LOG.workspace_root_outside_the_scan(path, manager.name, self.root_file())
-            return WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY
+            _LOG.manager_not_run(path, manager.name, NotRunCause.WORKSPACE_ROOT_OUTSIDE_THE_SCAN, self.root_file())
+            return MARKER_POLICY.policy_for_a_workspace_root_outside_the_scan
         if self.has_a_lock():
             policy = _version_policy(self)
         elif manager.binary_lock is not None and (binary_lock := self.root / manager.binary_lock).exists():
             policy = _binary_lock_policy(self, binary_lock)
         else:
-            _LOG.no_lock_file(path, manager.name, self.root / manager.lock_files[0])
+            _LOG.manager_not_run(path, manager.name, NotRunCause.NO_LOCK_FILE, self.root / manager.lock_files[0])
             return NO_LOCK_FILE_POLICY
         if policy is not None and path.parent.resolve() != self.root.resolve():
-            _LOG.left_with_the_workspace_root(path, manager.name, self.root_file())
+            _LOG.manager_not_run(path, manager.name, NotRunCause.LEFT_WITH_THE_WORKSPACE_ROOT, self.root_file())
         return policy
 
     def root_file(self) -> Path:
@@ -193,16 +187,16 @@ class _Workspace:
         listed_before = manager.locked_versions(directory)
         catalogs_before = self.catalogs()
         root_path = directory / "package.json"
-        snapshots = [ProjectSnapshot(ROOT_PROJECT, root_path, package_json, listed_before.get(ROOT_PROJECT, {}))]
+        projects = [ProjectBeforeUpdate(ROOT_PROJECT, root_path, package_json, listed_before.get(ROOT_PROJECT, {}))]
         for member, locked in listed_before.items():
             if member != ROOT_PROJECT:
                 member_path = directory / member / "package.json"
-                snapshots.append(ProjectSnapshot(member, member_path, PackageJson.readable(member_path), locked))
+                projects.append(ProjectBeforeUpdate(member, member_path, PackageJson.readable(member_path), locked))
         if (packages := manager.updated_packages(listed_before)) is None:
             return package_json
         manager.run_command(Command(*manager.update, *cooldown.options, *packages), directory, cooldown.environment)
         listed_after = manager.locked_versions(directory)
-        updates = [ProjectUpdate.of(snapshot, listed_after) for snapshot in snapshots]
+        updates = [ProjectUpdate.of(project, listed_after) for project in projects]
         log_updates(manager.name, updates, catalogs_before, self.catalogs())
         return updates[0].after
 

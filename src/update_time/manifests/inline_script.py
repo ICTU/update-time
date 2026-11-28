@@ -14,7 +14,7 @@ class InlineScript(PythonDependencyToml):
 
     def has_metadata_block(self) -> bool:
         """Return whether the script carries a `# /// script` block, closed or not."""
-        return has_block(self.read())
+        return has_block(self.text())
 
     @override
     def toml(self, contents: str) -> str:

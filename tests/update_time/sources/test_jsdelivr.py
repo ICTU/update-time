@@ -2,9 +2,10 @@
 
 from typing import TYPE_CHECKING, Final
 
+from mutation_time.mutation import kills
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, PinnedDependency, Yank
+from update_time.domain.dependency import DependencyVersion, PinnedDependency, Unserved, Yank
 from update_time.io.log import Logger
 from update_time.sources.jsdelivr import version_getter
 
@@ -37,17 +38,32 @@ _FRESH: Final[str] = FRESH_DATE.isoformat()
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for the get latest jsdelivr version function.
 
-    The source makes its requests in a fixed order, which each test's `mock_get.side_effect` mirrors: the jsDelivr
-    package API for the version list, then one npm registry call whose `time` map dates every candidate, then the
-    jsDelivr flat-files API for the chosen version's hash. A test supplies only the responses its version needs.
+    The source makes its requests in a fixed order, which each test's `mock_get.side_effect` mirrors.
     """
 
-    def test_unchanged_when_current_is_newest(self, mock_get: Mock):
-        """Test that no newer version keeps the current version and fetches no integrity hash."""
-        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": _ELIGIBLE})]
-        latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
-        self.assertEqual(latest_version.version, "1.0")
-        self.assertEqual(latest_version.sha, "")
+    def test_which_answers_keep_the_current_version(self, mock_get: Mock):
+        """Test which answers keep the current version, without an integrity hash."""
+        cases = {
+            "no newer version": [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": _ELIGIBLE})],
+            "every newer version inside the cooldown": [jsdelivr_versions("2.0", "1.0"), npm_registry({"2.0": _FRESH})],
+            "a deprecated newer version": [
+                jsdelivr_versions("1.1", "1.0"),
+                npm_registry({"1.1": _ELIGIBLE}, deprecated={"1.1": "use 2.0 instead"}),
+            ],
+            "a newer pre-release": [jsdelivr_versions("2.0.0-rc.1", "1.0"), npm_registry({"1.0": _ELIGIBLE})],
+            "a newer version without a publication date": [jsdelivr_versions("1.1", "1.0"), npm_registry({})],
+            "an unreachable package API": [mock_response(ok=False), npm_registry({"1.0": _ELIGIBLE})],
+            "a failing integrity hash request": [
+                jsdelivr_versions("1.1", "1.0"),
+                npm_registry({"1.1": _ELIGIBLE}),
+                mock_response(ok=False),
+            ],
+        }
+        for case, answers in cases.items():
+            with self.subTest(case=case):
+                mock_get.side_effect = answers
+                latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
+                self.assertEqual((latest_version.version, latest_version.sha), ("1.0", ""))
 
     def test_newer_version_bumps_and_fetches_hash(self, mock_get: Mock):
         """Test that an eligible newer version is adopted together with its integrity hash."""
@@ -71,13 +87,6 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest_version.version, "1.5")
         self.assertEqual(latest_version.sha, f"sha256-{HASH}")
 
-    def test_all_newer_versions_within_cooldown(self, mock_get: Mock):
-        """Test that the current version is kept when every newer version is still within the cooldown."""
-        mock_get.side_effect = [jsdelivr_versions("2.0", "1.0"), npm_registry({"2.0": _FRESH})]
-        latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
-        self.assertEqual(latest_version.version, "1.0")
-        self.assertEqual(latest_version.sha, "")
-
     def test_cooldown_decides_eligibility(self, mock_get: Mock):
         """Test that a version is held back or adopted according to the cooldown the getter is passed."""
         published = days_ago(10).isoformat()
@@ -91,14 +100,6 @@ class GetLatestVersionTest(LoggingTestCase):
                 dependency = f"clipboard{cooldown_days}"  # A fresh name per case, as the npm fetches are cached.
                 self.assertEqual(_get_latest_version(dependency, "1.0", _FILENAME, cooldown_days).version, expected)
 
-    def test_deprecated_version_skipped(self, mock_get: Mock):
-        """Test that a newer version that is deprecated on npm is not adopted as an update."""
-        mock_get.side_effect = [
-            jsdelivr_versions("1.1", "1.0"),
-            npm_registry({"1.1": _ELIGIBLE}, deprecated={"1.1": "use 2.0 instead"}),
-        ]
-        self.assertEqual(_get_latest_version("clipboard", "1.0", _FILENAME).version, "1.0")
-
     def test_deprecated_current_version_attached(self, mock_get: Mock):
         """Test that when the pin stays put on a deprecated version, its deprecation is attached as a yank."""
         mock_get.side_effect = [
@@ -109,25 +110,17 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest.version, "1.0")
         self.assertEqual(latest.yank, Yank(yanked=True, reason="use 2.0 instead"))
 
-    def test_prerelease_ignored(self, mock_get: Mock):
-        """Test that a newer pre-release is not adopted (and no publication date is looked up for it)."""
-        mock_get.side_effect = [jsdelivr_versions("2.0.0-rc.1", "1.0"), npm_registry({"1.0": _ELIGIBLE})]
-        self.assertEqual(_get_latest_version("clipboard", "1.0", _FILENAME).version, "1.0")
-
-    def test_version_without_publication_date_skipped(self, mock_get: Mock):
-        """Test that a version the npm registry has no release date for yet is treated as too fresh and skipped."""
-        mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({})]
-        self.assertEqual(_get_latest_version("clipboard", "1.0", _FILENAME).version, "1.0")
-
+    @kills.delete(
+        version_getter,
+        ", unserved=Unserved.VERSION",
+        "a URL whose version is not PEP 440 is looked up at the npm registry and checked for staleness",
+    )
     def test_unparsable_current_version_left_alone(self, mock_get: Mock):
-        """Test that an unparsable current version (e.g. a trailing dot) is left unchanged, querying nothing."""
-        self.assertEqual(_get_latest_version("clipboard", "1.", _FILENAME).version, "1.")
+        """Test that an unparsable current version, such as `1.`, is left unchanged and unserved, querying nothing."""
+        latest = _get_latest_version("clipboard", "1.", _FILENAME)
+        self.assertEqual(latest.version, "1.")
+        self.assertIs(latest.unserved, Unserved.VERSION)
         mock_get.assert_not_called()
-
-    def test_package_api_unreachable_keeps_current(self, mock_get: Mock):
-        """Test that an unreachable jsDelivr package API leaves the version unchanged instead of crashing."""
-        mock_get.side_effect = [mock_response(ok=False), npm_registry({"1.0": _ELIGIBLE})]
-        self.assertEqual(_get_latest_version("clipboard", "1.0", _FILENAME).version, "1.0")
 
     def test_package_api_answer_that_is_not_json_keeps_current(self, mock_get: Mock):
         """Test that a jsDelivr package API answer that is not JSON is warned about, leaving the version unchanged."""
@@ -135,17 +128,6 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [unparsable_response(ok=True, url=url), npm_registry({"1.0": _ELIGIBLE})]
         self.assertEqual(_get_latest_version("clipboard", "1.0", _FILENAME).version, "1.0")
         self.assert_invalid_json_logged(url)
-
-    def test_integrity_fetch_failure_keeps_current(self, mock_get: Mock):
-        """Test that a failed integrity-hash fetch leaves the version unchanged, so the hash can't fall out of sync."""
-        mock_get.side_effect = [
-            jsdelivr_versions("1.1", "1.0"),
-            npm_registry({"1.1": _ELIGIBLE}),
-            mock_response(ok=False),  # the integrity-hash request fails
-        ]
-        latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
-        self.assertEqual(latest_version.version, "1.0")
-        self.assertEqual(latest_version.sha, "")
 
     def test_integrity_listing_that_is_not_json_keeps_current(self, mock_get: Mock):
         """Test that a jsDelivr file listing that is not JSON is warned about, leaving the version unchanged."""

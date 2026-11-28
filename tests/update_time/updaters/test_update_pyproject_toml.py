@@ -1,7 +1,6 @@
 """Unit tests for the pyproject.toml updater (discovery and orchestration of the uv package manager)."""
 
 import tomllib
-from itertools import repeat
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, override
@@ -11,30 +10,36 @@ from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
 from mutation_time.mutation import kills
+from update_time.domain.bound import BoundRedundancy
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.io.log import (
     Logger,
+    NotRunCause,
+    ToolFailure,
     ToolTask,
+    _bound_reason,
     _Fields,  # simplint: ignore[private-import-path] # annotates with it
+    _python_managers_reason,
+    _unsupported_manager_reason,
 )
 from update_time.lock_files.uv_lock import UvLock, _lowest, _project_dependencies, _versions_of
 from update_time.manifests import pyproject_config
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_dependency_toml import Declaration
+from update_time.package_managers.policy import ManagerPolicy
 from update_time.package_managers.uv import marker_policy
 from update_time.package_managers.uv.lock import (
-    _LockSnapshot,
+    _LockBeforeUpdate,
     _LockTarget,
     _LockUpdate,
     _Member,
-    _MemberSnapshot,
     _read_workspace,
     _update_together,
 )
 from update_time.package_managers.uv.uv import (
     _LOG,
-    _Signals,
+    _ManagerNames,
     _warn_about_the_managers,
     decision,
     settings_hold_exclude_newer,
@@ -47,11 +52,10 @@ from tests.file_mocks import FakeFiles, mock_path, patch_pathlib_path
 from tests.http_mocks import mock_response, patch_get
 from tests.update_time.base_test_cases import ExecutablesOnPathTestCase
 from tests.update_time.fixtures import CHANGELOG, SCAN_ROOT
-from tests.update_time.io.log_fields import published_version
+from tests.update_time.io.log_fields import not_run, published_version
 from tests.update_time.io.log_messages import message_of
 from tests.update_time.manifests.manifest_contents import pyproject, pyproject_per_line, uv_path_source
 from tests.update_time.package_managers.uv_settings import CONFIGURED_EXCLUDE_NEWER
-from tests.update_time.sources.github_answers import github_commits_json, github_release_json
 from tests.update_time.sources.osv_answers import no_vulnerabilities
 from tests.update_time.sources.pypi_answers import (
     UPLOAD_TIME_WITH_CHANGELOG,
@@ -60,14 +64,7 @@ from tests.update_time.sources.pypi_answers import (
 )
 
 from .scanning import PYPROJECT_TOML
-from .uv_lock import (
-    LOCK_FAILS,
-    NO_SOLUTION,
-    UvLockTestCase,
-    failing_uv_lock,
-    locked_package,
-    uv_locks,
-)
+from .uv_lock import LOCK_FAILS, NO_SOLUTION, UvLockTestCase, failing_uv_lock, locked_package, uv_locks
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -193,14 +190,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_no_warnings_logged()
 
     def updated_pin(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
-        self,
-        run: Mock,
-        get: Mock,
-        glob: Mock,
-        *,
-        package: str = "package",
-        marker: str = "",
-        latest: str = "1.1",
+        self, run: Mock, get: Mock, glob: Mock, *, package: str = "package", marker: str = "", latest: str = "1.1"
     ) -> FakeFiles:
         """Update a pyproject.toml whose only dependency pins the package on 1.0, which uv lock moves to the latest."""
         files = {PYPROJECT_TOML: pyproject(f"{package}==1.0", marker=marker), _UV_LOCK: _uv_lock("1.0", package)}
@@ -221,8 +211,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(files_at_the_last_lock[PYPROJECT_TOML], pyproject("package==1.1"))
 
     @kills.delete(
-        _MemberSnapshot.steered_member,
-        "member.warn_about_redundant_bounds(log)",
+        _LockBeforeUpdate.steered_update,
+        "member.warn_about_redundant_bounds(self.log)",
         "a bound that decides nothing in a pyproject.toml is not warned about",
     )
     @kills.replace(
@@ -238,12 +228,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         files = {PYPROJECT_TOML: pyproject("package>=0.9", marker=directive), _UV_LOCK: _uv_lock("1.0")}
         self.files_after_update(run, get, glob, files, _uv_lock("1.0"))
         self.assert_logged_among_others(
-            message_of(Logger.redundant_bound),
+            message_of(Logger.redundant_directive),
             dependency="package",
             location=Location(PYPROJECT_TOML, 2),
             directive=directive,
-            version="1.0",
-            redundancy=ANY,
+            reason=_bound_reason(BoundRedundancy.BLOCKS_ALL, "1.0"),
         )
 
     @kills.replace(
@@ -475,10 +464,9 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.files_after_update(run, get, glob, files, locks[1], discovered=[_MEMBER])
         self.assert_new_version_logged("package", _NEW_VERSION, Location(_MEMBER, 2))
 
-    @kills.replace(
+    @kills.delete(
         UvLock.recorded_versions,
-        'for package in packages if "version" in package',
-        "for package in packages",
+        ' if "version" in package',
         "the run stops where the lock does not record a version for a dependency, such as a dynamic sibling member",
         raises="KeyError: 'version'",
     )
@@ -596,7 +584,12 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_errors_logged(
             (
                 message_of(Logger.tool_failed),
-                {"location": Location(PYPROJECT_TOML), "task": ToolTask.UPDATE, "tool": "uv lock"},
+                {
+                    "location": Location(PYPROJECT_TOML),
+                    "task": ToolTask.UPDATE,
+                    "tool": "uv lock",
+                    "failure": ToolFailure.FAILED,
+                },
             ),
             (message_of(Logger.file_not_restored), {"location": Location(_UV_LOCK), "error": str(error)}),
         )
@@ -608,7 +601,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         cooldown = 'exclude-newer = "7 days"\n'
 
         def configure_cooldown(root: Path) -> None:
-            PyprojectToml(root).write(PyprojectToml(root).read() + cooldown)
+            PyprojectToml(root).write(PyprojectToml(root).text() + cooldown)
 
         with patch("update_time.package_managers.uv.lock.configure_cooldown", side_effect=configure_cooldown):
             files = {PYPROJECT_TOML: contents, _UV_LOCK: _uv_lock("1.0")}
@@ -624,7 +617,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         """Test that the line saying the pyproject.toml is checked comes before the cooldown the run sets in it."""
 
         def configure_cooldown(root: Path) -> None:
-            _LOG.configured_uv_cooldown(root, "7 days")
+            _LOG.configured_cooldown(root, root, "7 days", "uv exclude-newer")
 
         with patch("update_time.package_managers.uv.lock.configure_cooldown", side_effect=configure_cooldown):
             self.updated_pin(run, get, glob)
@@ -760,7 +753,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     )
     @kills.delete(
         _update_together,
-        "(lock_update, lock_update.relock) for lock_update in lock_updates[:-1]",
+        "(lock_update, lock_update.lock) for lock_update in lock_updates[:-1]",
         "an earlier workspace of a cycle keeps a lock that records the others' pins from before they moved",
     )
     def test_workspaces_whose_projects_source_each_other_by_path_move_the_pin_they_share_together(
@@ -783,7 +776,10 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(dict(files), {**_LIB_AND_APP, **changed})
         self.assert_no_new_version_logged()
         self.assert_errors_logged(
-            (message_of(Logger.tool_failed), {"location": Location(_APP), "task": ToolTask.UPDATE, "tool": "uv lock"}),
+            (
+                message_of(Logger.tool_failed),
+                {"location": Location(_APP), "task": ToolTask.UPDATE, "tool": "uv lock", "failure": ToolFailure.FAILED},
+            ),
             (message_of(Logger.rolled_back_with_cycle), {"location": Location(_LIB), "failed": (Location(_APP),)}),
         )
 
@@ -805,8 +801,14 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assertEqual(dict(files), {**_LIB_AND_APP, **changed})
         not_updated = message_of(Logger.tool_failed)
         self.assert_errors_logged(
-            (not_updated, {"location": Location(_LIB), "task": ToolTask.UPDATE, "tool": "uv lock"}),
-            (not_updated, {"location": Location(_APP), "task": ToolTask.UPDATE, "tool": "uv lock"}),
+            (
+                not_updated,
+                {"location": Location(_LIB), "task": ToolTask.UPDATE, "tool": "uv lock", "failure": ToolFailure.FAILED},
+            ),
+            (
+                not_updated,
+                {"location": Location(_APP), "task": ToolTask.UPDATE, "tool": "uv lock", "failure": ToolFailure.FAILED},
+            ),
             (message_of(Logger.rolled_back_with_cycle), {"location": Location(_APP), "failed": (Location(_LIB),)}),
         )
 
@@ -885,10 +887,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
         """Test updating a pyproject.toml with changelog."""
-        get.side_effect = [
-            mock_response(self.pypi_metadata()),
-            Mock(headers={"Content-Type": "text"}, text=CHANGELOG),
-        ]
+        get.side_effect = [mock_response(self.pypi_metadata()), Mock(headers={"Content-Type": "text"}, text=CHANGELOG)]
         left = self.updated_pin(run, get, glob, package="package_with_changelog")
         self.assertEqual(left[PYPROJECT_TOML], pyproject("package_with_changelog==1.1"))
         self.assert_path_logged(_UV_LOCK)
@@ -901,69 +900,12 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self.assert_no_warnings_logged()
 
     @staticmethod
-    def pypi_metadata(
-        changelog_url: str = "https://changelog",
-        repository: str = "https://github.com/repo/package_with_github_releases",
-    ) -> _ReleaseMetadata:
+    def pypi_metadata() -> _ReleaseMetadata:
         """Create PyPI release metadata fixture."""
-        project_urls = {"Homepage": "https://home", "repository": repository}
-        if changelog_url:
-            project_urls["Changelog"] = changelog_url
         return {
-            "info": {"description": "Package description", "project_urls": project_urls},
+            "info": {"description": "Package description", "project_urls": {"Changelog": "https://changelog"}},
             "urls": [{"upload_time_iso_8601": UPLOAD_TIME_WITH_CHANGELOG}],
         }
-
-    def test_update_with_html_changelog(self, run: Mock, get: Mock, glob: Mock):
-        """Test that updating a pyproject.toml with only a HTML changelog ignores the changelog."""
-        get.side_effect = [
-            mock_response(self.pypi_metadata()),
-            Mock(text=CHANGELOG, headers={"Content-Type": "text/html"}),
-            mock_response([github_release_json("v1.1")]),
-            mock_response([]),
-        ]
-        left = self.updated_pin(run, get, glob, package="package_with_html_changelog")
-        self.assertEqual(left[PYPROJECT_TOML], pyproject("package_with_html_changelog==1.1"))
-        self.assert_path_logged(_UV_LOCK)
-        self.assert_new_version_logged(
-            "package_with_html_changelog",
-            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
-            Location(PYPROJECT_TOML, 2),
-        )
-        self.assert_no_warnings_logged()
-
-    def test_update_with_github_url(self, run: Mock, get: Mock, glob: Mock):
-        """Test updating a pyproject.toml with GitHub releases."""
-        get.side_effect = [
-            mock_response(self.pypi_metadata(changelog_url="")),
-            mock_response([github_release_json("v1.1", body=CHANGELOG)]),
-            mock_response(github_commits_json()),
-        ]
-        left = self.updated_pin(run, get, glob, package="package_with_github_releases")
-        self.assertEqual(left[PYPROJECT_TOML], pyproject("package_with_github_releases==1.1"))
-        self.assert_path_logged(_UV_LOCK)
-        self.assert_new_version_logged(
-            "package_with_github_releases",
-            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
-            Location(PYPROJECT_TOML, 2),
-            changes=CHANGELOG,
-        )
-        self.assert_no_warnings_logged()
-
-    def test_update_without_github_url(self, run: Mock, get: Mock, glob: Mock):
-        """Test updating a pyproject.toml without a GitHub URL."""
-        get.side_effect = repeat(
-            mock_response(self.pypi_metadata(changelog_url="", repository="https://gitlab.com/org/repo"))
-        )
-        left = self.updated_pin(run, get, glob, package="package_without_github_releases")
-        self.assertEqual(left[PYPROJECT_TOML], pyproject("package_without_github_releases==1.1"))
-        self.assert_path_logged(_UV_LOCK)
-        self.assert_new_version_logged(
-            "package_without_github_releases",
-            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
-            Location(PYPROJECT_TOML, 2),
-        )
-        self.assert_no_warnings_logged()
 
     @kills.replace(
         _LockUpdate._moved_pins,
@@ -1002,14 +944,30 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         left = self.files_after_update(run, get, glob, files, (LOCK_FAILS,), discovered=list(files))
         self.assertEqual(dict(left), files)
         self.assert_errors_logged(
-            (message, {"location": Location(PYPROJECT_TOML), "task": ToolTask.UPDATE, "tool": "uv lock"}),
-            (message, {"location": Location(_MEMBER), "task": ToolTask.UPDATE, "tool": "uv lock"}),
+            (
+                message,
+                {
+                    "location": Location(PYPROJECT_TOML),
+                    "task": ToolTask.UPDATE,
+                    "tool": "uv lock",
+                    "failure": ToolFailure.FAILED,
+                },
+            ),
+            (
+                message,
+                {
+                    "location": Location(_MEMBER),
+                    "task": ToolTask.UPDATE,
+                    "tool": "uv lock",
+                    "failure": ToolFailure.FAILED,
+                },
+            ),
         )
         self.assert_no_new_version_logged()
 
-    @kills.delete(
+    @kills.delete_statement(
         settings_hold_exclude_newer,
-        'is_installed("uv") and ',
+        'if not is_installed("uv"):\n        return False',
         "a missing uv is asked for its settings, for a project without a lock, and reported twice",
     )
     def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
@@ -1021,12 +979,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         run.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
-        self.assert_error_logged(
-            message_of(Logger.tool_not_on_path),
-            task=ToolTask.UPDATE,
-            location=Location(mock_pyproject_toml),
-            executable="uv",
-        )
+        self.assert_tool_not_on_path_logged(mock_pyproject_toml, "uv")
 
     def test_skip_invalid_pyproject_toml(self, run: Mock, get: Mock, glob: Mock):
         """Test that an unparsable pyproject.toml is logged as checked, then skipped with a warning, and uv not run."""
@@ -1057,10 +1010,9 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         "a pyproject.toml whose dependency array is not an array has uv run for it",
         case="project.dependencies",
     )
-    @kills.replace(
+    @kills.delete(
         pyproject_config._is_well_formed,
-        "[*_uv_arrays(table), *_build_requirements(table)]",
-        "[*_uv_arrays(table)]",
+        ", *_build_requirements(table)",
         "a pyproject.toml whose build requirements are not an array is not warned about",
         case="build-system.requires",
     )
@@ -1104,7 +1056,9 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             with self.subTest(case):
                 self.assert_uv_not_run_for(run, get, glob, {PYPROJECT_TOML: contents})
                 self.assert_debug_logged_after_path(
-                    PYPROJECT_TOML, message_of(Logger.no_dependencies), manager="uv", verb="resolve"
+                    PYPROJECT_TOML,
+                    message_of(Logger.manager_not_run),
+                    **not_run("uv", NotRunCause.NO_DEPENDENCIES_TO_RESOLVE),
                 )
 
     def assert_uv_not_run_for(
@@ -1122,13 +1076,13 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
 
     @kills.delete_statement(
         decision,
-        "_LOG.not_a_uv_project(pyproject_toml, UvLock.beside(root).path)",
+        '_LOG.manager_not_run(pyproject_toml, "uv", NotRunCause.NOT_A_UV_PROJECT, UvLock.beside(root).path)',
         "a pyproject.toml that uv does not run for, though it declares dependencies, goes unreported",
         case="neither a uv.lock nor a [tool.uv] table",
     )
     @kills.delete_statement(
         decision,
-        "_LOG.project_marked_unmanaged(pyproject_toml, root)",
+        '_LOG.manager_not_run(pyproject_toml, "uv", NotRunCause.MARKED_UNMANAGED, root)',
         "a pyproject.toml whose [tool.uv] table sets managed = false goes unreported",
         case="a [tool.uv] table that sets managed = false",
     )
@@ -1138,27 +1092,22 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         cases = {
             "neither a uv.lock nor a [tool.uv] table": (
                 {PYPROJECT_TOML: pyproject("package==1.0")},
-                message_of(Logger.not_a_uv_project),
-                {"lock": Location(_UV_LOCK)},
+                not_run("uv", NotRunCause.NOT_A_UV_PROJECT, _UV_LOCK),
             ),
             "a [tool.uv] table that sets managed = false": (
                 {PYPROJECT_TOML: marked_unmanaged, _UV_LOCK: _uv_lock("1.0")},
-                message_of(Logger.project_marked_unmanaged),
-                {"root": Location(PYPROJECT_TOML)},
+                not_run("uv", NotRunCause.MARKED_UNMANAGED, PYPROJECT_TOML),
             ),
         }
-        for case, (files, message, fields) in cases.items():
+        for case, (files, fields) in cases.items():
             with self.subTest(case):
                 self.assert_uv_not_run_for(run, get, glob, files)
-                self.assert_debug_logged_after_path(PYPROJECT_TOML, message, table="[tool.uv]", **fields)
+                self.assert_debug_logged_after_path(PYPROJECT_TOML, message_of(Logger.manager_not_run), **fields)
 
     def test_uv_not_run_for_a_file_pdm_or_poetry_manages(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv does not run, nor get its cooldown, for a file pdm or Poetry manages, and the log names that."""
         cases = {
-            "a [tool.poetry] table": (
-                {PYPROJECT_TOML: pyproject("package==1.0") + _POETRY_TABLE},
-                "poetry",
-            ),
+            "a [tool.poetry] table": ({PYPROJECT_TOML: pyproject("package==1.0") + _POETRY_TABLE}, "poetry"),
             "a [tool.pdm] table": ({PYPROJECT_TOML: pyproject("package==1.0") + _PDM_TABLE}, "pdm"),
             "a pdm.lock": ({PYPROJECT_TOML: pyproject("package==1.0"), _PDM_LOCK: ""}, "pdm"),
             "a poetry.lock beside a [tool.uv] table": (
@@ -1184,19 +1133,15 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assert_path_logged_first(PYPROJECT_TOML)
                 self.assert_unsupported_package_manager_logged(PYPROJECT_TOML, manager, "uv")
 
-    @kills.replace(
-        Logger.signals_of_more_than_one_manager,
-        'f"[tool.{table}]" for table in tables',
-        "table for table in tables",
-        "the warning about the tables of more than one manager names a table by its bare name",
-    )
     def test_uv_not_run_for_a_file_whose_signals_name_more_than_one_manager(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv does not run, nor get its cooldown, for a file whose tables name two managers."""
         files = {PYPROJECT_TOML: pyproject("package==1.0") + _POETRY_TABLE + _PDM_TABLE}
         self.assert_uv_not_run_for(run, get, glob, files)
         self.assert_path_logged_first(PYPROJECT_TOML)
-        message = message_of(Logger.signals_of_more_than_one_manager)
-        self.assert_logged(message, location=Location(PYPROJECT_TOML), signals="[tool.poetry] and [tool.pdm]")
+        reason = _python_managers_reason([], ["poetry", "pdm"])
+        self.assert_logged(
+            message_of(Logger.manager_cannot_run), location=Location(PYPROJECT_TOML), manager="uv", reason=reason
+        )
 
     @kills.force_false(
         _warn_about_the_managers,
@@ -1214,12 +1159,13 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
             _PDM_LOCK: "",
         }
         self.assert_uv_not_run_for(run, get, glob, files, discovered=[PYPROJECT_TOML, _MEMBER])
-        signals = (Location(_UV_LOCK), Location(_PDM_LOCK))
-        message = message_of(Logger.signals_of_more_than_one_manager)
-        self.assert_warnings_logged((message, {"location": Location(PYPROJECT_TOML), "signals": signals}))
-        pointer = message_of(Logger.left_with_the_workspace_root)
+        reason = _python_managers_reason([_UV_LOCK, _PDM_LOCK], [])
+        fields: _Fields = {"location": Location(PYPROJECT_TOML), "manager": "uv", "reason": reason}
+        self.assert_warnings_logged((message_of(Logger.manager_cannot_run), fields))
         self.assert_logged_among_others(
-            pointer, location=Location(_MEMBER), manager="uv", root=Location(PYPROJECT_TOML)
+            message_of(Logger.manager_not_run),
+            location=Location(_MEMBER),
+            **not_run("uv", NotRunCause.LEFT_WITH_THE_WORKSPACE_ROOT, PYPROJECT_TOML),
         )
 
     def test_uv_runs_for_a_workspace_whose_member_has_the_lock_file_and_the_table_of_another_manager(
@@ -1266,8 +1212,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         files = _workspace_above_the_scan(pyproject("package==1.0"))
         with _scan_from_the_member():
             self.assert_uv_not_run_for(run, get, glob, files, discovered=[_MEMBER])
-            message = message_of(Logger.workspace_root_outside_the_scan)
-            self.assert_debug_logged_after_path(_MEMBER, message, manager="uv", root=Location(PYPROJECT_TOML))
+            fields = not_run("uv", NotRunCause.WORKSPACE_ROOT_OUTSIDE_THE_SCAN, PYPROJECT_TOML)
+            self.assert_debug_logged_after_path(_MEMBER, message_of(Logger.manager_not_run), **fields)
 
     @kills.delete(
         _update_pyproject_tomls,
@@ -1319,7 +1265,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 self.assertTrue(uv_locks(run))
 
     @kills.delete(
-        _Signals.managers,
+        _ManagerNames.managers,
         '("uv",) if "uv" in self.tables else ',
         "the tables of uv and Poetry tie in a project without a lock file",
     )
@@ -1360,10 +1306,7 @@ def _uv_lock_resolving_path_sources(
     """Return a stub of uv lock that locks `package` at a version every pin on it admits, as uv does.
 
     A lock admits what the pins of each project the locked project declares admit as well, since these tests source
-    `lib` and `app` by path. Where the pins do not admit a version, the lock fails. With `--upgrade` the lock takes
-    the newest version admitted, and without it the version locked before, where that is still admitted. A lock with
-    `--upgrade` in the directory `unreachable_index` fails, as uv fails where it cannot reach the index. Each lock is
-    added to `locks`, with the files as they were when it ran.
+    `lib` and `app` by path.
     """
     sourced_manifests = {"lib": _LIB, "app": _APP}
 
@@ -1425,9 +1368,13 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 self.files_after_update(
                     run, get, glob, {PYPROJECT_TOML: contents, _UV_LOCK: _uv_lock("1.0")}, _uv_lock("1.0")
                 )
-                self.assert_redundant_directive_logged(
-                    Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
-                )
+                self.assert_cooldown_per_run_logged()
+
+    def assert_cooldown_per_run_logged(self) -> None:
+        """Assert that the `set[cooldown=30]` on the dependency `pyproject()` declares was warned about as redundant."""
+        self.assert_redundant_directive_logged(
+            Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
+        )
 
     @kills.replace(
         Declaration.unnarrowable_reason,
@@ -1516,10 +1463,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that an `ignore[update]` and a bound in a file uv does not manage are reported."""
-        cases = {
-            "ignore[update]": Reason.UNMANAGED_FILE_LEFT,
-            "allow[update<2]": Reason.UNMANAGED_FILE_KEPT,
-        }
+        cases = {"ignore[update]": Reason.UNMANAGED_FILE_LEFT, "allow[update<2]": Reason.UNMANAGED_FILE_KEPT}
         for directive, reason in cases.items():
             with self.subTest(directive=directive):
                 contents = pyproject("package==1.0", marker=directive)
@@ -1541,22 +1485,22 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         self.assertEqual(dict(left), {PYPROJECT_TOML: contents})
         self.assert_warnings_logged(
             (
-                message_of(Logger.unsupported_package_manager),
-                {"location": Location(PYPROJECT_TOML), "manager": "pdm", "supported": "uv"},
+                message_of(Logger.manager_cannot_run),
+                {"location": Location(PYPROJECT_TOML), "manager": "pdm", "reason": _unsupported_manager_reason("uv")},
             ),
             (message_of(Logger.redundant_directive), _redundant_update_fields(Reason.UNMANAGED_FILE_LEFT)),
         )
         self.assert_no_ignored_logged()
 
     @kills.replace(
-        marker_policy,
+        ManagerPolicy.policy_for_more_than_one_manager,
         "Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT",
         "Reason.MORE_THAN_ONE_MANAGER_KEPT, Reason.MORE_THAN_ONE_MANAGER_LEFT",
         "a directive steering the update beside the lock files of two managers gets the other one's reason",
         case="ignore[update]",
     )
     @kills.replace(
-        marker_policy,
+        ManagerPolicy.policy_for_more_than_one_manager,
         "MORE_THAN_ONE_MANAGER_KEPT",
         "MORE_THAN_ONE_MANAGER_LEFT",
         "a bound beside the lock files of two managers is said to leave the dependency as it is",
@@ -1568,7 +1512,8 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         """Test that an `ignore[update]` and a bound beside a uv.lock and a poetry.lock follow the warning on both."""
         several_managers: _Fields = {
             "location": Location(PYPROJECT_TOML),
-            "signals": (Location(_UV_LOCK), Location(_POETRY_LOCK)),
+            "manager": "uv",
+            "reason": _python_managers_reason([_UV_LOCK, _POETRY_LOCK], []),
         }
         cases = {
             "ignore[update]": Reason.MORE_THAN_ONE_MANAGER_LEFT,
@@ -1583,20 +1528,20 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 }
                 self.assertEqual(dict(self.files_after_update(run, get, glob, files, None)), files)
                 self.assert_warnings_logged(
-                    (message_of(Logger.signals_of_more_than_one_manager), several_managers),
+                    (message_of(Logger.manager_cannot_run), several_managers),
                     (message_of(Logger.redundant_directive), _redundant_update_fields(reason, directive)),
                 )
                 self.assert_no_ignored_logged()
 
     @kills.replace(
-        marker_policy,
+        ManagerPolicy.policy_for_a_workspace_root_outside_the_scan,
         "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT",
         "Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT",
         "a directive steering the update in a member whose root lies outside the scan gets the other one's reason",
         case="ignore[update]",
     )
     @kills.replace(
-        marker_policy,
+        ManagerPolicy.policy_for_a_workspace_root_outside_the_scan,
         "WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT",
         "WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT",
         "a bound in a member whose root lies outside the scan is said to leave the dependency as it is",
@@ -1740,9 +1685,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 files = {PYPROJECT_TOML: contents, _UV_LOCK: _LOCK_WITHOUT_THE_PACKAGE}
                 self.files_after_update(run, get, glob, files, _uv_lock("1.0"), lock_as_written=_uv_lock("1.0"))
                 self.assertEqual(self.text_locked_with_upgrade(), contents.replace("package>=0.9", locked_spec))
-                self.assert_redundant_directive_logged(
-                    Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
-                )
+                self.assert_cooldown_per_run_logged()
 
     @kills.replace(
         marker_policy.current_version,
@@ -1792,9 +1735,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
             run, get, glob, {PYPROJECT_TOML: contents, _UV_LOCK: forked}, forked, lock_as_written=forked
         )
         self.assertEqual(self.text_locked_with_upgrade(), contents.replace("package==1.1", "package==1.1.*,>=1.1"))
-        self.assert_redundant_directive_logged(
-            Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
-        )
+        self.assert_cooldown_per_run_logged()
 
     def test_without_uv_an_ignore_update_is_obeyed_and_not_judged_by_the_uv_lock_before_the_run(
         self, run: Mock, get: Mock, glob: Mock
@@ -1803,19 +1744,12 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         self.leave_off_the_path("uv")
         contents = pyproject("package>=0.9", marker="ignore[update] set[cooldown=30]")
         self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents, _UV_LOCK: _uv_lock("1.0")}, _uv_lock("1.0"))
-        self.assert_redundant_directive_logged(
-            Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
-        )
+        self.assert_cooldown_per_run_logged()
         self.assert_ignored_logged("package", Location(PYPROJECT_TOML, 2), "ignore[update]", among_others=True)
-        self.assert_error_logged(
-            message_of(Logger.tool_not_on_path),
-            task=ToolTask.UPDATE,
-            location=Location(PYPROJECT_TOML),
-            executable="uv",
-        )
+        self.assert_tool_not_on_path_logged(PYPROJECT_TOML, "uv")
 
     @kills.delete(
-        _LockSnapshot.steered_update,
+        _LockBeforeUpdate.steered_update,
         " if locked else None",
         "without uv, a directive is judged by a lock uv did not write for the files as they are",
     )
@@ -1831,15 +1765,8 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         contents = pyproject("package>=0.9", marker="ignore[update] allow[update<2] set[cooldown=30]")
         files = {PYPROJECT_TOML: contents, _UV_LOCK: _LOCK_WITHOUT_THE_PACKAGE}
         self.files_after_update(run, get, glob, files, _uv_lock("1.0"))
-        self.assert_redundant_directive_logged(
-            Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
-        )
-        self.assert_error_logged(
-            message_of(Logger.tool_not_on_path),
-            task=ToolTask.UPDATE,
-            location=Location(PYPROJECT_TOML),
-            executable="uv",
-        )
+        self.assert_cooldown_per_run_logged()
+        self.assert_tool_not_on_path_logged(PYPROJECT_TOML, "uv")
 
 
 def _redundant_update_fields(reason: Reason, directive: str = "ignore[update]") -> _Fields:

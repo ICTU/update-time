@@ -49,8 +49,7 @@ def _hold_back_redundancy(declaration: Declaration) -> Reason | None:
 
 # The policy for the markers of a pyproject.toml and of an inline script metadata block, judged without a lock. uv
 # resolves the version an exact pin names, so a pin Update-time leaves as the file writes it stays where it is. A bound
-# narrows the lock. The policies for a run that keeps the lock, for one that removes it, and for a file Update-time
-# leaves as it is build on this one.
+# narrows the lock.
 MARKER_POLICY: Final[ManagerPolicy[Declaration]] = ManagerPolicy(
     hold_back_redundancy=_hold_back_redundancy,
     bound_redundancy=lambda declaration: declaration.unnarrowable_reason,
@@ -65,27 +64,12 @@ UNMANAGED_FILE_POLICY: Final[ManagerPolicy[Declaration]] = MARKER_POLICY.policy_
 )
 
 
-# The policy for the markers of a pyproject.toml whose lock files or tables name more than one package manager.
-MORE_THAN_ONE_MANAGER_POLICY: Final[ManagerPolicy[Declaration]] = MARKER_POLICY.policy_for_files_left_as_they_are(
-    Reason.MORE_THAN_ONE_MANAGER_LEFT, Reason.MORE_THAN_ONE_MANAGER_KEPT
-)
-
-
-# The policy for the markers of a pyproject.toml whose uv workspace root lies outside the scan root.
-WORKSPACE_ROOT_OUTSIDE_THE_SCAN_POLICY: Final[ManagerPolicy[Declaration]] = (
-    MARKER_POLICY.policy_for_files_left_as_they_are(
-        Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_LEFT, Reason.WORKSPACE_ROOT_OUTSIDE_THE_SCAN_KEPT
-    )
-)
-
-
 def kept_lock_policy(locked_as_written: RecordedVersions | None) -> ManagerPolicy[Declaration]:
     """Return the policy for the markers of a member's file, where the run keeps the lock.
 
     An `ignore[update]` keeps a declaration where it has a version to keep: an exact pin, or the version uv locks for a
     narrowable declaration as written. Such an `ignore[update]` leaves the bound beside it nothing to decide. A level
-    bound needs that version to anchor at. The versions locked as written are None where uv did not lock the files, or
-    where the lock it wrote cannot be read.
+    bound needs that version to anchor at.
     """
 
     def hold_back_redundancy(declaration: Declaration) -> Reason | None:

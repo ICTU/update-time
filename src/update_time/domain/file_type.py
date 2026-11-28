@@ -71,8 +71,7 @@ GITLAB_CI_CONFIG: Final[FileType] = FileType(".gitlab-ci.yml", (".gitlab-ci.yml"
 DOCKER_COMPOSE_FILES: Final[FileType] = FileType("Docker Compose files", ("docker-compose*.yml",))
 HELM_CHARTS: Final[FileType] = FileType("Helm charts", _YAML_PATTERNS, start="helm")
 DEVCONTAINER_CONFIGS: Final[FileType] = FileType(
-    "devcontainer configs",
-    (".devcontainer.json", *(f"{folder}/devcontainer.json" for folder in _DEVCONTAINER_FOLDERS)),
+    "devcontainer configs", (".devcontainer.json", *(f"{folder}/devcontainer.json" for folder in _DEVCONTAINER_FOLDERS))
 )
 GITHUB_WORKFLOWS: Final[FileType] = FileType("YAML files under .github/", _YAML_PATTERNS, start=".github")
 PRE_COMMIT_CONFIG: Final[FileType] = FileType(".pre-commit-config.yaml", (".pre-commit-config.yaml",))

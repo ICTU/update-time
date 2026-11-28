@@ -39,6 +39,7 @@ from tests.update_time.package_managers.uv_settings import (
     MANAGED_BY_COMMENT,
     UNREADABLE_SETTINGS,
     UvSettingsTestCase,
+    unreadable_settings_fields,
 )
 
 
@@ -54,9 +55,11 @@ class ConfigureCooldownTest(UvSettingsTestCase):
     def test_writes_when_absent(self):
         """Test that the cooldown is written, with the managed-by comment, when the project configures none."""
         written = self.configure(pyproject("a==1.0")).write_text.call_args.args[0]
-        self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
+        cooldown_days = f"{COOLDOWN.default} days"
+        self.assertIn(f'exclude-newer = "{cooldown_days}"', written)
         self.assertIn(MANAGED_BY_COMMENT, written)
-        self.assert_logged(message_of(Logger.configured_uv_cooldown), cooldown=f"{COOLDOWN.default} days", location=ANY)
+        message = message_of(Logger.configured_cooldown)
+        self.assert_logged(message, cooldown=cooldown_days, location=ANY, configured=ANY, setting="uv exclude-newer")
 
     def configure(self, contents: str) -> Mock:
         """Run `configure_cooldown` on a mock pyproject.toml with the contents and return the mock."""
@@ -70,11 +73,9 @@ class ConfigureCooldownTest(UvSettingsTestCase):
 
     def test_preserves_other_tool_uv_keys(self):
         """Test that writing exclude-newer preserves an existing exclude-newer-package table."""
-        pyproject_toml = self.configure(
-            f"{pyproject('a==1.0')}\n[tool.uv]\nexclude-newer-package = {{ msgpack = false }}\n"
-        )
-        written = pyproject_toml.write_text.call_args.args[0]
-        self.assertIn("exclude-newer-package = { msgpack = false }", written)
+        exclude_newer = "exclude-newer-package = { msgpack = false }"
+        written = self.configure(f"{pyproject('a==1.0')}\n[tool.uv]\n{exclude_newer}\n").write_text.call_args.args[0]
+        self.assertIn(exclude_newer, written)
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
 
     @kills.delete_statement(
@@ -125,13 +126,15 @@ class ConfigureCooldownTest(UvSettingsTestCase):
         self.mock_run.assert_called_once_with(settings, **SUBPROCESS_RUN_OPTIONS, cwd=pyproject_toml.parent)
 
     def test_writes_the_cooldown_where_uvs_settings_cannot_be_read(self):
-        """Test that Update-time warns, and writes the cooldown, where uv does not say whether its settings hold one."""
-        for case, answer in UNREADABLE_SETTINGS.items():
+        """Test that Update-time warns once, saying why, and writes the cooldown, where uv's settings cannot be read."""
+        for case, (answer, reason) in UNREADABLE_SETTINGS.items():
             with self.subTest(case):
                 self.settings_answer = answer
                 pyproject_toml = self.configure(pyproject("a==1.0"))
                 self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', pyproject_toml.write_text.call_args.args[0])
-                self.assert_logged_among_others(message_of(Logger.uv_settings_unreadable), location=ANY)
+                self.assert_warnings_logged(
+                    (message_of(Logger.settings_unreadable), {"location": ANY, **unreadable_settings_fields(reason)})
+                )
 
     @kills.force_false(
         uv.configure_cooldown,
@@ -177,42 +180,25 @@ def _managed(cooldown: str) -> str:
 class WorkspaceRootTest(unittest.TestCase):
     """Unit tests for resolving a project's uv workspace root, with the pyproject.toml reads mocked."""
 
-    ROOT = Path("/ws/pyproject.toml")
-    MEMBER = Path("/ws/packages/lib/pyproject.toml")
-
-    def test_member_resolves_to_root(self):
-        """Test that a member is resolved to the workspace root that lists it."""
-        with self.workspace_at_root(members=("packages/*",)):
-            self.assertEqual(self.ROOT, _workspace_root(self.MEMBER))
-
-    def workspace_at_root(self, **workspace: tuple[str, ...]):
-        """Patch `_workspace_table` so only the root declares the given `[tool.uv.workspace]` table."""
-        return patch(
-            "update_time.package_managers.uv.uv._workspace_table",
-            side_effect=lambda pyproject_toml: UvWorkspace(**workspace) if pyproject_toml == self.ROOT else None,
-        )
-
-    def test_root_is_its_own_member(self):
-        """Test that the root project, which declares the workspace, resolves to itself."""
-        with self.workspace_at_root(members=("packages/*",)):
-            self.assertEqual(self.ROOT, _workspace_root(self.ROOT))
-
-    def test_standalone_resolves_to_self(self):
-        """Test that a project in no workspace resolves to itself."""
-        with patch("update_time.package_managers.uv.uv._workspace_table", return_value=None):
-            self.assertEqual(self.MEMBER, _workspace_root(self.MEMBER))
-
-    def test_excluded_member_resolves_to_self(self):
-        """Test that a nested project excluded from the workspace is treated as a standalone root."""
-        vendor = Path("/ws/packages/vendor/pyproject.toml")
-        with self.workspace_at_root(members=("packages/*",), exclude=("packages/vendor",)):
-            self.assertEqual(vendor, _workspace_root(vendor))
-
-    def test_member_not_matching_a_glob_resolves_to_self(self):
-        """Test that a nested project not matched by any members glob is treated as a standalone root."""
-        outsider = Path("/ws/tools/lib/pyproject.toml")
-        with self.workspace_at_root(members=("packages/*",)):
-            self.assertEqual(outsider, _workspace_root(outsider))
+    def test_a_project_resolves_to_the_root_of_the_workspace_that_includes_it(self):
+        """Test that a project resolves to the root of the workspace including it, and to itself outside one."""
+        root = Path("/ws/pyproject.toml")
+        workspace = UvWorkspace(members=("packages/*",), exclude=("packages/vendor",))
+        for case, (project, expected) in {
+            "a member": (Path("/ws/packages/lib/pyproject.toml"), root),
+            "the root": (root, root),
+            "a project in no workspace": (Path("/elsewhere/pyproject.toml"),) * 2,
+            "an excluded member": (Path("/ws/packages/vendor/pyproject.toml"),) * 2,
+            "a project outside the members globs": (Path("/ws/tools/lib/pyproject.toml"),) * 2,
+        }.items():
+            with (
+                self.subTest(case=case),
+                patch(
+                    "update_time.package_managers.uv.uv._workspace_table",
+                    side_effect=lambda pyproject_toml: workspace if pyproject_toml == root else None,
+                ),
+            ):
+                self.assertEqual(_workspace_root(project), expected)
 
 
 class WorkspaceTableTest(unittest.TestCase):
@@ -239,10 +225,9 @@ class WorkspaceTableTest(unittest.TestCase):
         raises="AttributeError: 'str' object has no attribute 'get'",
         case="a workspace that is not a table",
     )
-    @kills.replace(
+    @kills.delete(
         read,
-        "except OSError, ValueError:",
-        "except OSError:",
+        ", ValueError",
         "a pyproject.toml that is not valid TOML stops the walk up the tree with a traceback",
         raises="tomllib.TOMLDecodeError: Expected '=' after a key in a key/value pair (at line 1, column 6)",
         case="not valid TOML",

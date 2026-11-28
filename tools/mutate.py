@@ -1,7 +1,6 @@
 """Check that a test really guards a behaviour: replace a snippet in a file, run a command, and restore the file.
 
-A test's name is not evidence of what it guards, and neither is a green run. Breaking the code the test names is:
-a command that then fails a test has killed the mutation, one that still passes has not, so nothing guards that
+A command that then fails a test has killed the mutation, one that still passes has not, so nothing guards that
 code. A command that fails some other way has killed nothing either: its tests passed, and another gate failed,
 such as the coverage gate of `just test`. The file is restored whether the command passes, fails, or raises, so a
 probe never leaves the tree changed.
@@ -9,7 +8,7 @@ probe never leaves the tree changed.
 Usage: `just mutate FILE[:ANCHOR] [COMMAND ...]`, with the snippet to replace and its replacement read from standard
 input, separated by a line holding only the separator. COMMAND defaults to `just test`. Naming a definition after
 the file looks for the snippet inside that definition, so the snippet has to be unique within that definition rather
-than across the whole file. The recipe unsets FORCE_COLOR, so the names of the tests that failed can be read back.
+than across the whole file.
 """
 
 import os
@@ -157,11 +156,7 @@ def _report_errors(errors: str, output: str, command: list[str]) -> int:
 
 
 def _killed_by(output: str) -> list[str]:
-    """Return each test the run reported as failing, once, in the order reported.
-
-    Naming them is what shows a guard that kills nothing: a table's case that never appears here, or a mutation
-    of one line that a second test kills as well, is a test earning less than it looks to.
-    """
+    """Return each test the run reported as failing, once, in the order reported."""
     return list(dict.fromkeys(_KILLED_BY.findall(output)))
 
 

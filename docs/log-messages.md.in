@@ -20,10 +20,6 @@ The arguments Update-time was started with, quoted as a shell reads them.
 
 Update-time runs a command, such as a package manager's update, in the directory the line names. The line names the variables Update-time adds to the command's environment.
 
-@@commit-comment-names-no-ref@@
-
-A GitHub Action or pre-commit hook pins a full commit SHA with a one-word comment, and the repository has no branch or tag of that name, so Update-time leaves the reference as it is. See [GitHub Actions and pre-commit hooks › Pinning](../README.md#pinning-3).
-
 @@compiled-file-without-source@@
 
 A compiled or hash-pinned requirements file does not name a requirements file as its source. Update-time does not have a source to update, so it skips the file. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
@@ -40,13 +36,9 @@ Which of the environment variables that raise rate limits are set. The line does
 
 Update-time checks a file it found for dependencies to update.
 
-@@floating-tag-kept@@
+@@floating-pin-kept@@
 
-A reference's `allow[floating-pin]` keeps a floating image tag as it is. The line names what Update-time would pin the reference to without the marker. See [Keeping a pin floating](../README.md#keeping-a-pin-floating).
-
-@@floating-tag-left-as-is@@
-
-Update-time leaves a floating image tag as it is, and the line says why, such as that it does not find a tag naming a version that serves the same image. See [Floating image tags](../README.md#floating-image-tags).
+A reference's `allow[floating-pin]` keeps a floating pin as it is: a floating image tag, a branch, or a tag such as `stable-2024`. The line names what Update-time would pin the reference to without the marker. See [Keeping a pin floating](../README.md#keeping-a-pin-floating).
 
 @@github-rate-limit-headers-unreadable@@
 
@@ -54,27 +46,25 @@ GitHub says its rate limit is used up, but its headers do not say what the limit
 
 @@held-back-by-cooldown@@
 
-The cooldown holds back a newer version that was published too recently. The line names the date the cooldown ends for it. See [Cooldown](../README.md#-cooldown).
+The cooldown holds back a newer version that was published too recently. The line names the date the cooldown ends for it. Where a reference's `set[cooldown=…]` set the cooldown, the line names that directive. See [Cooldown](../README.md#-cooldown) and [Setting a cooldown period](../README.md#setting-a-cooldown-period).
 
-@@held-back-by-marker-cooldown@@
+@@manager-not-run@@
 
-A reference's `set[cooldown=…]` holds back a newer version that was published too recently. The line names the date the cooldown ends for it. See [Setting a cooldown period](../README.md#setting-a-cooldown-period).
+Update-time does not run a package manager for a file, and the line says why. It still checks the file's dependencies. The causes:
 
-@@image-not-looked-up@@
+- The file does not declare dependencies for the package manager to install or resolve.
+- The project does not have a lock file, and the package manager would write one. Run the package manager's install once to have Update-time update the project.
+- A `pyproject.toml` has neither a `[tool.uv]` table nor a `uv.lock` beside its workspace root. Run `uv lock` once to have Update-time update the project.
+- The `[tool.uv]` table of the workspace root sets `managed = false`.
+- The workspace root of the project lies outside the scan root, and the package manager would write its lock there.
+- The file is a member of a workspace, and the warning about the workspace root says why.
+- Maven cannot read the reactor the pom is part of. The error about the reactor says why.
 
-Update-time does not ask a registry about a reference's image, and the line says why, such as that the Compose file builds the image. See [Docker images › What dependencies are updated?](../README.md#what-dependencies-are-updated-5).
-
-@@left-with-workspace-root@@
-
-A package manager does not run for a member of a workspace, for the reason the warning about the workspace root gives. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1) and [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
+See [Python dependencies › What files are updated?](../README.md#what-files-are-updated), [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1), and [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
 
 @@marker-recognised@@
 
 Update-time read a reference's marker. Where no `invalid-marker-item` warning sits beside it, it also understood the marker. See [Confirming a marker was understood](../README.md#confirming-a-marker-was-understood).
-
-@@maven-not-run@@
-
-Update-time does not run Maven over a pom, because Maven cannot read the reactor the pom is part of. An earlier Maven run could not read the reactor, or a pom of the reactor does not parse. The error about the reactor says which. See [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
 
 @@network-settings@@
 
@@ -84,37 +74,21 @@ The proxies, the hosts they skip, and the CA bundle that Update-time connects wi
 
 Maven moved a property that several artefacts name. Maven Central does not serve this artefact, so Update-time reports the new version for the other artefacts alone.
 
-@@no-dependencies-declared@@
-
-A file does not declare dependencies for the package manager to install or resolve, so Update-time does not run the package manager for it. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated) and [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
-
-@@no-lock-file@@
-
-A project does not have a lock file, and the package manager would write one, so Update-time does not run it. To have Update-time update the project, run the package manager's install once. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
-
-@@no-release-tagged@@
-
-The repository of a GitHub Action or pre-commit hook does not tag a release to update to, so Update-time leaves the reference as it is. See [GitHub Actions and pre-commit hooks › What versions are updated?](../README.md#what-versions-are-updated-3).
-
-@@not-a-uv-project@@
-
-A `pyproject.toml` has neither a `[tool.uv]` table nor a `uv.lock` beside its workspace root, so Update-time does not run uv for it. To have Update-time update the project, run `uv lock` once. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
-
 @@path-excluded@@
 
 `--exclude-path` excludes a directory from the scan. See [Getting started](../README.md#getting-started).
 
-@@project-marked-unmanaged@@
+@@reference-left-as-is@@
 
-The `[tool.uv]` table of the workspace root sets `managed = false`, so Update-time does not run uv for the `pyproject.toml`. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
+Update-time leaves a reference as it is, and the line says why. The reasons:
 
-@@ref-kept@@
+- Update-time does not ask a registry about the reference's image, for example because the Compose file builds the image.
+- The registry does not serve the repository of the reference's image. That happens for an image the project builds itself, a mistyped image name, and a private image.
+- The repository of a GitHub Action or pre-commit hook does not tag a release to update to.
+- Update-time cannot pin a floating image tag, for example where it does not find a tag naming a version that serves the same image. See [Floating image tags](../README.md#floating-image-tags).
+- A GitHub Action or pre-commit hook pins a full commit SHA with a one-word comment, and the repository has no branch or tag of that name. See [GitHub Actions and pre-commit hooks › Pinning](../README.md#pinning-3).
 
-A reference's `allow[floating-pin]` keeps a branch, or a tag such as `stable-2024`, as it is. The line names what Update-time would pin the reference to without the marker. See [Keeping a pin floating](../README.md#keeping-a-pin-floating).
-
-@@repository-not-served@@
-
-The registry does not serve the repository of a reference's image, so Update-time leaves the reference as it is. That happens for an image the project builds itself, a mistyped image name, and a private image. See [Docker images › What dependencies are updated?](../README.md#what-dependencies-are-updated-5).
+See [Docker images › What dependencies are updated?](../README.md#what-dependencies-are-updated-5) and [GitHub Actions and pre-commit hooks › What versions are updated?](../README.md#what-versions-are-updated-3).
 
 @@run-started@@
 
@@ -130,7 +104,7 @@ The version that an executable, such as yarn, reports in a directory.
 
 @@update-held-back@@
 
-A reference's `ignore[update]` holds its update back. On a pom, so does a bound that holds back every version, such as one naming `34.1rc1`. See [Holding a reference back](../README.md#holding-a-reference-back) and [Maven dependencies › Markers](../README.md#markers-2).
+A reference's marker holds back the versions the line names, and the line names the directive. An `ignore[update]` holds back every version. On a pom, so does a bound that holds back every version, such as one naming `34.1rc1`. Another bound on a pom holds back the versions the line writes as a Maven range. See [Holding a reference back](../README.md#holding-a-reference-back), [Seeing what a marker did](../README.md#seeing-what-a-marker-did), and [Maven dependencies › Markers](../README.md#markers-2).
 
 @@updated-by-workspace-root@@
 
@@ -140,10 +114,6 @@ The package manager's run for the workspace root updates a member of the workspa
 
 Maven Central does not serve a version listing for an artefact, as for one a project resolves from a mirror or a private repository. So the cooldown holds nothing back for the artefact, and Update-time does not check it for staleness. See [Maven dependencies › Cooldown](../README.md#cooldown-2).
 
-@@versions-held-back-by-bound@@
-
-A bound in a reference's marker holds back the versions the line names, written as a Maven range. See [Seeing what a marker did](../README.md#seeing-what-a-marker-did).
-
 @@versions-held-back-by-requires-python@@
 
 The project's `requires-python` holds a `.python-version` entry back from the Python versions it excludes. See [Node engine version and Python version › What versions are updated?](../README.md#what-versions-are-updated-4).
@@ -152,17 +122,15 @@ The project's `requires-python` holds a `.python-version` entry back from the Py
 
 A setting of the versions plugin's configuration, such as a `rulesUri`, wins over what Update-time tells the plugin. The line says what Maven may adopt as a result. Where the effective pom says where the setting is set, the line names that pom and line. See [Maven dependencies › What versions are updated?](../README.md#what-versions-are-updated-2).
 
-@@vulnerability-ignored-by-option@@
-
-`--ignore-vulnerability` silenced the warning about an advisory. See [Vulnerable dependencies](../README.md#️-vulnerable-dependencies).
-
 @@warning-ignored@@
 
-A reference's marker silenced a warning: an `ignore[yanked]` the warning that its version was yanked, an `ignore[archived]` the warning that its dependency is archived, a `set[stale-after=…]` the staleness warning that the run's threshold gives, or an `ignore[vulnerable=…]` or a `set[vulnerability-level=…]` the warning about an advisory. The line names the warning, with the advisory for a vulnerability, and the directive. See [Silencing a warning](../README.md#silencing-a-warning), [Setting a staleness threshold](../README.md#setting-a-staleness-threshold), [Silencing specific vulnerabilities](../README.md#silencing-specific-vulnerabilities), and [Setting a risk level](../README.md#setting-a-risk-level).
+A marker or an option silenced a warning, and the line names the warning and what silenced it:
 
-@@workspace-root-outside-scan@@
+- An `ignore[yanked]` silences the warning that the version was yanked, and an `ignore[archived]` the warning that the dependency is archived.
+- A `set[stale-after=…]` silences the staleness warning that the run's threshold gives.
+- An `ignore[vulnerable=…]` or a `set[vulnerability-level=…]` silences the warning about an advisory, and so does `--ignore-vulnerability`. The line names the advisory.
 
-The workspace root of a project lies outside the scan root, and the package manager would write its lock there, so Update-time does not run it. Update-time still checks the dependencies. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated) and [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
+See [Silencing a warning](../README.md#silencing-a-warning), [Setting a staleness threshold](../README.md#setting-a-staleness-threshold), [Silencing specific vulnerabilities](../README.md#silencing-specific-vulnerabilities), [Setting a risk level](../README.md#setting-a-risk-level), and [Vulnerable dependencies](../README.md#️-vulnerable-dependencies).
 
 @@workspaces-updated-together@@
 
@@ -174,13 +142,18 @@ Projects source each other by path, so Update-time updates their uv workspaces t
 
 A Sphinx `conf.py` declares a jsDelivr URL as a bare string, which has nowhere to hold an integrity hash, so Update-time leaves the URL as it is. Declare the URL as a `(url, {"integrity": …})` tuple to have it pinned. See [jsDelivr npm URLs › Pinning](../README.md#pinning-6).
 
-@@compiled-file-cooldown-set@@
-
-Update-time passed its cooldown to the tool that recompiles a compiled requirements file. It also wrote a line at the top of the file's first source, saying that Update-time manages that cooldown. Remove that line to set the cooldown yourself. See [Python dependencies › Cooldown](../README.md#cooldown).
-
 @@compiled-file-left-as-is@@
 
 Update-time updated the pins in the sources of a compiled requirements file, but did not recompile the file itself. The line says why. Recompile the file yourself to bring its pins in line with its sources. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
+
+@@cooldown-set@@
+
+Update-time set its cooldown for a file, and recorded that it manages that cooldown. The line names both files:
+
+- For a `pyproject.toml`, Update-time wrote the cooldown into the `[tool.uv]` table of the workspace root, as an `exclude-newer` tagged `managed by Update-time`. Remove the tag to take ownership of the setting.
+- For a compiled requirements file, Update-time passed the cooldown to the tool that recompiles the file. It also wrote a line at the top of the file's first source, saying that Update-time manages that cooldown. Remove that line to set the cooldown yourself.
+
+See [Python dependencies › Cooldown](../README.md#cooldown).
 
 @@drift-adopted@@
 
@@ -194,21 +167,13 @@ Update-time updated the reference to a newer version. Below the line, it shows w
 
 A `pyproject.toml` or a script's inline metadata pins a dependency with an environment marker, such as `; python_version < "3.13"`. Update-time does not update such a pin, so update it yourself. See [Python dependencies › What versions are updated?](../README.md#what-versions-are-updated).
 
-@@pinned-to-hash@@
+@@pinned@@
 
-Update-time pinned the reference to the version and the hash it resolves to: an image digest, a commit SHA, or an integrity hash. See [Pinning](../README.md#-pinning).
-
-@@pinned-to-version@@
-
-Update-time pinned a floating reference to the version it resolves to, without a hash, since the reference has no place for one. A Dockerfile `FROM` that names build arguments is such a reference: a digest would overrule a `--build-arg`. See [Docker images › Pinning](../README.md#pinning-5).
+Update-time pinned the reference to the version it resolves to, and to its hash: an image digest, a commit SHA, or an integrity hash. A reference that has no place for a hash is pinned to the version alone. A Dockerfile `FROM` that names build arguments is such a reference, since a digest would overrule a `--build-arg`. See [Pinning](../README.md#-pinning) and [Docker images › Pinning](../README.md#pinning-5).
 
 @@range-rewritten@@
 
 The package manager wrote the version it resolves into the range the `package.json` or the catalog declares. The version in the lock file stayed the same, and the line names it. Where the lock file did not record a version of the dependency before the run, the line says so. See [npm, pnpm, yarn, and bun dependencies › What versions are updated?](../README.md#what-versions-are-updated-1).
-
-@@uv-cooldown-set@@
-
-Update-time wrote its cooldown into the `[tool.uv]` table of the workspace root's `pyproject.toml`, as an `exclude-newer` tagged `managed by Update-time`. Remove the tag to take ownership of the setting. See [Python dependencies › Cooldown](../README.md#cooldown).
 
 @@version-moved-back@@
 
@@ -228,10 +193,6 @@ The dependency's source declares it archived: its maintainer does not expect to 
 
 GitHub answered about a repository without saying whether it is archived, so Update-time does not check the dependency for archival.
 
-@@binary-bun-lock@@
-
-The project locks its dependencies in the binary `bun.lockb` bun wrote before version 1.2, which Update-time cannot read, so it does not run bun. Update-time still checks the dependencies. Convert the lock with the command the line names. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
-
 @@command-stderr@@
 
 A command Update-time ran wrote to stderr. The lines below the message hold what it wrote. The command decides whether that is an error, a warning, or a notice.
@@ -247,10 +208,6 @@ Update-time could not score an advisory's CVSS vector, so it reports the vulnera
 @@declaration-not-found@@
 
 A `package.json` declares a Node engine, but Update-time does not find the line declaring it, so it leaves the engine as it is. A file declaring its `engines` section twice causes this. See [Node engine version and Python version › What dependencies are updated?](../README.md#what-dependencies-are-updated-4).
-
-@@digest-drift@@
-
-The image tag now serves another digest than the reference pins, so the image was re-pushed under the same tag. Update-time leaves the pin as it is. Verify the change is expected before you update the pin, or mark the reference `allow[hash-drift]` to adopt drift. See [Hash drift](../README.md#hash-drift).
 
 @@effective-pom-unreadable@@
 
@@ -281,6 +238,10 @@ Update-time could not read a file, so it goes on without what it looked for in t
 
 `--force` made Update-time run outside a git repository, so there is no commit to revert its changes to. See [Workflow](../README.md#workflow).
 
+@@hash-drift@@
+
+A reference's hash pin drifted: the image tag now serves another digest, so the image was re-pushed under the same tag, or the tag, branch, or ref a GitHub Action or pre-commit hook names now points at another commit. The line opens with the kind of drift. Update-time leaves the pin as it is. Verify the change before you update the pin, or mark the reference `allow[hash-drift]` to adopt drift. See [Hash drift](../README.md#hash-drift).
+
 @@incompatible-python-version@@
 
 A `.python-version` entry names a version outside the project's `requires-python`, so uv refuses to run for the project. Update-time never moves an entry to a lower version, so correct the entry or the `requires-python` yourself. See [Node engine version and Python version › What versions are updated?](../README.md#what-versions-are-updated-4).
@@ -305,9 +266,15 @@ Update-time cannot read an item of a reference's marker, such as a mistyped scop
 
 A source answered a request with a body that does not parse as the format the line names, so Update-time goes on without the answer. Where Maven Central served a pom that is not valid XML, Update-time cannot read from it the GitHub repository of the dependency, and does not check the dependency for archival. See [Maven dependencies › Archived dependencies](../README.md#archived-dependencies-2).
 
-@@package-manager-unsupported@@
+@@manager-cannot-run@@
 
-A package manager Update-time does not support manages a file, as pdm or Poetry can manage a `pyproject.toml`. So Update-time does not update the file's dependencies. It still checks those of a `pyproject.toml`, and skips a `package.json`. The line names the package manager, and the ones Update-time supports. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
+Update-time cannot run a package manager for a file until you fix what the line names. It still checks the file's dependencies. The reasons:
+
+- The project locks its dependencies in the binary `bun.lockb` bun wrote before version 1.2, which Update-time cannot read. Convert the lock with the command the line names. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
+- The yarn that runs at the workspace root is older than 4.10 and cannot apply a cooldown. Switch the project with the command the line names.
+- The files of a directory name more than one package manager, as a `pnpm-lock.yaml` beside a `bun.lockb` does. Set the `packageManager` field to the one to run.
+- The lock files beside the root of a `pyproject.toml`'s uv workspace name more than one package manager, as a `uv.lock` beside a `poetry.lock` does. Where neither a lock file nor a `[tool.uv]` table names the package manager, the other tables of the root's `pyproject.toml` do, as a `[tool.poetry]` table beside a `[tool.pdm]` table does. Remove the lock file or the table of the package manager the project no longer uses. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
+- A package manager Update-time does not support manages the file, as pdm or Poetry can manage a `pyproject.toml`. So Update-time does not update the file's dependencies. It skips a `package.json` such a manager manages. The line names the ones Update-time supports.
 
 @@pinned-version-unreadable@@
 
@@ -317,33 +284,17 @@ A compiled requirements file pins a package to a version that is not PEP 440. Up
 
 Maven Central lists a publication date for a version that Update-time cannot read. Update-time cannot tell whether the version is older than the cooldown, so the cooldown holds it back. See [Maven dependencies › Cooldown](../README.md#cooldown-2).
 
-@@redundant-bound@@
-
-A bound in a reference's marker never has an effect at the reference's version, or blocks every update. Remove the bound to silence this warning, or write `ignore[update]` where you mean to hold every update back. See [A bound](../README.md#a-bound).
-
 @@redundant-directive@@
 
-A directive in a reference's marker decides nothing for that reference. The line says why. Remove the directive to silence this warning. See [Redundant markers](../README.md#redundant-markers).
+A directive in a reference's marker decides nothing for that reference, and the line says why. Remove the directive to silence this warning. See [Redundant markers](../README.md#redundant-markers). The reasons include:
 
-@@redundant-ignore@@
-
-The reference's marker holds an `ignore` that silences nothing for the version the run leaves the reference on, or for its project or repository. The line says what Update-time found in place of what the directive would silence. Remove the directive to silence this warning.
-
-- For an `ignore[yanked]`, the version was not yanked. The directive may have outlived what it was written for. See [The warning scopes](../README.md#the-warning-scopes).
-- For an `ignore[archived]`, the source does not archive the dependency. The directive may have outlived what it was written for. See [The warning scopes](../README.md#the-warning-scopes).
-- For an `ignore[vulnerable=…]`, the version does not have a vulnerability that answers to the advisory. An update fixed the vulnerability, or the identifier is mistyped. See [The vulnerable scope](../README.md#the-vulnerable-scope).
-
-@@redundant-stale-after@@
-
-A `set[stale-after=…]` warns about the newest release exactly when the run's threshold does. The line names the run's threshold as the default, or as the `--stale-after` that set it. Remove the directive to silence this warning, or set a threshold that judges otherwise. See [The warning scopes](../README.md#the-warning-scopes).
-
-@@redundant-vulnerability-level@@
-
-A `set[vulnerability-level=…]` reports the same vulnerabilities in the version as the run's level does. The line names the run's level as the default, or as the `--vulnerability-level` that set it. Remove the directive to silence this warning. See [The vulnerable scope](../README.md#the-vulnerable-scope).
-
-@@ref-drift@@
-
-The tag, branch, or ref a GitHub Action or pre-commit hook names now points at another commit than the reference pins. Update-time leaves the pin as it is. Verify the move before you update the pin, or mark the reference `allow[hash-drift]` to adopt drift. See [Hash drift](../README.md#hash-drift).
+- The reference is never checked or updated the way the directive steers, such as an `ignore[yanked]` on a source that does not record a yank.
+- A bound never has an effect at the reference's version, or blocks every update. Write `ignore[update]` where you mean to hold every update back. See [A bound](../README.md#a-bound).
+- The version was not yanked, so an `ignore[yanked]` finds nothing to silence. The directive may have outlived what it was written for. See [The warning scopes](../README.md#the-warning-scopes).
+- The source does not archive the dependency, so an `ignore[archived]` finds nothing to silence. The directive may have outlived what it was written for.
+- The version does not have a vulnerability that answers to the advisory an `ignore[vulnerable=…]` names. An update fixed the vulnerability, or the identifier is mistyped. See [The vulnerable scope](../README.md#the-vulnerable-scope).
+- A `set[stale-after=…]` warns about the newest release exactly when the run's threshold does. The line names the run's threshold as the default, or as the `--stale-after` that set it.
+- A `set[vulnerability-level=…]` reports the same vulnerabilities as the run's level does. The line names the run's level as the default, or as the `--vulnerability-level` that set it.
 
 @@request-failed@@
 
@@ -352,14 +303,6 @@ A request failed, so Update-time goes on without the answer. The line names the 
 @@requires-python-ignored@@
 
 A project's `requires-python` is not a version specifier, so Update-time updates the `.python-version` entry as if the project declared none. See [Node engine version and Python version › What versions are updated?](../README.md#what-versions-are-updated-4).
-
-@@several-node-package-managers@@
-
-The files of a directory name more than one package manager, as a `pnpm-lock.yaml` beside a `bun.lockb` does. Update-time cannot tell which one the project uses, so it runs none of them, and still checks the dependencies. Set the `packageManager` field to the one to run. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
-
-@@several-python-package-managers@@
-
-The lock files beside the root of a `pyproject.toml`'s uv workspace name more than one package manager, as a `uv.lock` beside a `poetry.lock` does. Where neither a lock file nor a `[tool.uv]` table names the package manager, the other tables of the root's `pyproject.toml` do, as a `[tool.poetry]` table beside a `[tool.pdm]` table does. Update-time cannot tell which one the project uses, so it does not run uv, and still checks the dependencies. Remove the lock file or the table of the package manager the project no longer uses. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
 
 @@source-not-found@@
 
@@ -371,7 +314,7 @@ The dependency's newest release is older than the staleness threshold, which may
 
 @@tool-settings-unreadable@@
 
-pip or yarn did not report its settings, so Update-time cannot tell whether they set a cooldown, and applies its own. The line gives the reason. See [Python dependencies › Cooldown](../README.md#cooldown).
+pip, uv, or yarn did not report its settings, so Update-time cannot tell whether they set a cooldown, and applies its own. The line gives the reason: the error the tool printed, or, for uv, that it lists its settings in a form Update-time does not read. The latter means the uv on the path and Update-time do not fit together. See [Python dependencies › Cooldown](../README.md#cooldown).
 
 @@tool-version-unknown@@
 
@@ -381,10 +324,6 @@ A tool did not report its version in a directory, such as a yarn whose `.yarnrc.
 
 The `tool` of a `pyproject.toml`, or the `uv` in it, is a value other than a table, so Update-time cannot write uv's `exclude-newer` there to apply the cooldown. See [Python dependencies › Cooldown](../README.md#cooldown).
 
-@@uv-settings-unreadable@@
-
-uv did not report its settings, so Update-time cannot tell whether the project sets an `exclude-newer`, and applies its own cooldown. See [Python dependencies › Cooldown](../README.md#cooldown).
-
 @@vulnerable-dependency@@
 
 The run leaves the reference on a version that an advisory names as affected. The line names the risk level, what the advisory says, and where to read it. Update the dependency, or silence the advisory with `ignore[vulnerable=ID]` once you have assessed it. See [Vulnerable dependencies](../README.md#️-vulnerable-dependencies).
@@ -392,10 +331,6 @@ The run leaves the reference on a version that an advisory names as affected. Th
 @@yanked-dependency@@
 
 The maintainer withdrew the version the reference pins, and the run leaves the reference on it. The line quotes the maintainer's reason where they gave one. To live with the yank, mark the reference `ignore[yanked]`. See [Yanked dependencies](../README.md#-yanked-dependencies).
-
-@@yarn-without-cooldown@@
-
-The yarn that runs at the workspace root is older than 4.10 and cannot apply a cooldown, so Update-time does not run it. Update-time still checks the dependencies. Switch the project with the command the line names. See [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1).
 
 ## ERROR
 
@@ -407,13 +342,9 @@ Update-time could not ask GitHub whether a branch moved on from the commit the r
 
 A command Update-time ran exited with an error. The lines below the message hold what the command wrote, which says what went wrong.
 
-@@command-not-found@@
-
-Update-time could not run a command, because the command's executable is not on the path. Install the tool, or put it on the path, and run Update-time again.
-
 @@command-not-run@@
 
-The operating system refused to run a command for another reason than a missing executable, such as a missing permission. The line names the error the system reported.
+The operating system could not run a command. Where the command's executable is not on the path, the line asks whether the tool is installed: install it, or put it on the path, and run Update-time again. Otherwise the line names the error the system reported, such as a missing permission or a missing directory.
 
 @@commit-sha-not-fetched@@
 
@@ -427,13 +358,12 @@ Maven rewrote a pom so that it declares more or fewer dependencies and plugins t
 
 The project sources another project by path, or that project sources it, so uv locks them together. uv could not lock the other project, so Update-time gave both back the text they held before the run. The error about the other project says why uv could not lock it. See [Python dependencies › What versions are updated?](../README.md#what-versions-are-updated).
 
-@@drift-commit-date-unknown@@
+@@drift-date-unknown@@
 
-A GitHub Action or pre-commit hook names a tag or branch that now points at another commit. GitHub did not say when that commit was made. Update-time cannot check the cooldown, so it does not adopt the drift. See [GitHub Actions and pre-commit hooks › Cooldown](../README.md#cooldown-3).
+A reference's hash pin drifted, but its source did not say when what it now points at was made, so Update-time cannot check the cooldown and does not adopt the drift. The line names the source:
 
-@@drift-push-date-unknown@@
-
-The image tag now serves another digest than the reference pins, but Docker Hub did not say when it was pushed. Update-time cannot check the cooldown, so it does not adopt the drift. See [Docker images › Cooldown](../README.md#cooldown-5).
+- GitHub did not say when the commit was made that the tag or branch of a GitHub Action or pre-commit hook now points at. See [GitHub Actions and pre-commit hooks › Cooldown](../README.md#cooldown-3).
+- Docker Hub did not say when the digest the image tag now serves was pushed. See [Docker images › Cooldown](../README.md#cooldown-5).
 
 @@file-not-restored@@
 
@@ -445,11 +375,7 @@ Update-time could not write a `pyproject.toml` or a script, so it left the depen
 
 @@github-rate-limit-used-up@@
 
-The run used up the rate limit GitHub gives a client without a token, so Update-time cannot ask GitHub anything until the time the line names. Set `GITHUB_TOKEN` to raise the limit. See [Increasing rate limits](../README.md#increasing-rate-limits).
-
-@@github-token-rate-limit-used-up@@
-
-The run used up the rate limit GitHub gives `GITHUB_TOKEN`, so Update-time cannot ask GitHub anything until the time the line names. See [Increasing rate limits](../README.md#increasing-rate-limits).
+The run used up the rate limit GitHub gives a client, so Update-time cannot ask GitHub anything until the time the line names. Where `GITHUB_TOKEN` is not set, the line advises setting it to raise the limit. See [Increasing rate limits](../README.md#increasing-rate-limits).
 
 @@invalid-xml-after-update@@
 
@@ -463,50 +389,42 @@ Update-time could not read the `uv.lock` of a workspace, or the lock of a script
 
 The run created a lock for a script, or for a `pyproject.toml` without a `uv.lock`, and Update-time could not remove that lock afterwards. The line names the error. Remove the lock yourself. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
 
-@@reactor-pom-unparsable@@
-
-A pom of a Maven reactor does not parse, so Maven cannot read the reactor. Update-time does not run Maven over the reactor's other poms, but still checks them. Fix the pom the line names. See [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
-
 @@reactor-unreadable@@
 
-Maven can no longer read a reactor it read earlier in the run, although the latest Maven run that read the reactor changed none of its poms. Maven's own error says why it cannot read the reactor. Update-time does not run Maven over the poms left in the reactor, but still checks them. See [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
+Maven cannot read a reactor, so Update-time does not run Maven over the poms the line counts, but still checks them. The line names the cause:
 
-@@reactor-unreadable-as-found@@
+- Since Update-time updated a pom: that update broke the reactor. Revert the pom and hold the update back with a marker, or fix what Maven reports. Where Maven found this in its run over the reactor's last pom, the line does not count the poms left.
+- Since a pom does not parse: fix the pom the line names.
+- As the scan found it: the project's poms break the reactor as they are. Maven's own error says why.
+- No cause: Maven read the reactor earlier in the run, and the latest run that read it changed none of its poms. Maven's own error says why it can no longer read the reactor.
 
-Maven cannot read a reactor before Update-time changed any of its poms, so the project's poms break it as they are. Maven's own error says why it cannot read the reactor. Update-time does not run Maven over the reactor's other poms, but still checks them. See [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
-
-@@reactor-unreadable-since-update@@
-
-Maven cannot read a reactor since Update-time updated the pom the line names, so Update-time does not run Maven over the poms left in it. Where Maven found this in its run over the reactor's last pom, the line does not count the poms left. Revert that pom and hold the update that broke the reactor back with a marker, or fix what Maven reports. See [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
+See [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
 
 @@ref-commit-not-fetched@@
 
 Update-time could not fetch the commit a branch, a tag such as `stable-2024`, or a short commit SHA points at, so it left the reference as it is. The line gives the reason, such as a used-up rate limit. For a pinned branch, the reason can also be that the branch's newest commit older than the cooldown lies beyond the commits Update-time examines. See [GitHub Actions and pre-commit hooks › Pinning](../README.md#pinning-3).
 
-@@release-metadata-not-fetched@@
-
-PyPI did not serve the metadata of a newer release, so Update-time cannot tell whether it was yanked, or when it was published. The pin stays on its version, rather than moving to a version in between. See [Python dependencies › What versions are updated?](../README.md#what-versions-are-updated).
-
 @@run-stopped@@
 
 A signal, such as Ctrl-C, stopped the run. A file Update-time was writing may be incomplete, so review the changes, or revert them and run Update-time again. See [Workflow](../README.md#workflow).
 
-@@tag-push-date-unknown@@
-
-Docker Hub did not say when a newer image tag was pushed, so Update-time cannot check the cooldown. The reference stays on its tag, rather than moving to a tag in between. See [Docker images › Cooldown](../README.md#cooldown-5).
-
 @@tool-failed@@
 
-A tool failed to do its task for a file, and Update-time logs the tool's own error above this line. Where uv could not lock a `pyproject.toml` or a script, Update-time left its pins and its lock as they were. A pin on a version younger than the cooldown, or a registry uv cannot reach, causes this. Where uv or pip-compile could not recompile a requirements file, Update-time left the file as it was. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated).
+A tool did not do its task for a file, and the line says how it failed:
 
-@@tool-not-on-path@@
+- The tool failed, and Update-time logs the tool's own error above this line. Where uv could not lock a `pyproject.toml` or a script, Update-time left its pins and its lock as they were. A pin on a version younger than the cooldown, or a registry uv cannot reach, causes this. Where uv or pip-compile could not recompile a requirements file, Update-time left the file as it was.
+- The tool is not on the path, so Update-time did not run it. Where the tool is a package manager, such as uv, npm, or Maven, Update-time still checks the dependencies. Where it is the tool that compiled a requirements file, uv or pip-compile, Update-time did not recompile the file. Install the tool and run Update-time again.
 
-The tool that does a task for a file is not on the path, so Update-time did not run it. Where the tool is a package manager, such as uv, npm, or Maven, Update-time still checks the dependencies. Where it is the tool that compiled a requirements file, uv or pip-compile, Update-time did not recompile the file. Install the tool and run Update-time again. See [Python dependencies › What files are updated?](../README.md#what-files-are-updated), [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1), and [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
+See [Python dependencies › What files are updated?](../README.md#what-files-are-updated), [npm, pnpm, yarn, and bun dependencies › What files are updated?](../README.md#what-files-are-updated-1), and [Maven dependencies › What files are updated?](../README.md#what-files-are-updated-2).
 
 @@update-stopped@@
 
 A signal stopped the updater of one dependency type before it finished, so that type's update may be partly done. Review its changes, or revert them and run Update-time again. See [Workflow](../README.md#workflow).
 
-@@version-commit-date-unknown@@
+@@version-date-unknown@@
 
-GitHub did not say when the commit of a newer version was made, so Update-time cannot check the cooldown. The reference stays on its version, rather than moving to a version in between. See [GitHub Actions and pre-commit hooks › Cooldown](../README.md#cooldown-3).
+A source did not answer for a newer version, so Update-time cannot check it, and the reference stays on its version rather than moving to a version in between. The line names the source and what it did not answer:
+
+- Docker Hub did not say when a newer image tag was pushed, so Update-time cannot check the cooldown. See [Docker images › Cooldown](../README.md#cooldown-5).
+- GitHub did not say when the commit of a newer version was made, so Update-time cannot check the cooldown. See [GitHub Actions and pre-commit hooks › Cooldown](../README.md#cooldown-3).
+- PyPI did not serve the metadata of a newer release, so Update-time cannot tell whether it was yanked, or when it was published. See [Python dependencies › What versions are updated?](../README.md#what-versions-are-updated).

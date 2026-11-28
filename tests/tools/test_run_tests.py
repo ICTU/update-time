@@ -74,11 +74,7 @@ class MainTest(unittest.TestCase):
 
     def test_the_pool_gets_half_the_cores(self):
         """Test that the pool gets half the cores, since the coverage pass and the mutations pass run side by side."""
-        for case, cores, workers in (
-            ("seven cores", 7, 3),
-            ("one core", 1, 1),
-            ("unknown", None, 1),
-        ):
+        for case, cores, workers in (("seven cores", 7, 3), ("one core", 1, 1), ("unknown", None, 1)):
             with self.subTest(case), patch("os.process_cpu_count", Mock(return_value=cores)):
                 self.run_main([_ShardResult(tests_run=1, failures=0, errors=0, report="")], "tests.a.test_x")
                 self.assertEqual(self.executor.call_args.kwargs["max_workers"], workers)

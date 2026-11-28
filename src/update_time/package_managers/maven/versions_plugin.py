@@ -240,28 +240,19 @@ _OVERRIDING_WHEN_EMPTY: Final[tuple[str, ...]] = ("ruleSet",)
 
 def report_options_the_pom_overrides(pom_xml: Path, effective_pom: XmlElement | None) -> None:
     """Report each setting of the pom's versions plugin configuration that wins over Update-time."""
-    for override in _overrides(effective_pom):
-        set_at = override.setting.set_at
-        _LOG.option_overridden_by_the_pom(pom_xml, override.name, override.consequence, set_at.pom_name, set_at.line)
+    for name, setting in _overrides(effective_pom).items():
+        consequence, set_at = _OVERRIDING_SETTINGS[name], setting.set_at
+        _LOG.option_overridden_by_the_pom(pom_xml, name, consequence, set_at.pom_name, set_at.line)
 
 
-def _overrides(effective_pom: XmlElement | None) -> list[_Override]:
-    """Return the settings of the pom's versions plugin configuration that win over Update-time."""
+def _overrides(effective_pom: XmlElement | None) -> dict[str, PluginSetting]:
+    """Return the settings of the pom's versions plugin configuration that win over Update-time, by name."""
     settings = {} if effective_pom is None else plugin_settings(effective_pom, VERSIONS_ARTEFACT)
-    return [
-        _Override(name=name, consequence=consequence, setting=setting)
+    return {
+        name: setting
         for name, setting in settings.items()
-        if (consequence := _OVERRIDING_SETTINGS.get(name)) and _overrides_the_option(name, setting)
-    ]
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _Override:
-    """A setting of the pom's versions plugin configuration that wins over Update-time."""
-
-    name: str
-    consequence: OverrideConsequence
-    setting: PluginSetting
+        if name in _OVERRIDING_SETTINGS and _overrides_the_option(name, setting)
+    }
 
 
 def _overrides_the_option(name: str, setting: PluginSetting) -> bool:
@@ -273,7 +264,7 @@ def _overrides_the_option(name: str, setting: PluginSetting) -> bool:
 
 def names_rules_of_its_own(effective_pom: XmlElement | None) -> bool:
     """Return whether the pom's versions plugin configuration names rules that replace Update-time's rule set."""
-    return any(override.consequence == OverrideConsequence.RULES for override in _overrides(effective_pom))
+    return any(_OVERRIDING_SETTINGS[name] == OverrideConsequence.RULES for name in _overrides(effective_pom))
 
 
 def reason_the_marker_steers_nothing(declaration: Declaration, *, pom_names_rules: bool) -> Reason | None:
@@ -283,11 +274,7 @@ def reason_the_marker_steers_nothing(declaration: Declaration, *, pom_names_rule
     return Reason.RULES_OF_THE_POM if pom_names_rules else None
 
 
-def report_new_versions(
-    before: list[Declaration],
-    after: list[Declaration],
-    resolved: list[Declaration],
-) -> None:
+def report_new_versions(before: list[Declaration], after: list[Declaration], resolved: list[Declaration]) -> None:
     """Report each dependency and plugin whose version differs between the two readings, with its changes and date.
 
     The name is the one the effective pom gives the declaration, where it resolves one. Two declarations of one
@@ -351,4 +338,4 @@ def _new_version(update: _Update) -> DependencyVersion:
     artefact, version = update.effective.dependency, update.new.current_version
     if not fully_resolved(update.effective.pinned):
         return DependencyVersion(version)
-    return maven_central.SOURCE.release(artefact, version)
+    return maven_central.SOURCE.dependency_version(artefact, version)

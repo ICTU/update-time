@@ -93,9 +93,9 @@ DASHED_SNAPSHOT: Final[str] = (
 class Unserved(StrEnum):
     """What the source does not serve of the dependency a reference names."""
 
-    VERSION = auto()  # The registry serves the repository, but not the tag the reference names
-    REPOSITORY = auto()  # The registry does not serve the image's repository
-    RELEASES = auto()  # The repository does not tag a release to update to
+    VERSION = "the registry serves the repository, but not the tag the reference names"
+    REPOSITORY = "the registry does not serve the image's repository"
+    RELEASES = "the repository does not tag a release to update to"
 
 
 class FloatingPin(StrEnum):
@@ -274,4 +274,4 @@ class DependencyVersion:
 
 
 # A reference carries this release where the run does not resolve a version for it.
-NO_RELEASE: Final[DependencyVersion] = DependencyVersion(version="")
+NO_VERSION: Final[DependencyVersion] = DependencyVersion(version="")

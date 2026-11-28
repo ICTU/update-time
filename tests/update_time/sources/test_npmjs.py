@@ -7,12 +7,7 @@ from unittest.mock import Mock
 from mutation_time.mutation import kills
 from update_time.domain.dependency import Release, Yank
 from update_time.sources import npmjs
-from update_time.sources.npmjs import (
-    _get_changes,
-    _newest_release,
-    deprecation,
-    get_publication_datetime,
-)
+from update_time.sources.npmjs import _get_changes, _newest_release, deprecation, get_publication_datetime
 
 from tests.http_mocks import (
     mock_response,
@@ -173,8 +168,6 @@ class GetChangesRepositoryTest(LoggingTestCase):
             ("host_shorthand", "github:org/package"),
             ("bare_shorthand", "org/package"),
             ("https_repo", {"url": "git+https://github.com/org/package.git"}),
-            ("ssh_repo", {"url": "git+ssh://git@github.com/org/package.git"}),
-            ("scp_repo", {"url": "git@github.com:org/package.git"}),
         ):
             with self.subTest(repository=repository):
                 mock_get.reset_mock()
@@ -233,7 +226,7 @@ class GetChangesFallbackTest(LoggingTestCase):
 
     @kills.replace(
         npmjs._get_changes,
-        "source.directory",
+        "package_repository.directory",
         '""',
         "the changelog file of a package a monorepo builds from a directory is looked for in the root",
     )

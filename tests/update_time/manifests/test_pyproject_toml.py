@@ -24,10 +24,7 @@ class ToolKeyTest(unittest.TestCase):
 
     def test_value_without_comment(self):
         """Test that a key without a trailing comment returns an empty comment string."""
-        self.assertEqual(
-            PyprojectToml(mock_path(_UV_TABLE)).tool_key("uv", "exclude-newer"),
-            ("7 days", ""),
-        )
+        self.assertEqual(PyprojectToml(mock_path(_UV_TABLE)).tool_key("uv", "exclude-newer"), ("7 days", ""))
 
     def test_absent_table(self):
         """Test that a missing `[tool.<table>]` table yields None."""
@@ -155,10 +152,7 @@ class SetToolKeyTest(unittest.TestCase):
 
     def test_leaves_a_file_whose_tool_tables_cannot_hold_a_commented_key(self):
         """Test that nothing is written to a file whose `[tool]` or `[tool.uv]` is not a table."""
-        for name, contents in (
-            ("tool not a table", 'tool = "x"\n'),
-            ("array of uv tables", "[[tool.uv]]\nx = 1\n"),
-        ):
+        for name, contents in (("tool not a table", 'tool = "x"\n'), ("array of uv tables", "[[tool.uv]]\nx = 1\n")):
             with self.subTest(name):
                 pyproject_file = mock_path(contents)
                 self.assertFalse(PyprojectToml(pyproject_file).set_tool_key("uv", "exclude-newer", "7 days"))

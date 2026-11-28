@@ -146,11 +146,30 @@ class ScriptsTest(unittest.TestCase):
 class UpdateMainTest(unittest.TestCase):
     """Unit tests for the main function."""
 
-    def test_main_updates_dependencies(self, mock_popen: Mock):
-        """Test that main parses the arguments and then updates the dependencies."""
-        exit_code, environment = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[COOLDOWN.name], "7")
+    @patch_pathlib_path(exists=True)
+    def test_main_passes_each_setting_to_subprocesses(self, mock_popen: Mock):
+        """Test that main exports each setting in the environment, so the updater subprocesses inherit it."""
+        advisories = "GHSA-2gwj-7jmv-h26r,CVE-2022-28346"
+        for case, (argv, name, value) in {
+            "the default cooldown": ((), COOLDOWN.name, "7"),
+            "a cooldown": (("--cooldown", "14"), COOLDOWN.name, "14"),
+            "a log level": (("--log-level", "debug"), LOG_LEVEL.name, "DEBUG"),
+            "no advisories to ignore": ((), IGNORE_VULNERABILITIES.name, ""),
+            "advisories to ignore": (
+                ("--ignore-vulnerability", advisories),
+                IGNORE_VULNERABILITIES.name,
+                "CVE-2022-28346,GHSA-2gwj-7jmv-h26r",
+            ),
+            "no excluded paths": ((), _EXCLUDE_PATHS.name, ""),
+            "excluded paths": (
+                ("--exclude-path", "vendor,packages/legacy"),
+                _EXCLUDE_PATHS.name,
+                "vendor,packages/legacy",
+            ),
+        }.items():
+            with self.subTest(case=case):
+                exit_code, environment = self.run_main(mock_popen, *argv)
+                self.assertEqual((exit_code, environment[name]), (0, value))
 
     def run_main(
         self, mock_popen: Mock, *argv: str, inside_git: bool = True, environment: dict[str, str] | None = None
@@ -181,38 +200,6 @@ class UpdateMainTest(unittest.TestCase):
             except SystemExit as system_exit:
                 return cast(int, system_exit.code), dict(os.environ)
 
-    def test_main_passes_cooldown_to_subprocesses(self, mock_popen: Mock):
-        """Test that main exports the cooldown in the environment so the updater subprocesses inherit it."""
-        exit_code, environment = self.run_main(mock_popen, "--cooldown", "14")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[COOLDOWN.name], "14")
-
-    def test_main_passes_log_level_to_subprocesses(self, mock_popen: Mock):
-        """Test that main exports the log level in the environment so the updater subprocesses inherit it."""
-        exit_code, environment = self.run_main(mock_popen, "--log-level", "debug")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[LOG_LEVEL.name], "DEBUG")
-
-    def test_main_passes_ignored_vulnerabilities_to_subprocesses(self, mock_popen: Mock):
-        """Test that main exports the advisories to ignore so the updater subprocesses inherit them."""
-        advisories = "GHSA-2gwj-7jmv-h26r,CVE-2022-28346"
-        exit_code, environment = self.run_main(mock_popen, "--ignore-vulnerability", advisories)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[IGNORE_VULNERABILITIES.name], "CVE-2022-28346,GHSA-2gwj-7jmv-h26r")
-
-    def test_main_passes_no_ignored_vulnerabilities_by_default(self, mock_popen: Mock):
-        """Test that main exports an empty variable when --ignore-vulnerability is not given."""
-        exit_code, environment = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[IGNORE_VULNERABILITIES.name], "")
-
-    @patch_pathlib_path(exists=True)
-    def test_main_passes_excluded_paths_to_subprocesses(self, mock_popen: Mock):
-        """Test that main exports the excluded paths in the environment so the updater subprocesses inherit them."""
-        exit_code, environment = self.run_main(mock_popen, "--exclude-path", "vendor,packages/legacy")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[_EXCLUDE_PATHS.name], "vendor,packages/legacy")
-
     @kills.delete(
         update._pass_settings_down,
         "STALE_AFTER.set(args.stale_after)",
@@ -230,12 +217,6 @@ class UpdateMainTest(unittest.TestCase):
         exit_code, environment = self.run_main(mock_popen)
         self.assertEqual(exit_code, 0)
         self.assertEqual(settings - environment.keys(), set())
-
-    def test_main_passes_no_excluded_paths_by_default(self, mock_popen: Mock):
-        """Test that main exports an empty excluded-paths variable when --exclude-path is not given."""
-        exit_code, environment = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[_EXCLUDE_PATHS.name], "")
 
     def test_main_changes_to_the_default_directory(self, mock_popen: Mock):
         """Test that main changes to the current directory when no path is given."""

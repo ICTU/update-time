@@ -130,8 +130,7 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(self.report(name, sources, usages), 0)
                 self.requested.assert_called_once_with(_Position(path=_DEFINING_MODULE, line=0, column=4))
                 self.assertEqual(
-                    self.written.getvalue(),
-                    "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n",
+                    self.written.getvalue(), "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n"
                 )
 
     def report(self, name: str, sources: dict[Path, str], usages: list[_Position] | Exception) -> int:
